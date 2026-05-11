@@ -2203,7 +2203,41 @@ function onCanvasMouseDown(e) {
       }
     }
 
-    // 2) Clicking a resize handle on the currently selected annotation
+    // 2) Figure out which annotation is under the cursor (if any). Doing this
+    //    BEFORE the resize-handle check is the critical part — previously the
+    //    code grabbed the currently selected annotation's resize handle even
+    //    when the user was trying to select a different annotation whose body
+    //    happened to be near a vertex of the selected one. Result: only the
+    //    latest annotation could ever be re-selected.
+    const clicked = getAnnotationAtPoint(x, y);
+
+    // 2a) If clicking on the currently selected annotation, prefer its resize
+    //     handle (when the click is right on a vertex/handle); otherwise drag.
+    if (clicked && clicked.id === selectedAnnotationId) {
+      const hi = getResizeHandleAtPoint(clicked, pagePt.x, pagePt.y, handleTol);
+      if (hi !== -1) {
+        resizeAnnotation = clicked;
+        resizeHandleIndex = hi;
+        dragLast = pagePt;
+        redrawAnnotations(); return;
+      }
+      dragAnnotation = clicked;
+      dragLast = pagePt;
+      openPropertiesPanel(); redrawAnnotations(); return;
+    }
+
+    // 2b) Clicked on a different annotation — switch selection and begin drag.
+    if (clicked) {
+      selectedAnnotationId = clicked.id;
+      resizeAnnotation = null; resizeHandleIndex = -1;
+      dragAnnotation = clicked;
+      dragLast = pagePt;
+      openPropertiesPanel(); redrawAnnotations(); return;
+    }
+
+    // 2c) Empty space — but the click might still be on a resize handle that
+    //     extends slightly outside the annotation body (rare). Fall back to the
+    //     selected-annotation resize-handle check.
     if (selectedAnnotationId) {
       const selAnn = annotations.find(a => a.id === selectedAnnotationId);
       if (selAnn) {
@@ -2217,14 +2251,9 @@ function onCanvasMouseDown(e) {
       }
     }
 
-    // 3) Otherwise — clicking on an annotation body to select/drag it
-    const clicked = getAnnotationAtPoint(x, y);
-    selectedAnnotationId = clicked ? clicked.id : null;
+    // 2d) Empty click — deselect.
+    selectedAnnotationId = null;
     resizeAnnotation = null; resizeHandleIndex = -1;
-    if (clicked) {
-      dragAnnotation = clicked;
-      dragLast = pagePt;
-    }
     openPropertiesPanel(); redrawAnnotations(); return;
   }
   if (currentTool === 'pan' || e.button === 1) {
