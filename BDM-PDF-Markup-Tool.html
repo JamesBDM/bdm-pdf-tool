@@ -168,6 +168,16 @@ input, select, textarea { font: inherit; color: inherit; }
 .thumb-ctx-sep { height: 1px; background: var(--border-color); margin: 4px 8px; }
 .thumb-ctx-label { font-size: 10px; color: var(--text-muted); padding: 4px 14px; text-transform: uppercase; letter-spacing: 0.5px; }
 
+/* View dropdown — anchored to the View button rather than free-floating */
+.view-dropdown {
+  position: absolute; top: 100%; left: 0; z-index: 10000;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 6px; padding: 4px 0; min-width: 240px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); font-size: 12px; display: none;
+  margin-top: 2px;
+}
+.view-dropdown.visible { display: block; }
+
 /* COLOUR SWATCHES */
 .color-swatches {
   display: flex; flex-wrap: wrap; gap: 3px; padding: 2px 0;
@@ -454,9 +464,13 @@ canvas { display: block; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Open
     </button>
-    <button class="topbar-btn" onclick="saveProject()" title="Save as PDF (markups visible + editable on reopen)">
+    <button class="topbar-btn" onclick="saveProject()" title="Save (Ctrl+S) — overwrites the original file when opened via the app, otherwise downloads a copy">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       Save
+    </button>
+    <button class="topbar-btn" onclick="saveProjectAs()" title="Save As… (Ctrl+Shift+S) — choose a new location/filename">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/><line x1="20" y1="3" x2="20" y2="9"/><line x1="17" y1="6" x2="23" y2="6"/></svg>
+      Save As
     </button>
     <button class="topbar-btn" onclick="closeActiveDoc()" title="Close current PDF">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9.5" y1="13" x2="14.5" y2="18"/><line x1="14.5" y1="13" x2="9.5" y2="18"/></svg>
@@ -488,6 +502,43 @@ canvas { display: block; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       Search
     </button>
+    <div style="position:relative; display:inline-block;">
+      <button class="topbar-btn" id="btn-view" onclick="toggleViewMenu(event)" title="View options — rotate pages, fit to screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        View
+      </button>
+      <div id="view-menu" class="view-dropdown">
+        <div class="thumb-ctx-label">Current page</div>
+        <div class="thumb-ctx-item" onclick="rotateCurrentPageCW()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
+          Rotate Right (90°)
+        </div>
+        <div class="thumb-ctx-item" onclick="rotateCurrentPageCCW()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 103-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
+          Rotate Left (90°)
+        </div>
+        <div class="thumb-ctx-sep"></div>
+        <div class="thumb-ctx-label">All pages</div>
+        <div class="thumb-ctx-item" onclick="rotateAllPagesCW()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
+          Rotate All Right (90°)
+        </div>
+        <div class="thumb-ctx-item" onclick="rotateAllPagesCCW()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 103-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
+          Rotate All Left (90°)
+        </div>
+        <div class="thumb-ctx-sep"></div>
+        <div class="thumb-ctx-label">Zoom</div>
+        <div class="thumb-ctx-item" onclick="hideViewMenu(); zoomFit()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 8 4 4 8 4"/><polyline points="20 8 20 4 16 4"/><polyline points="4 16 4 20 8 20"/><polyline points="20 16 20 20 16 20"/></svg>
+          Fit to Width
+        </div>
+        <div class="thumb-ctx-item" onclick="hideViewMenu(); resetZoom()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          100% (Ctrl+0)
+        </div>
+      </div>
+    </div>
     <div class="separator"></div>
     <button class="topbar-btn" onclick="flattenAndDownload()" title="Flatten markups into PDF and download">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -719,6 +770,10 @@ let pdfMetadata = {};
 let calBannerDismissed = {};
 let lastNavTool = 'select'; // Tracks last select/pan tool to return to after drawing
 let currentFilename = 'document.pdf';
+// File System Access handle for the currently-loaded PDF. When set, Save writes
+// back to the original file. When null (drag-drop on older browsers, or files
+// loaded via the legacy file input), Save falls back to a Downloads-folder copy.
+let currentFileHandle = null;
 // Zoom/render coordination — prevents glitches on fast zoom
 let currentRenderTask = null;   // pdf.js RenderTask currently in-flight (has .cancel())
 let renderToken = 0;            // Increments each renderPage call; stale calls bail out
@@ -869,10 +924,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!launchParams || !launchParams.files || launchParams.files.length === 0) return;
       try {
         // Take the first file handed in. (Multi-file support could be added later.)
+        // The handle is writable, so Save can overwrite the original.
         const fileHandle = launchParams.files[0];
         const file = await fileHandle.getFile();
         const buf = await file.arrayBuffer();
-        await loadPdf(buf, file.name);
+        await loadPdf(buf, file.name, fileHandle);
       } catch (err) {
         console.error('PWA file launch failed:', err);
       }
@@ -881,13 +937,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Global drag-drop for initial PDF open
   document.addEventListener('dragover', (e) => { e.preventDefault(); });
-  document.addEventListener('drop', (e) => {
+  document.addEventListener('drop', async (e) => {
     if (!pdfDoc && e.dataTransfer.files[0]?.type === 'application/pdf') {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
-      const reader = new FileReader();
-      reader.onload = (ev) => loadPdf(ev.target.result, file.name);
-      reader.readAsArrayBuffer(file);
+      // Try to get a writable handle from the drop (Chrome/Edge). If the browser
+      // doesn't support it, we still load the file but Save will fall back to a
+      // Downloads copy.
+      let handle = null;
+      try {
+        const item = e.dataTransfer.items && e.dataTransfer.items[0];
+        if (item && typeof item.getAsFileSystemHandle === 'function') {
+          const h = await item.getAsFileSystemHandle();
+          if (h && h.kind === 'file') handle = h;
+        }
+      } catch (_) { /* ignore — fall through to no-handle load */ }
+      const buf = await file.arrayBuffer();
+      await loadPdf(buf, file.name, handle);
     }
   });
 
@@ -929,6 +995,7 @@ function captureActiveDocState() {
   d.pdfMetadata = pdfMetadata;
   d.calBannerDismissed = calBannerDismissed;
   d.currentFilename = currentFilename;
+  d.currentFileHandle = currentFileHandle;
 }
 
 function restoreDocState(idx) {
@@ -949,6 +1016,7 @@ function restoreDocState(idx) {
   pdfMetadata = d.pdfMetadata || {};
   calBannerDismissed = d.calBannerDismissed || {};
   currentFilename = d.currentFilename || 'document.pdf';
+  currentFileHandle = d.currentFileHandle || null;
   activeDocIndex = idx;
 
   document.getElementById('filename').textContent = currentFilename;
@@ -992,6 +1060,7 @@ function closeDoc(idx) {
     pdfMetadata = {};
     calBannerDismissed = {};
     currentFilename = 'document.pdf';
+    currentFileHandle = null;
     currentPage = 0;
     activeDocIndex = -1;
 
@@ -1045,7 +1114,28 @@ function renderDocTabs() {
   }).join('');
 }
 
-function openFile() { document.getElementById('pdf-input').click(); }
+async function openFile() {
+  // Prefer the File System Access API (Chrome/Edge): gives us a writable
+  // handle so Save can overwrite the original file in place.
+  if (typeof window.showOpenFilePicker === 'function') {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'PDF files', accept: { 'application/pdf': ['.pdf'] } }],
+        multiple: false,
+        excludeAcceptAllOption: false
+      });
+      const file = await handle.getFile();
+      const buf = await file.arrayBuffer();
+      await loadPdf(buf, file.name, handle);
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // user cancelled
+      console.warn('showOpenFilePicker failed, falling back:', err);
+    }
+  }
+  // Fallback for older browsers — produces a non-writable File (Save will download).
+  document.getElementById('pdf-input').click();
+}
 function handleFileSelect(event) {
   const file = event.target.files[0];
   if (file?.type === 'application/pdf') {
@@ -1056,11 +1146,14 @@ function handleFileSelect(event) {
   event.target.value = '';
 }
 
-async function loadPdf(arrayBuffer, filename) {
+async function loadPdf(arrayBuffer, filename, fileHandle = null) {
   try {
     // Snapshot the currently-active doc (if any) so it survives when we
     // overwrite the globals with the new document's state.
     if (activeDocIndex >= 0) captureActiveDocState();
+    // Remember the writable handle (if we got one) so Save can overwrite the
+    // original file instead of creating a Downloads-folder copy.
+    currentFileHandle = fileHandle || null;
 
     // .slice() creates a TRUE independent copy — new Uint8Array(buf) is just a view on the same
     // memory and becomes invalid when pdf.js transfers the ArrayBuffer to its web worker
@@ -1146,7 +1239,7 @@ async function loadPdf(arrayBuffer, filename) {
       annotations, selectedAnnotationId, history, historyIndex,
       measurements, countGroups, currentCountGroup,
       pageCalibrations, pdfMetadata, calBannerDismissed,
-      currentFilename
+      currentFilename, currentFileHandle
     };
     openDocs.push(newDocEntry);
     activeDocIndex = openDocs.length - 1;
@@ -2214,6 +2307,9 @@ function onKeyDown(e) {
   else if ((e.ctrlKey||e.metaKey) && key === '0') { e.preventDefault(); resetZoom(); }
   else if ((e.ctrlKey||e.metaKey) && key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if ((e.ctrlKey||e.metaKey) && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+  else if ((e.ctrlKey||e.metaKey) && key === 's' && !e.shiftKey) { e.preventDefault(); saveProject(); }
+  else if ((e.ctrlKey||e.metaKey) && key === 's' && e.shiftKey) { e.preventDefault(); saveProjectAs(); }
+  else if ((e.ctrlKey||e.metaKey) && key === 'o') { e.preventDefault(); openFile(); }
   else if ((e.ctrlKey||e.metaKey) && key === 'f') { e.preventDefault(); openSearchDialog(); }
   else if (key === 'enter' && (currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon')) finishPolyShape();
   else if (key === 'pagedown' || key === 'arrowright') { e.preventDefault(); nextPage(); }
@@ -3650,6 +3746,57 @@ async function thumbCtxRotateCW() {
   } catch(err) { alert('Error rotating: ' + err.message); }
 }
 
+// ============================================================
+// VIEW MENU — rotate pages (current or all) from the top toolbar
+// ============================================================
+function toggleViewMenu(e) {
+  if (e) e.stopPropagation();
+  const menu = document.getElementById('view-menu');
+  if (!menu) return;
+  menu.classList.toggle('visible');
+}
+function hideViewMenu() {
+  const menu = document.getElementById('view-menu');
+  if (menu) menu.classList.remove('visible');
+}
+
+async function rotateCurrentPageCW() { hideViewMenu(); await rotatePages([currentPage], 90); }
+async function rotateCurrentPageCCW() { hideViewMenu(); await rotatePages([currentPage], 270); }
+async function rotateAllPagesCW() { hideViewMenu(); await rotatePages(null, 90); }
+async function rotateAllPagesCCW() { hideViewMenu(); await rotatePages(null, 270); }
+
+// Core rotation routine. pageIndices = array of 0-based page numbers, or null = all pages.
+// delta = degrees to add (90 = CW, 270 = CCW).
+async function rotatePages(pageIndices, delta) {
+  if (!pdfDoc || !currentPdfBytes) { alert('No PDF loaded'); return; }
+  try {
+    const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    const count = doc.getPageCount();
+    const targets = (pageIndices === null) ? Array.from({length: count}, (_, i) => i) : pageIndices;
+    for (const i of targets) {
+      if (i < 0 || i >= count) continue;
+      const page = doc.getPage(i);
+      const cur = page.getRotation().angle;
+      page.setRotation(PDFLib.degrees((cur + delta) % 360));
+    }
+    await rebuildPdf(doc);
+    renderPage(currentPage);
+    saveToHistory();
+  } catch (err) {
+    console.error('Rotate failed:', err);
+    alert('Error rotating: ' + err.message);
+  }
+}
+
+// Close the View menu when clicking anywhere else on the page
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('view-menu');
+  const btn = document.getElementById('btn-view');
+  if (!menu || !menu.classList.contains('visible')) return;
+  if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+  menu.classList.remove('visible');
+});
+
 async function thumbCtxRotateCCW() {
   hideThumbContextMenu();
   try {
@@ -3779,6 +3926,96 @@ function downloadBlob(data, mimeType, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = filename;
   a.click(); URL.revokeObjectURL(url);
+}
+
+// Write the saved PDF bytes. If we have a writable handle for the original
+// file (because it was opened via launchQueue, the new Open dialog, or drag-
+// drop on a supporting browser), overwrite the original IN PLACE. Otherwise
+// fall back to a normal browser download.
+async function writeSavedBytes(savedBytes) {
+  if (currentFileHandle && typeof currentFileHandle.createWritable === 'function') {
+    try {
+      // Permission check — handles obtained via launchQueue are already granted,
+      // but handles from drag-drop / showOpenFilePicker may need a re-grant on
+      // some browser versions before write.
+      if (typeof currentFileHandle.queryPermission === 'function') {
+        let perm = await currentFileHandle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted' && typeof currentFileHandle.requestPermission === 'function') {
+          perm = await currentFileHandle.requestPermission({ mode: 'readwrite' });
+        }
+        if (perm !== 'granted') {
+          alert('Save back to the original file was blocked. Saving a copy to Downloads instead.');
+          downloadBlob(savedBytes, 'application/pdf', currentFilename);
+          return;
+        }
+      }
+      const writable = await currentFileHandle.createWritable();
+      await writable.write(savedBytes);
+      await writable.close();
+      // Tiny on-screen confirmation so the user knows it actually wrote in place.
+      showSaveToast('Saved to ' + currentFilename);
+      return;
+    } catch (err) {
+      console.error('In-place save failed, falling back to download:', err);
+      alert('Could not save back to the original file (' + (err.message || err.name) + ').\nSaving a copy to Downloads instead.');
+      // fall through to download
+    }
+  }
+  downloadBlob(savedBytes, 'application/pdf', currentFilename);
+}
+
+// Explicit "Save As…" — always prompts for a new location, and (on success)
+// adopts the new file as the live file so subsequent Saves overwrite it.
+async function saveProjectAs() {
+  if (typeof window.showSaveFilePicker !== 'function') {
+    // No File System Access API — fall back to a normal Save (which downloads).
+    return saveProject();
+  }
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: currentFilename || 'document.pdf',
+      types: [{ description: 'PDF files', accept: { 'application/pdf': ['.pdf'] } }]
+    });
+    // Temporarily swap in the new handle so saveProject writes to it.
+    const previousHandle = currentFileHandle;
+    const previousName = currentFilename;
+    currentFileHandle = handle;
+    try { currentFilename = handle.name || currentFilename; } catch (_) {}
+    try {
+      await saveProject();
+      // Reflect the new name in the title bar/tab
+      const fnEl = document.getElementById('filename');
+      if (fnEl) fnEl.textContent = currentFilename;
+      renderDocTabs();
+    } catch (err) {
+      // Restore previous identity on failure
+      currentFileHandle = previousHandle;
+      currentFilename = previousName;
+      throw err;
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // user cancelled
+    console.error('Save As failed:', err);
+    alert('Save As failed: ' + (err.message || err.name));
+  }
+}
+
+// Small transient toast so in-place saves get visible feedback.
+function showSaveToast(msg) {
+  let toast = document.getElementById('bdm-save-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'bdm-save-toast';
+    toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);'
+      + 'background:#1a1b2e;color:#e8e9f0;border:1px solid #D97757;padding:8px 16px;'
+      + 'border-radius:6px;font:13px "Segoe UI",sans-serif;z-index:9999;'
+      + 'box-shadow:0 4px 12px rgba(0,0,0,0.4);opacity:0;transition:opacity 0.2s';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2200);
 }
 
 // ============================================================
@@ -4069,7 +4306,7 @@ async function saveProject() {
     }
 
     const savedBytes = await outDoc.save();
-    downloadBlob(savedBytes, 'application/pdf', currentFilename);
+    await writeSavedBytes(savedBytes);
   } catch (err) {
     console.error('Save error:', err);
     alert('Error saving PDF: ' + err.message);
