@@ -460,6 +460,45 @@ canvas { display: block; }
   <div id="topbar">
     <div class="logo">BDM <span>PDF Tool</span></div>
     <div class="separator"></div>
+    <div style="position:relative; display:inline-block;">
+      <button class="topbar-btn" id="btn-new" onclick="toggleNewMenu(event)" title="Create new document or add a blank page">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        New
+      </button>
+      <div id="new-menu" class="view-dropdown">
+        <div class="thumb-ctx-label">New document</div>
+        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a4-portrait')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="1"/></svg>
+          Blank — A4 Portrait
+        </div>
+        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a4-landscape')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="1"/></svg>
+          Blank — A4 Landscape
+        </div>
+        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a3-portrait')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="1"/></svg>
+          Blank — A3 Portrait
+        </div>
+        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a3-landscape')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="1"/></svg>
+          Blank — A3 Landscape
+        </div>
+        <div class="thumb-ctx-sep"></div>
+        <div class="thumb-ctx-label">Add to current document</div>
+        <div class="thumb-ctx-item" onclick="addBlankPageAfterCurrent('same')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          Add Blank Page (same size)
+        </div>
+        <div class="thumb-ctx-item" onclick="addBlankPageAfterCurrent('a4-portrait')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="1"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+          Add Blank Page — A4 Portrait
+        </div>
+        <div class="thumb-ctx-item" onclick="addBlankPageAfterCurrent('a4-landscape')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="1"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+          Add Blank Page — A4 Landscape
+        </div>
+      </div>
+    </div>
     <button class="topbar-btn" onclick="openFile()" title="Open PDF (Ctrl+O)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Open
@@ -540,6 +579,10 @@ canvas { display: block; }
       </div>
     </div>
     <div class="separator"></div>
+    <button class="topbar-btn" onclick="snipFromClipboard()" title="Paste a screenshot from the clipboard. Tip: Win+Shift+S to snip, then click this — or press Ctrl+V">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l3-3 3 3"/><path d="M8 1v8"/><rect x="3" y="9" width="18" height="13" rx="2"/><line x1="3" y1="14" x2="21" y2="14"/></svg>
+      Snip
+    </button>
     <button class="topbar-btn" onclick="flattenAndDownload()" title="Flatten markups into PDF and download">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Flatten
@@ -751,6 +794,14 @@ let startPoint = null;
 let currentMovePoint = null;
 let dragAnnotation = null;
 let dragLast = null;
+let labelDragAnnotation = null; // measurement annotation whose label is being dragged
+// Area tool drag-rectangle tracking. If the user presses down with the area
+// tool and drags before releasing, we treat that as a rectangle measurement
+// (with shift held = square). If they just click, we stay in polygon mode.
+let areaDragStartScreen = null;
+let areaDragCurrentScreen = null;
+let areaDragShiftHeld = false; // updated on mousemove so the preview can lock to a square
+const AREA_DRAG_THRESHOLD = 5; // screen-px distance that counts as a drag
 let resizeAnnotation = null;
 let resizeHandleIndex = -1;
 let measurements = [];
@@ -894,6 +945,36 @@ document.addEventListener('DOMContentLoaded', () => {
   annotationCanvas.addEventListener('contextmenu', onCanvasRightClick);
   canvasWrapper.addEventListener('wheel', onCanvasWheel, { passive: false });
 
+  // Wrapper-level pan support — needed for continuous/side-by-side views
+  // where there is no top-level annotation-canvas to attach to. Single-page
+  // view still uses the canvas-level handlers above; we skip those targets
+  // here to avoid double-firing.
+  canvasWrapper.addEventListener('mousedown', (e) => {
+    if (e.target && e.target.id === 'annotation-canvas') return; // handled elsewhere
+    if (currentTool === 'pan' || e.button === 1) {
+      panStart = { x: e.clientX, y: e.clientY };
+      document.getElementById('canvas-area').classList.add('active');
+      e.preventDefault();
+    }
+  });
+  canvasWrapper.addEventListener('mousemove', (e) => {
+    if (!panStart) return;
+    canvasWrapper.scrollLeft -= (e.clientX - panStart.x);
+    canvasWrapper.scrollTop  -= (e.clientY - panStart.y);
+    panStart = { x: e.clientX, y: e.clientY };
+  });
+  // End the pan if the mouse goes up anywhere on the page, even outside the wrapper.
+  document.addEventListener('mouseup', () => {
+    if (panStart) {
+      panStart = null;
+      document.getElementById('canvas-area').classList.remove('active');
+    }
+  });
+  // Suppress the right-click context menu when panning with middle/right button.
+  canvasWrapper.addEventListener('contextmenu', (e) => {
+    if (currentTool === 'pan') e.preventDefault();
+  });
+
   // Keyboard
   document.addEventListener('keydown', onKeyDown);
 
@@ -959,6 +1040,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Drop zone click
   document.getElementById('drop-zone').addEventListener('click', openFile);
+
+  // ============================================================
+  // Clipboard image paste — Ctrl+V drops an image annotation onto the
+  // current page. Works with Windows Snip (Win+Shift+S), macOS shift-cmd-4,
+  // Photos app copy, etc. Skipped when the user is typing in an input.
+  // ============================================================
+  document.addEventListener('paste', async (e) => {
+    if (!pdfDoc) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for (const item of items) {
+      if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+        const blob = item.getAsFile();
+        if (blob) {
+          e.preventDefault();
+          await addImageFromBlob(blob);
+          return;
+        }
+      }
+    }
+  });
 
   // Load saved presets
   try { toolPresets = JSON.parse(localStorage.getItem('bdm-tool-presets') || '[]'); } catch(e) { toolPresets = []; }
@@ -1481,6 +1584,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     case 'text': drawTextAnn(ctx, ann); break;
     case 'callout': drawCalloutAnn(ctx, ann); break;
     case 'stamp': drawStampAnn(ctx, ann); break;
+    case 'image': drawImageAnn(ctx, ann); break;
     case 'pen': drawPenAnn(ctx, ann); break;
     case 'highlight': drawHighlightAnn(ctx, ann); break;
     case 'count': drawCountAnn(ctx, ann); break;
@@ -1496,7 +1600,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     const pts = getAnnotationHandlePoints(ann);
     pts.forEach(p => { if(p) ctx.fillRect(p.x - hs, p.y - hs, hs*2, hs*2); });
     // Draw bounding box for resizable shapes
-    if (['rectangle','ellipse','highlight','cutcontent'].includes(ann.type) && ann.points && ann.points.length === 2) {
+    if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points && ann.points.length === 2) {
       ctx.strokeStyle = '#D97757'; ctx.lineWidth = 1 / currentScale; ctx.setLineDash([4/currentScale, 4/currentScale]);
       const [a,b] = ann.points;
       ctx.strokeRect(Math.min(a.x,b.x), Math.min(a.y,b.y), Math.abs(b.x-a.x), Math.abs(b.y-a.y));
@@ -1566,7 +1670,8 @@ function drawMeasureLine(ctx, ann) {
   const dist = Math.hypot(p2.x-p1.x, p2.y-p1.y);
   const label = getCalibratedLabel(dist, ann.page);
   ann.label = label;
-  drawLabel(ctx, label, {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2});
+  const basePos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
+  drawLabel(ctx, label, offsetPos(basePos, ann), { ann, recordKey: '_labelRect' });
 }
 
 function drawPolylineMeasure(ctx, ann) {
@@ -1577,7 +1682,10 @@ function drawPolylineMeasure(ctx, ann) {
   for (let i = 1; i < ann.points.length; i++) totalDist += Math.hypot(ann.points[i].x-ann.points[i-1].x, ann.points[i].y-ann.points[i-1].y);
   const label = getCalibratedLabel(totalDist, ann.page);
   ann.label = label;
-  if (ann.points.length > 1) drawLabel(ctx, label, ann.points[Math.floor(ann.points.length/2)]);
+  if (ann.points.length > 1) {
+    const basePos = ann.points[Math.floor(ann.points.length/2)];
+    drawLabel(ctx, label, offsetPos(basePos, ann), { ann, recordKey: '_labelRect' });
+  }
 }
 
 function drawAreaMeasure(ctx, ann) {
@@ -1600,8 +1708,9 @@ function drawAreaMeasure(ctx, ann) {
   const perimLabel = getCalibratedLabel(perim, ann.page);
   ann.label = areaLabel; ann.perimLabel = perimLabel;
   const c = getCentroid(ann.points);
-  drawLabel(ctx, areaLabel, c);
-  drawLabel(ctx, 'P: '+perimLabel, {x: c.x, y: c.y + 14});
+  const labelPos = offsetPos(c, ann);
+  drawLabel(ctx, areaLabel, labelPos, { ann, recordKey: '_labelRect' });
+  drawLabel(ctx, 'P: '+perimLabel, { x: labelPos.x, y: labelPos.y + 14 }, { ann, recordKey: '_perimRect' });
 }
 
 function drawRect(ctx, ann) {
@@ -1764,6 +1873,41 @@ function drawStampAnn(ctx, ann) {
   ctx.textAlign = 'left';
 }
 
+// Image annotation — typically pasted from a screenshot (Win+Shift+S → Ctrl+V).
+// ann.points = [topLeft, bottomRight], ann.src = data: URL (PNG or JPEG).
+// HTMLImageElements are cached by data URL so we don't decode on every redraw.
+const _imageElementCache = new Map();
+function getCachedImageElement(src, onLoad) {
+  let img = _imageElementCache.get(src);
+  if (img && img.complete && img.naturalWidth > 0) return img;
+  if (img) return null; // still loading
+  img = new Image();
+  img.onload = () => { if (onLoad) onLoad(); };
+  img.onerror = () => { console.warn('Image annotation failed to load'); };
+  img.src = src;
+  _imageElementCache.set(src, img);
+  return null;
+}
+function drawImageAnn(ctx, ann) {
+  if (!ann.points || ann.points.length < 2 || !ann.src) return;
+  const [a, b] = ann.points;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+  const img = getCachedImageElement(ann.src, () => redrawAnnotations());
+  ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity / 100 : 1;
+  if (img) {
+    try { ctx.drawImage(img, x, y, w, h); }
+    catch (e) { /* image not ready — placeholder below */ }
+  } else {
+    // Placeholder while loading
+    ctx.fillStyle = 'rgba(217,119,87,0.10)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(217,119,87,0.6)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+  }
+}
+
 function drawPenAnn(ctx, ann) {
   if (!ann.points || ann.points.length < 2) return;
   ctx.beginPath(); ctx.moveTo(ann.points[0].x, ann.points[0].y);
@@ -1809,7 +1953,8 @@ function drawDimensionAnn(ctx, ann) {
   const dist = Math.hypot(dx, dy);
   const label = getCalibratedLabel(dist, ann.page);
   ann.label = label;
-  drawLabel(ctx, label, {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2});
+  const dimPos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
+  drawLabel(ctx, label, offsetPos(dimPos, ann), { ann, recordKey: '_labelRect' });
 }
 
 function drawCutContentAnn(ctx, ann) {
@@ -1826,16 +1971,38 @@ function drawCutContentAnn(ctx, ann) {
   ctx.restore();
 }
 
-function drawLabel(ctx, text, pos) {
+// Draws a measurement label. opts (all optional):
+//   ann        — annotation to read labelColor / labelBg / labelFontSize from
+//   recordKey  — name of a key on ann to store the rendered rect for later hit-tests
+function drawLabel(ctx, text, pos, opts) {
+  opts = opts || {};
+  const ann = opts.ann || {};
+  const fontSize = ann.labelFontSize || 11;
+  const bg = ann.labelBg || 'rgba(18,19,26,0.8)';
+  const fg = ann.labelColor || '#D97757';
   ctx.save();
   ctx.globalAlpha = 1;
-  ctx.font = `11px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.font = `${fontSize}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
   const w = ctx.measureText(text).width + 8;
-  ctx.fillStyle = 'rgba(18,19,26,0.8)';
-  ctx.fillRect(pos.x - w/2, pos.y - 18, w, 16);
-  ctx.fillStyle = '#D97757';
+  const h = fontSize + 5;
+  const rx = pos.x - w/2, ry = pos.y - h - 2;
+  ctx.fillStyle = bg;
+  ctx.fillRect(rx, ry, w, h);
+  ctx.fillStyle = fg;
   ctx.fillText(text, pos.x, pos.y - 4);
   ctx.restore();
+  // Stash the rendered rectangle so we can hit-test the label for dragging.
+  if (opts.recordKey && opts.ann) {
+    opts.ann[opts.recordKey] = { x: rx, y: ry, w, h };
+  }
+}
+
+// Apply an annotation's labelOffset (set when the user drags the label).
+function offsetPos(p, ann) {
+  if (!ann || !ann.labelOffset) return p;
+  return { x: p.x + (ann.labelOffset.dx || 0), y: p.y + (ann.labelOffset.dy || 0) };
 }
 
 // ============================================================
@@ -1851,7 +2018,7 @@ function getAnnotationHandlePoints(ann) {
     return [ann.points[0]];
   }
   // For two-point shapes (rectangle, ellipse, highlight, cutcontent), return 8 handles (corners + midpoints)
-  if (['rectangle','ellipse','highlight','cutcontent'].includes(ann.type) && ann.points.length === 2) {
+  if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points.length === 2) {
     const [a, b] = ann.points;
     const minX = Math.min(a.x,b.x), maxX = Math.max(a.x,b.x), minY = Math.min(a.y,b.y), maxY = Math.max(a.y,b.y);
     const midX = (minX+maxX)/2, midY = (minY+maxY)/2;
@@ -1890,7 +2057,7 @@ function applyResize(ann, handleIdx, newPagePt) {
   }
 
   // Two-point shapes with 8 resize handles (corners + midpoints)
-  if (['rectangle','ellipse','highlight','cutcontent'].includes(ann.type) && ann.points && ann.points.length === 2) {
+  if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points && ann.points.length === 2) {
     const [a, b] = ann.points;
     let minX = Math.min(a.x,b.x), maxX = Math.max(a.x,b.x);
     let minY = Math.min(a.y,b.y), maxY = Math.max(a.y,b.y);
@@ -1965,7 +2132,27 @@ function drawInProgress(ctx) {
     }
   }
 
-  if ((currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') && polylinePoints.length > 0) {
+  // Live preview for the area drag-to-rectangle shortcut. Shown only while the
+  // user is mid-drag in area mode (one anchor placed + cursor moved).
+  if (currentTool === 'area' && areaDragStartScreen && areaDragCurrentScreen && isDrawing) {
+    let end = areaDragCurrentScreen;
+    // Hold Shift while dragging to lock to a square
+    const dxs = end.x - areaDragStartScreen.x;
+    const dys = end.y - areaDragStartScreen.y;
+    if (areaDragShiftHeld) {
+      const side = Math.max(Math.abs(dxs), Math.abs(dys));
+      end = {
+        x: areaDragStartScreen.x + Math.sign(dxs || 1) * side,
+        y: areaDragStartScreen.y + Math.sign(dys || 1) * side,
+      };
+    }
+    const p1 = toPage(areaDragStartScreen);
+    const p2 = toPage(end);
+    if (Math.hypot(p2.x - p1.x, p2.y - p1.y) * currentScale >= AREA_DRAG_THRESHOLD) {
+      ctx.strokeRect(Math.min(p1.x, p2.x), Math.min(p1.y, p2.y),
+                     Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y));
+    }
+  } else if ((currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') && polylinePoints.length > 0) {
     const pagePts = polylinePoints.map(p => toPage(p));
     ctx.beginPath(); ctx.moveTo(pagePts[0].x, pagePts[0].y);
     pagePts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
@@ -2000,7 +2187,23 @@ function onCanvasMouseDown(e) {
     const pagePt = toPage(screenPt);
     const handleTol = 8 / currentScale;
 
-    // Check if clicking a resize handle on the currently selected annotation
+    // 1) Clicking on a measurement label → drag just the label, not the line/area.
+    //    Search topmost-first so overlapping labels behave correctly.
+    for (let i = annotations.length - 1; i >= 0; i--) {
+      const a = annotations[i];
+      if (a.page !== currentPage) continue;
+      if (!['measure','polyline','area','dimension'].includes(a.type)) continue;
+      if (hitTestLabel(pagePt.x, pagePt.y, a)) {
+        selectedAnnotationId = a.id;
+        labelDragAnnotation = a;
+        dragLast = pagePt;
+        openPropertiesPanel();
+        redrawAnnotations();
+        return;
+      }
+    }
+
+    // 2) Clicking a resize handle on the currently selected annotation
     if (selectedAnnotationId) {
       const selAnn = annotations.find(a => a.id === selectedAnnotationId);
       if (selAnn) {
@@ -2014,7 +2217,7 @@ function onCanvasMouseDown(e) {
       }
     }
 
-    // Otherwise, check for clicking on an annotation to select/drag it
+    // 3) Otherwise — clicking on an annotation body to select/drag it
     const clicked = getAnnotationAtPoint(x, y);
     selectedAnnotationId = clicked ? clicked.id : null;
     resizeAnnotation = null; resizeHandleIndex = -1;
@@ -2062,7 +2265,12 @@ function onCanvasMouseDown(e) {
   isDrawing = true; startPoint = startSnap; currentMovePoint = startSnap;
 
   if (currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') {
-    polylinePoints.push(startSnap); redrawAnnotations(); return;
+    polylinePoints.push(startSnap);
+    // Reset the drag-rectangle tracker; mousemove fills this in if the user
+    // drags after pressing down (rather than releasing at the same spot).
+    areaDragStartScreen = (currentTool === 'area' && polylinePoints.length === 1) ? startSnap : null;
+    areaDragCurrentScreen = null;
+    redrawAnnotations(); return;
   }
   if (currentTool === 'pen' || currentTool === 'highlight' || currentTool === 'cloud') {
     polylinePoints = [screenPt]; return;
@@ -2093,6 +2301,20 @@ function onCanvasMouseMove(e) {
     const screenPt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const pagePt = toPage(screenPt);
     applyResize(resizeAnnotation, resizeHandleIndex, pagePt);
+    dragLast = pagePt;
+    redrawAnnotations();
+    return;
+  }
+
+  // Handle drag-to-move-label on a measurement annotation
+  if (labelDragAnnotation) {
+    const rect = e.target.getBoundingClientRect();
+    const screenPt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const pagePt = toPage(screenPt);
+    const delta = { x: pagePt.x - dragLast.x, y: pagePt.y - dragLast.y };
+    if (!labelDragAnnotation.labelOffset) labelDragAnnotation.labelOffset = { dx: 0, dy: 0 };
+    labelDragAnnotation.labelOffset.dx += delta.x;
+    labelDragAnnotation.labelOffset.dy += delta.y;
     dragLast = pagePt;
     redrawAnnotations();
     return;
@@ -2129,6 +2351,12 @@ function onCanvasMouseMove(e) {
   if (!['pen','highlight','cloud'].includes(currentTool)) screenPt = snapScreenPoint(screenPt);
   currentMovePoint = screenPt;
 
+  // Track area-tool drag for the rectangle/square shortcut
+  if (currentTool === 'area' && areaDragStartScreen) {
+    areaDragCurrentScreen = screenPt;
+    areaDragShiftHeld = !!e.shiftKey;
+  }
+
   if (currentTool === 'pen' || currentTool === 'highlight' || currentTool === 'cloud') {
     polylinePoints.push(screenPt);
   }
@@ -2142,6 +2370,15 @@ function onCanvasMouseUp(e) {
   if (resizeAnnotation) {
     resizeAnnotation = null;
     resizeHandleIndex = -1;
+    dragLast = null;
+    saveToHistory();
+    redrawAnnotations();
+    return;
+  }
+
+  // Handle label-drag completion
+  if (labelDragAnnotation) {
+    labelDragAnnotation = null;
     dragLast = null;
     saveToHistory();
     redrawAnnotations();
@@ -2169,6 +2406,61 @@ function onCanvasMouseUp(e) {
   // Convert screen-space tracking points to page-space for storage
   const sp = startPoint ? toPage(startPoint) : null;
   const ep = toPage(screenEnd);
+
+  // ===== Area drag-to-rectangle =====
+  // If the user pressed down with the area tool and dragged before releasing,
+  // create a rectangle area measurement instead of starting a polygon.
+  if (currentTool === 'area' && areaDragStartScreen && polylinePoints.length === 1) {
+    const dx = screenEnd.x - areaDragStartScreen.x;
+    const dy = screenEnd.y - areaDragStartScreen.y;
+    if (Math.hypot(dx, dy) >= AREA_DRAG_THRESHOLD) {
+      // Shift held → constrain to a perfect square (use the larger axis length)
+      let endScreen = { x: screenEnd.x, y: screenEnd.y };
+      if (e.shiftKey) {
+        const side = Math.max(Math.abs(dx), Math.abs(dy));
+        endScreen = {
+          x: areaDragStartScreen.x + Math.sign(dx || 1) * side,
+          y: areaDragStartScreen.y + Math.sign(dy || 1) * side,
+        };
+      }
+      const p1 = toPage(areaDragStartScreen);
+      const p2 = toPage(endScreen);
+      const corners = [
+        { x: p1.x, y: p1.y },
+        { x: p2.x, y: p1.y },
+        { x: p2.x, y: p2.y },
+        { x: p1.x, y: p2.y },
+      ];
+      const ann = {
+        id: generateId(), type: 'area', page: currentPage, points: corners,
+        label: '', perimLabel: '', measLabel: '',
+        color: toolProperties.color, fillColor: toolProperties.fillColor,
+        fillOpacity: toolProperties.fillOpacity, thickness: toolProperties.thickness,
+        opacity: toolProperties.opacity, hatch: 'none'
+      };
+      annotations.push(ann);
+      const aPx = getPolygonArea(corners);
+      const aLabel = getCalibratedArea(aPx, currentPage);
+      measurements.push({ id: ann.id, page: currentPage, type: 'area', label: '', value: aLabel });
+
+      // Clear any in-flight polygon state and return to nav
+      polylinePoints = [];
+      areaDragStartScreen = null;
+      areaDragCurrentScreen = null;
+      areaDragShiftHeld = false;
+      isDrawing = false;
+      currentMovePoint = null;
+      saveToHistory();
+      redrawAnnotations();
+      returnToNavTool();
+      return;
+    }
+    // No drag — leave polylinePoints in place so a follow-up click extends the polygon.
+    areaDragStartScreen = null;
+    areaDragCurrentScreen = null;
+    areaDragShiftHeld = false;
+  }
+
   isDrawing = false;
   currentMovePoint = null;
 
@@ -2698,7 +2990,7 @@ function hitTest(x, y, ann, tol) {
   switch(ann.type) {
     case 'measure': case 'line': case 'arrow': case 'dimension':
       return ptNearLine(x,y, ann.points[0], ann.points[1], tol);
-    case 'rectangle': case 'highlight': case 'cutcontent': {
+    case 'rectangle': case 'highlight': case 'cutcontent': case 'image': {
       const [a,b] = ann.points;
       return x >= Math.min(a.x,b.x)-tol && x <= Math.max(a.x,b.x)+tol && y >= Math.min(a.y,b.y)-tol && y <= Math.max(a.y,b.y)+tol;
     }
@@ -2738,6 +3030,19 @@ function hitTest(x, y, ann, tol) {
       return Math.hypot(x-ann.points[0].x, y-ann.points[0].y) <= tol+10;
     default: return false;
   }
+}
+
+// Returns true if (x, y) in page space is inside this annotation's drawn label
+// rectangle. Used so the user can grab and reposition the measurement label
+// without moving the underlying line/area.
+function hitTestLabel(x, y, ann) {
+  const rects = [];
+  if (ann._labelRect) rects.push(ann._labelRect);
+  if (ann._perimRect) rects.push(ann._perimRect);
+  for (const r of rects) {
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return true;
+  }
+  return false;
 }
 
 function ptNearLine(x,y,p1,p2,tol) {
@@ -2919,6 +3224,23 @@ function getAnnotationPropertiesHTML(ann) {
     html += `</div></div>`;
   }
 
+  // Label styling for measurement annotations — text colour, background colour,
+  // font size, and a reset-position button to undo any manual label drag.
+  if (['measure','polyline','area','dimension'].includes(ann.type)) {
+    const lc = ann.labelColor || '#D97757';
+    // Convert the rgba default background to a hex for the colour input. The
+    // input value is what the user sees as a starting swatch.
+    const lbg = ann.labelBg || '#12131a';
+    html += `<div class="properties-section"><div class="properties-section-title">Label</div><div class="properties-section-content">
+      <div class="property-row"><div class="property-label">Text Color:</div><input type="color" id="prop-labelcolor" class="color-picker" value="${lc}"></div>
+      <div class="color-swatches" data-target="prop-labelcolor"></div>
+      <div class="property-row"><div class="property-label">Background:</div><input type="color" id="prop-labelbg" class="color-picker" value="${lbg}"></div>
+      <div class="color-swatches" data-target="prop-labelbg"></div>
+      <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-labelfontsize" class="property-input" min="8" max="32" step="1" value="${ann.labelFontSize||11}"></div>
+      <div class="property-row"><button id="prop-labelreset" style="flex:1;padding:6px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer">Reset Label Position</button></div>
+    </div></div>`;
+  }
+
   html += `<div class="properties-section"><div class="properties-section-content">
     <button onclick="deleteSelectedAnnotation()" style="width:100%;padding:7px;background:var(--danger);color:white;border-radius:4px;font-weight:600;font-size:12px">Delete Annotation</button>
   </div></div>`;
@@ -3005,6 +3327,17 @@ function attachAnnotationListeners(ann) {
 
   // Callout box fill colour
   bind('prop-callout-fill', 'fillColor');
+
+  // Measurement label styling
+  bind('prop-labelcolor', 'labelColor');
+  bind('prop-labelbg', 'labelBg');
+  bind('prop-labelfontsize', 'labelFontSize', t => parseInt(t.value) || 11);
+  const resetBtn = document.getElementById('prop-labelreset');
+  if (resetBtn) resetBtn.addEventListener('click', () => {
+    ann.labelOffset = { dx: 0, dy: 0 };
+    saveToHistory();
+    redrawAnnotations();
+  });
 
   populateSwatches();
 }
@@ -3774,6 +4107,210 @@ async function thumbCtxRotateCW() {
 }
 
 // ============================================================
+// IMAGE PASTE / SNIP — paste a screenshot (or image) onto the page
+// ============================================================
+// Add an image annotation from a Blob. Places it centered on the visible page,
+// scaled to fit (max ~half the page width) while preserving aspect ratio.
+async function addImageFromBlob(blob) {
+  if (!pdfDoc) { alert('Open a PDF first, then paste your screenshot.'); return; }
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('Could not read image data'));
+      fr.readAsDataURL(blob);
+    });
+    // Decode to get natural width/height
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('Image failed to decode'));
+      i.src = dataUrl;
+    });
+    // Figure out a reasonable initial size — half the page width, capped to source
+    const page = await pdfDoc.getPage(currentPage + 1);
+    const vp = page.getViewport({ scale: 1 });
+    const maxW = vp.width * 0.5;
+    let w = Math.min(img.naturalWidth, maxW);
+    let h = w * (img.naturalHeight / img.naturalWidth);
+    // If still too tall, scale down by height
+    const maxH = vp.height * 0.7;
+    if (h > maxH) { h = maxH; w = h * (img.naturalWidth / img.naturalHeight); }
+
+    // Centre it within the current visible portion of the page
+    const wrapper = document.getElementById('canvas-wrapper');
+    const acanv = document.getElementById('annotation-canvas');
+    let cx = vp.width / 2, cy = vp.height / 2;
+    if (wrapper && acanv) {
+      const r = acanv.getBoundingClientRect();
+      const visLeft = Math.max(0, -r.left);
+      const visTop = Math.max(0, -r.top);
+      const visRight = Math.min(r.width, window.innerWidth - r.left);
+      const visBottom = Math.min(r.height, window.innerHeight - r.top);
+      cx = ((visLeft + visRight) / 2) / currentScale;
+      cy = ((visTop + visBottom) / 2) / currentScale;
+    }
+
+    const ann = {
+      id: generateId(), type: 'image', page: currentPage,
+      points: [
+        { x: cx - w/2, y: cy - h/2 },
+        { x: cx + w/2, y: cy + h/2 }
+      ],
+      src: dataUrl,
+      opacity: 100
+    };
+    annotations.push(ann);
+    selectedAnnotationId = ann.id;
+    saveToHistory();
+    redrawAnnotations();
+    setTool('select');
+    openPropertiesPanel();
+    showSaveToast('Image pasted — drag corners to resize');
+  } catch (err) {
+    console.error('Add image failed:', err);
+    alert('Could not paste image: ' + (err.message || err.name));
+  }
+}
+
+// Snip button — explicitly fetches an image from the clipboard. Useful when
+// the user has snipped a region with Win+Shift+S (image is on the clipboard).
+async function snipFromClipboard() {
+  if (!pdfDoc) { alert('Open a PDF first, then snip a region with Win+Shift+S and click Snip & Paste.'); return; }
+  if (!navigator.clipboard || !navigator.clipboard.read) {
+    alert('Your browser doesn\'t support reading from the clipboard.\n\n' +
+          'Workaround: snip with Win+Shift+S, then press Ctrl+V here to paste.');
+    return;
+  }
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      for (const type of item.types) {
+        if (type.startsWith('image/')) {
+          const blob = await item.getType(type);
+          await addImageFromBlob(blob);
+          return;
+        }
+      }
+    }
+    alert('No image found on the clipboard.\n\n' +
+          'Steps:\n' +
+          '  1. Press Win+Shift+S to snip a region\n' +
+          '  2. Click Snip & Paste again (or just press Ctrl+V)');
+  } catch (err) {
+    // Permission denied or similar — give a clear path
+    console.warn('snipFromClipboard:', err);
+    alert('Couldn\'t read the clipboard. Easiest path:\n\n' +
+          '  1. Press Win+Shift+S to snip a region\n' +
+          '  2. Press Ctrl+V here to paste the image');
+  }
+}
+
+// ============================================================
+// NEW DOCUMENT MENU — top toolbar "New" dropdown
+// ============================================================
+// Standard ISO A-series sizes in PDF points (1pt = 1/72 inch)
+const PAGE_SIZES = {
+  'a4-portrait':   [595.28, 841.89],
+  'a4-landscape':  [841.89, 595.28],
+  'a3-portrait':   [841.89, 1190.55],
+  'a3-landscape':  [1190.55, 841.89],
+};
+
+function toggleNewMenu(e) {
+  if (e) e.stopPropagation();
+  const menu = document.getElementById('new-menu');
+  const btn = document.getElementById('btn-new');
+  if (!menu || !btn) return;
+  const willShow = !menu.classList.contains('visible');
+  if (willShow) {
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 2) + 'px';
+    menu.style.left = r.left + 'px';
+    requestAnimationFrame(() => {
+      const mr = menu.getBoundingClientRect();
+      if (mr.right > window.innerWidth - 8) {
+        menu.style.left = Math.max(8, window.innerWidth - mr.width - 8) + 'px';
+      }
+    });
+  }
+  menu.classList.toggle('visible');
+}
+function hideNewMenu() {
+  const menu = document.getElementById('new-menu');
+  if (menu) menu.classList.remove('visible');
+}
+
+// Create a fresh blank PDF and open it as a new tab.
+async function createNewBlankDoc(sizeKey) {
+  hideNewMenu();
+  try {
+    const [w, h] = PAGE_SIZES[sizeKey] || PAGE_SIZES['a4-portrait'];
+    const doc = await PDFLib.PDFDocument.create();
+    doc.addPage([w, h]);
+    const u8 = await doc.save();
+    // Realise a standalone ArrayBuffer of exactly the right size (the Uint8Array
+    // from pdf-lib may be a view into a larger underlying buffer).
+    const ab = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+    // Use a sensible default filename so Save As suggests something useful
+    const fname = 'Untitled-' + new Date().toISOString().slice(0,10) + '.pdf';
+    // No file handle — Save will prompt for a location via Save As.
+    await loadPdf(ab, fname, null);
+  } catch (err) {
+    console.error('Create new doc failed:', err);
+    alert('Could not create new document: ' + (err.message || err.name));
+  }
+}
+
+// Insert a blank page in the currently-open PDF, right after the current page.
+async function addBlankPageAfterCurrent(sizeKey) {
+  hideNewMenu();
+  if (!pdfDoc || !currentPdfBytes) {
+    // No doc open — just create one instead
+    return createNewBlankDoc(sizeKey === 'same' ? 'a4-portrait' : sizeKey);
+  }
+  try {
+    const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    let dims;
+    if (sizeKey === 'same') {
+      const existingPage = doc.getPage(currentPage);
+      const { width, height } = existingPage.getSize();
+      dims = [width, height];
+    } else {
+      dims = PAGE_SIZES[sizeKey] || PAGE_SIZES['a4-portrait'];
+    }
+    doc.insertPage(currentPage + 1, dims);
+    // Shift annotations on pages AFTER the insertion point (current page is untouched)
+    annotations = annotations.map(ann => ({
+      ...ann,
+      page: ann.page > currentPage ? ann.page + 1 : ann.page
+    }));
+    // Same for per-page calibrations
+    const newCals = {};
+    Object.keys(pageCalibrations).forEach(k => {
+      const pg = parseInt(k);
+      newCals[pg > currentPage ? pg + 1 : pg] = pageCalibrations[pg];
+    });
+    pageCalibrations = newCals;
+    await rebuildPdf(doc);
+    goToPage(currentPage + 1);
+    saveToHistory();
+  } catch (err) {
+    console.error('Add blank page failed:', err);
+    alert('Could not add blank page: ' + (err.message || err.name));
+  }
+}
+
+// Close the New menu when clicking anywhere else
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('new-menu');
+  const btn = document.getElementById('btn-new');
+  if (!menu || !menu.classList.contains('visible')) return;
+  if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+  menu.classList.remove('visible');
+});
+
+// ============================================================
 // VIEW MENU — rotate pages (current or all) from the top toolbar
 // ============================================================
 function toggleViewMenu(e) {
@@ -4271,6 +4808,18 @@ async function saveProject() {
   const saveBtn = document.querySelector('button[onclick="saveProject()"]');
   if (saveBtn) saveBtn.style.opacity = '0.5';
   try {
+    // Make sure every image annotation has finished decoding before bake,
+    // otherwise the bake could capture placeholders instead of the real images.
+    await Promise.all(annotations
+      .filter(a => a.type === 'image' && a.src)
+      .map(a => new Promise((resolve) => {
+        let img = _imageElementCache.get(a.src);
+        if (img && img.complete && img.naturalWidth > 0) return resolve();
+        if (!img) { img = new Image(); _imageElementCache.set(a.src, img); img.src = a.src; }
+        img.addEventListener('load', () => resolve(), { once: true });
+        img.addEventListener('error', () => resolve(), { once: true });
+      })));
+
     // currentPdfBytes is always the CLEAN source (no baked overlay).
     // We load it fresh here and draw overlays onto a copy so that
     // re-saving in the same session never double-stacks.
