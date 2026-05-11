@@ -1,0 +1,275 @@
+# BDM PDF Markup Tool — Project Knowledge & Lessons Learned
+
+**Project:** BDM PDF Markup & Measurement Tool  
+**Owner:** James @ Bentley Development Management  
+**Purpose:** Replace Bluebeam for internal QS/PM team (3-4 people, all Windows)  
+**Focus:** Markups and measurements for QS takeoffs  
+**File:** `BDM-PDF-Markup-Tool.html` (~4645 lines, single self-contained HTML file)
+
+---
+
+## Architecture
+
+### Single-File Design
+- Everything lives in ONE HTML file: CSS `<style>`, HTML markup, and JavaScript `<script>`
+- No build step, no server, no dependencies beyond two CDN scripts
+- Runs locally in any browser — just double-click the file
+
+### Dependencies (CDN)
+- **pdf.js 3.11.174** — renders PDF pages to canvas (`pdfjsLib.getDocument`)
+- **pdf-lib 1.17.1** — PDF manipulation: embed metadata, save modified PDFs, merge/split
+
+### Core Rendering Model
+- PDF pages rendered to a background canvas at `currentScale`
+- Annotations drawn on a transparent overlay canvas (`annotation-canvas`)
+- Canvas uses `ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0)` so annotation coordinates are stored in **page space** (scale=1 pixel units)
+- Coordinate conversion: `toPage(screenPt)` divides by `currentScale`, `toScreen(pagePt)` multiplies
+
+### Data Model
+- `annotations[]` — array of annotation objects, each with `id`, `type`, `page`, `points[]`, and type-specific properties
+- `measurements[]` — parallel array tracking measurement annotations with labels/values
+- `countGroups{}` — object keyed by group name, value is `{count, color}`
+- `pageCalibrations{}` — keyed by page number, value is `{pixelsPerMm, scale}`
+- `history[]` / `historyIndex` — undo/redo stack (full state snapshots)
+
+---
+
+## Key Design Decisions & Rationale
+
+### Save Format (Bluebeam-Style Single PDF)
+**Decision:** Save produces ONE .pdf where markups are visible in any PDF viewer AND editable when reopened in the BDM tool.
+
+**How it works:**
+1. **Bake overlay** — rasterize annotations onto each page as a flattened image layer (visible everywhere)
+2. **Embed JSON** — store the live annotation data in the PDF's Info dictionary as `BDMProject` (PDFHexString.fromText for UTF-16BE encoding)
+3. **Embed clean source** — store the ORIGINAL un-marked-up PDF bytes in Info dict as `BDMCleanSource` (PDFHexString.of for raw hex bytes)
+
+**On reopen:**
+1. Extract `BDMCleanSource` → load as the rendering PDF (no baked overlay visible)
+2. Extract `BDMProject` JSON → restore annotations as live/editable objects
+3. Result: editable markups on a clean background
+
+### Info Dictionary for Persistence
+**Why Info dict instead of PDF attachments:**
+- pdf-lib 1.17's `attach()` API stores files in a Name Tree that's complex to walk back out
+- We tried and failed to reliably extract attachments on reopen — the Name Tree traversal was fragile across different PDF structures
+- Info dict custom entries are simple key-value pairs, trivially readable via `pdfDoc.context.trailerInfo.Info`
+- For text data: `PDFHexString.fromText(jsonString)` — encodes as UTF-16BE hex
+- For binary data: `PDFHexString.of(bytesToHex(uint8Array))` — raw hex, decode via `.asBytes()` or manual hex parse
+
+### Size Guard
+- `BDM_MAX_CLEAN_EMBED_BYTES = 25 * 1024 * 1024` (25MB)
+- Above this, skip baking AND skip embedding clean source
+- Tool stays editable via JSON-only mode, but markups won't be visible in external viewers
+- Shows confirm dialog explaining the limitation
+
+### Multi-Document Tabs
+- `openDocs[]` array stores state per document (annotations, history, calibrations, etc.)
+- `activeDocIndex` points to current
+- On tab switch: save current state into `openDocs[activeDocIndex]`, swap globals to new doc's state
+- Globals are swapped by reference — arrays like annotations are stored directly
+
+### Click-Click Drawing (Line Tools)
+**Decision:** Line, arrow, dimension, measure, and calibrate tools use **click-click** (not click-drag):
+- First click sets start point + shows live preview
+- Mouse move updates the preview line with snap applied
+- Second click finalizes the shape
+
+**Rationale:** Matches Bluebeam behavior; more precise for measurements; allows user to reposition during preview.
+
+**Implementation:** `twoClickStart` global tracks whether first click has been placed. Both clicks go through `onCanvasMouseDown`. The `onCanvasMouseUp` handler skips finalization when `twoClickStart` is set.
+
+### Calibration Formula
+For architectural scale presets (1:50, 1:100, 1:200, 1:500):
+```javascript
+pixelsPerMm = (72 / 25.4) / scaleDenominator
+```
+- PDF uses 72 points per inch
+- 1 inch = 25.4mm, so 72/25.4 ≈ 2.835 PDF points per paper-mm
+- At 1:100, each paper-mm represents 100 real-mm
+- So `pixelsPerMm(real) = 2.835 / 100 = 0.02835`
+
+Annotations are in page-space pixels (= PDF points at scale 1), so this formula directly converts page-pixel distances to real-world mm.
+
+---
+
+## Bugs Encountered & Fixes
+
+### Duplicate Markups on Reopen (Critical)
+**Symptom:** Reopening a saved PDF showed two copies of every markup — a baked/flattened version behind the editable one.  
+**Root cause:** The attachment-based clean source extraction failed silently. The tool loaded the BAKED PDF (with overlay already burned in) as the background, then rendered the live JSON annotations on top.  
+**Fix:** Moved clean source storage from pdf-lib `attach()` to Info dictionary `BDMCleanSource` entry. Added `BDMBakedOverlay` flag so on load, if baked=true but clean recovery fails, show a warning.
+
+### Stamp Select/Edit/Delete Broken
+**Symptom:** Couldn't click on stamps to select them.  
+**Root cause:** Hit-test used `Math.hypot(x-center, y-center) <= radius` (circle test), but stamps are rendered as rectangles with `measureText().width + 20` width and height 28.  
+**Fix:** Changed stamp case in hit-test to proper rectangle bounds check:
+```javascript
+case 'stamp': {
+  const t = ann.text || 'APPROVED';
+  const w = (t.length * 11) + 20;  // approximate width
+  const cx = ann.points[0].x, cy = ann.points[0].y;
+  return x >= cx - w/2 - tol && x <= cx + w/2 + tol && y >= cy - 14 - tol && y <= cy + 14 + tol;
+}
+```
+Also: stamps were excluded from the properties panel appearance section — added dedicated Stamp properties (text + color).
+
+### Stamp Not Rendering Until Tool Switch
+**Symptom:** Placing a stamp showed nothing until switching to another tool.  
+**Root cause:** `addStamp()` pushed to `annotations[]` and called `saveToHistory()` but was missing `redrawAnnotations()`.  
+**Fix:** Added `redrawAnnotations()` call after push.
+
+### Snap Not Working on Final Placement
+**Symptom:** Snap indicator showed during drawing preview but the final annotation didn't land on the snapped position.  
+**Root cause:** `onCanvasMouseUp` used the raw `e.clientX/Y` mouse position to compute the endpoint, never passing it through `snapScreenPoint()`.  
+**Fix:** Applied snap to `screenEnd` in mouseup before converting to page space.
+
+### Scale Presets Not Calibrating
+**Symptom:** Clicking a scale preset button (1:100 etc) only set the reference length input value — still required drawing a calibration line.  
+**Root cause:** `applyScalePreset(scale)` only set `calibrationMM = scale` and updated the input field.  
+**Fix:** Rewrote to directly set `pageCalibrations[currentPage] = { pixelsPerMm: (72/25.4)/scale, scale: '1:'+scale }`.
+
+---
+
+## Feature Implementation Notes
+
+### Snap-to-Drawing
+- `snapEnabled` global (default true), toggle via topbar button
+- `snapPagePoint(pagePt)` collects candidate points from all annotations on current page:
+  - All annotation endpoints (`.points[]`)
+  - Rectangle/ellipse extra corners and midpoints
+  - Line/arrow/measure/dimension midpoints
+- Finds nearest candidate within `8 / currentScale` page units (= 8 screen pixels)
+- Returns snapped point or original if nothing nearby
+- `lastSnapHit` stores the snap target for visual indicator (green square for endpoints, diamond for midpoints)
+- Applied in both mousedown (start point) and mousemove (end point preview)
+- For click-click tools: applied at both first and second click
+
+### Document Search
+- Uses pdf.js `page.getTextContent()` to extract text items with positions
+- Iterates all pages, finds substring matches (case-sensitive/whole-word options)
+- Converts PDF coordinate system (origin bottom-left) to canvas coords (origin top-left):
+  ```javascript
+  yTop = viewportHeight - yBottom - fontHeight
+  ```
+- Results shown in sidebar panel (not modal) with clickable entries
+- Highlights rendered in `redrawAnnotations()` as yellow rectangles on canvas
+- Current match highlighted brighter; Prev/Next navigation cycles through matches
+- Keyboard shortcut: Ctrl+F
+
+### Multi-Count Groups
+- `countGroups{}` stores `{groupName: {count: N, color: '#hex'}}`
+- Legacy migration: if value is a number (old format), converts to `{count: N, color: '#D97757'}`
+- UI: dropdown to select active group, + button for new group (auto-assigns unused color from palette), ✎ to rename
+- Color picker recolors ALL markers in that group
+- Count totals panel shows all groups with their totals
+
+### Drag-Drop PDF Merge
+- Canvas area: shows overlay with "Drop PDFs to merge" text
+- Thumbnail strip: accepts drops with visual border highlight (`.drag-over` CSS class)
+- Both call `mergeDroppedFiles(files)` which uses `executeMerge()` logic
+- Initial PDF open: global drop handler opens first PDF if none loaded
+
+### Undo/Redo
+- Functions `undo()` and `redo()` exist — save/restore full state snapshots
+- Keyboard: Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z)
+- Topbar buttons with SVG icons added
+
+### Recalibrate
+- "Recalibrate" button appears in calibrate tool panel when page is already calibrated
+- `clearCalibration()` deletes the entry from `pageCalibrations` and un-dismisses the calibration banner
+
+---
+
+## Code Structure (Key Line References)
+
+These are approximate — they shift as code is edited:
+
+| Section | ~Line | Description |
+|---------|-------|-------------|
+| CSS variables & reset | 10-40 | Theme colors, layout vars |
+| Thumbnail strip styles | 88-100 | Left panel styling |
+| Canvas area styles | 233-248 | Cursor classes per tool |
+| HTML structure | 442-600 | Topbar, tabs, main, toolbar, panel |
+| Globals | 685-710 | All state variables |
+| DOMContentLoaded init | 749-843 | Event listeners, drag-drop setup |
+| Multi-doc tab system | 845-1050 | openDocs, switchDoc, closeDoc |
+| toPage / toScreen | 1141-1152 | Coordinate conversion |
+| snapPagePoint / snapScreenPoint | 1157-1196 | Snap-to-drawing logic |
+| redrawAnnotations | 1198-1250 | Main render loop + snap indicator + search highlights |
+| drawAnnotation | 1260-1800 | Per-type rendering (rect, ellipse, line, stamp, count, etc.) |
+| drawInProgress | 1739-1800 | Live preview while drawing |
+| onCanvasMouseDown | 1805-1900 | Click handling, tool dispatch, click-click logic |
+| onCanvasMouseMove | 1868-1923 | Pan, resize, drag, draw preview |
+| onCanvasMouseUp | 1925-2010 | Finalize shapes (drag tools only) |
+| onKeyDown | 2040-2070 | Keyboard shortcuts |
+| addMeasurement | 2075-2100 | Creates measure/calibrate annotations |
+| addCountMarker / count helpers | 2100-2195 | Count group management |
+| addStamp | 2196-2205 | Stamp placement |
+| Hit testing (isPointInAnnotation) | 2300-2360 | Per-type hit detection |
+| Properties panel | 2500-2750 | Annotation & tool properties UI |
+| setTool | 2384-2396 | Tool switching + state reset |
+| Calibration functions | 2885-2935 | guessScale, applyScalePreset, clearCalibration |
+| Search functions | 4020-4110 | openSearchDialog, runDocSearch, navigation |
+| Merge/Split | 4110-4200 | openMergeDialog, executeMerge, splitPages |
+| Save/Load (PDF) | 3600-3850 | saveProject, loadPdf, JSON embed/extract |
+
+---
+
+## Tech Debt & Known Limitations
+
+1. **No snap to PDF native geometry** — snap only works on BDM annotations, not the underlying architectural drawing lines. Would require parsing PDF path operators (complex).
+
+2. **Clean source size limit** — PDFs over 25MB can't embed the clean source in Info dict. Those files won't show markups in external viewers.
+
+3. **Text measurement approximation** — stamp hit-test uses `t.length * 11` as width proxy since we don't have a canvas context at hit-test time. Could be off for very long/short text.
+
+4. **Undo/redo stores full state** — no incremental diffing. Memory could grow on very large projects with many edits.
+
+5. **Search performance** — iterates ALL pages synchronously on search. On 500+ page documents this could be slow. Could be optimized with a Web Worker.
+
+6. **countGroups migration** — old saves stored `countGroups[name] = number`. New code handles this via `_getCountGroup()` which auto-upgrades, but only on access.
+
+7. **showToast doesn't exist** — snap/calibration feedback calls `typeof showToast === 'function'` guard. No visual toast notification system implemented yet.
+
+---
+
+## Development Workflow
+
+### Testing Changes
+- Edit the HTML file directly
+- Refresh browser to test (F5)
+- Open browser DevTools console for errors
+- Test with a multi-page PDF that has existing annotations
+
+### Syntax Verification
+```bash
+node -e "
+const fs = require('fs');
+const h = fs.readFileSync('BDM-PDF-Markup-Tool.html','utf8');
+const re = /<script(?![^>]*\\bsrc=)[^>]*>([\\s\\S]*?)<\\/script>/g;
+let m, i = 0;
+while ((m = re.exec(h))) {
+  try { new Function(m[1]); console.log('script#'+i+' OK'); }
+  catch(e) { console.log('script#'+i+' ERR: '+e.message); }
+  i++;
+}
+"
+```
+
+### Key Patterns for Making Changes
+- **Adding a new tool:** Add toolbar button HTML → add to cursor class CSS → handle in mousedown/mouseup/mousemove → add draw function → add hit-test case → add properties panel section
+- **Adding a topbar button:** Insert in `<div id="topbar">` section, use `class="topbar-btn"` with inline SVG icon
+- **Persisting new state:** Add to globals, include in `openDocs` state save/restore (lines ~838/858), include in JSON project save/load
+- **Properties panel:** Add HTML generator in `getAnnotationPropertiesHTML()` or `getToolPropertiesHTML()`, wire listeners in `attachAnnotationListeners()` or `attachToolListeners()`
+
+---
+
+## User Preferences (James / BDM)
+
+- Prefers Bluebeam-like UX patterns (click-click for lines, single-file save, etc.)
+- QS/PM workflow: heavy use of measurements, calibration, counts, stamps
+- Wants metric units (mm/m/m²) — already the default
+- Team of 3-4 on Windows desktops
+- No server infrastructure — everything must work as a local file
+- Iterates quickly — gives bug reports + feature lists in one go, expects continuous implementation ("keep working")

@@ -1,0 +1,44 @@
+{
+  "name": "BDM PDF Markup & Measurement Tool",
+  "short_name": "BDM PDF Tool",
+  "description": "Markups and measurements for QS takeoffs — Bentley Development Management.",
+  "start_url": "./BDM-PDF-Markup-Tool.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12131a",
+  "theme_color": "#12131a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "./BDM-PDF-Markup-Tool.html",
+      "accept": {
+        "application/pdf": [".pdf"]
+      },
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ],
+      "launch_type": "single-client"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  }
+}
