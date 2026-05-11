@@ -168,13 +168,13 @@ input, select, textarea { font: inherit; color: inherit; }
 .thumb-ctx-sep { height: 1px; background: var(--border-color); margin: 4px 8px; }
 .thumb-ctx-label { font-size: 10px; color: var(--text-muted); padding: 4px 14px; text-transform: uppercase; letter-spacing: 0.5px; }
 
-/* View dropdown — anchored to the View button rather than free-floating */
+/* View dropdown — uses position:fixed so it escapes the topbar's overflow
+   clipping. JS sets top/left at open time to anchor it below the button. */
 .view-dropdown {
-  position: absolute; top: 100%; left: 0; z-index: 10000;
+  position: fixed; z-index: 10000;
   background: var(--bg-secondary); border: 1px solid var(--border-color);
   border-radius: 6px; padding: 4px 0; min-width: 240px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5); font-size: 12px; display: none;
-  margin-top: 2px;
 }
 .view-dropdown.visible { display: block; }
 
@@ -289,8 +289,8 @@ input, select, textarea { font: inherit; color: inherit; }
 #merge-drop-overlay .merge-drop-text { font-size: 16px; font-weight: 700; color: var(--accent); background: rgba(18,19,26,0.85); padding: 8px 20px; border-radius: 6px; }
 #merge-drop-overlay .merge-drop-sub { font-size: 12px; color: var(--text-secondary); background: rgba(18,19,26,0.85); padding: 4px 14px; border-radius: 4px; }
 
-#canvas-wrapper { flex: 1; overflow: auto; position: relative; scrollbar-width: auto; }
-#canvas-container { position: relative; display: inline-block; }
+#canvas-wrapper { flex: 1; overflow: auto; position: relative; scrollbar-width: auto; text-align: center; }
+#canvas-container { position: relative; display: inline-block; text-align: left; }
 canvas { display: block; }
 #pdf-canvas { position: relative; z-index: 1; background: white; }
 #annotation-canvas { position: absolute; top: 0; left: 0; z-index: 2; background: transparent; pointer-events: auto; }
@@ -1268,6 +1268,10 @@ async function renderPage(pageNum) {
 
   // Restore single-page canvas structure if coming from continuous/sidebyside view
   const container = document.getElementById('canvas-container');
+  // Reset the container back to inline-block so it shrinks to the page width
+  // and the wrapper's text-align:center can centre it horizontally.
+  container.style.display = 'inline-block';
+  container.style.width = '';
   if (!document.getElementById('pdf-canvas')) {
     container.innerHTML = '<canvas id="pdf-canvas"></canvas><canvas id="annotation-canvas"></canvas>';
     // Re-attach mouse events to the new annotation canvas
@@ -2228,7 +2232,11 @@ function onCanvasWheel(e) {
     // Stack with any pending zoom that hasn't rendered yet so multiple ticks combine.
     const startScale = pendingZoom ? pendingZoom.targetScale : currentScale;
     const target = Math.max(0.25, Math.min(5, startScale * factor));
-    const rect = document.getElementById('annotation-canvas').getBoundingClientRect();
+    // Anchor point: prefer the annotation canvas (single-page view); fall back
+    // to the scroll wrapper for continuous / side-by-side views.
+    const anchorEl = document.getElementById('annotation-canvas')
+                  || document.getElementById('canvas-wrapper');
+    const rect = anchorEl.getBoundingClientRect();
     scheduleZoom(target, { mx: e.clientX - rect.left, my: e.clientY - rect.top });
   } else if (e.shiftKey) {
     document.getElementById('canvas-wrapper').scrollLeft += e.deltaY;
@@ -2256,7 +2264,17 @@ function applyPendingZoom() {
   const oldScale = currentScale;
   if (targetScale === oldScale) { updateZoomIndicator(); return; }
   currentScale = targetScale;
-  renderPage(currentPage);
+
+  // Re-render whichever view is currently active. Continuous and side-by-side
+  // rebuild themselves at the new scale, the same way single-page renderPage does.
+  if (pageViewMode === 'continuous') {
+    renderContinuousView();
+  } else if (pageViewMode === 'sidebyside') {
+    renderSideBySideView();
+  } else {
+    renderPage(currentPage);
+  }
+
   // Adjust scroll so the point under the cursor (or viewport center) stays put.
   const wrapper = document.getElementById('canvas-wrapper');
   if (wrapper) {
@@ -3216,6 +3234,11 @@ async function renderContinuousView() {
   const container = document.getElementById('canvas-container');
   // Clear existing canvases
   container.innerHTML = '';
+  // In continuous/sidebyside views, let the container span the full wrapper
+  // width so each page can be centered independently. Single-page view restores
+  // inline-block sizing in renderPage.
+  container.style.display = 'block';
+  container.style.width = '100%';
   const wrapper = document.getElementById('canvas-wrapper');
   wrapper.style.display = 'block';
   document.getElementById('drop-zone').style.display = 'none';
@@ -3227,7 +3250,8 @@ async function renderContinuousView() {
     const pageDiv = document.createElement('div');
     pageDiv.className = 'continuous-page';
     pageDiv.dataset.pageIdx = i;
-    pageDiv.style.cssText = 'position:relative;display:inline-block;margin-bottom:8px;';
+    // Center each page horizontally within the wrapper using block + auto margins
+    pageDiv.style.cssText = 'position:relative;display:block;width:' + viewport.width + 'px;margin:0 auto 8px;';
 
     const pdfCanvas = document.createElement('canvas');
     pdfCanvas.width = viewport.width; pdfCanvas.height = viewport.height;
@@ -3276,6 +3300,9 @@ async function renderSideBySideView() {
   if (!pdfDoc) return;
   const container = document.getElementById('canvas-container');
   container.innerHTML = '';
+  // Span the full wrapper width so the flex rows inside can centre themselves.
+  container.style.display = 'block';
+  container.style.width = '100%';
   const wrapper = document.getElementById('canvas-wrapper');
   wrapper.style.display = 'block';
   document.getElementById('drop-zone').style.display = 'none';
@@ -3752,7 +3779,23 @@ async function thumbCtxRotateCW() {
 function toggleViewMenu(e) {
   if (e) e.stopPropagation();
   const menu = document.getElementById('view-menu');
-  if (!menu) return;
+  const btn = document.getElementById('btn-view');
+  if (!menu || !btn) return;
+  const willShow = !menu.classList.contains('visible');
+  if (willShow) {
+    // Anchor just below the button. Using fixed positioning here so the menu
+    // is free of any parent overflow:hidden / overflow-x:auto clipping.
+    const r = btn.getBoundingClientRect();
+    menu.style.top = (r.bottom + 2) + 'px';
+    menu.style.left = r.left + 'px';
+    // If the menu would go off the right edge, push it left
+    requestAnimationFrame(() => {
+      const mr = menu.getBoundingClientRect();
+      if (mr.right > window.innerWidth - 8) {
+        menu.style.left = Math.max(8, window.innerWidth - mr.width - 8) + 'px';
+      }
+    });
+  }
   menu.classList.toggle('visible');
 }
 function hideViewMenu() {
