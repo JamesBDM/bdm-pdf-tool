@@ -259,7 +259,8 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.pan.active { cursor: grabbing; }
 #canvas-area.calibrate, #canvas-area.measure, #canvas-area.polyline, #canvas-area.area,
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
-#canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension { cursor: crosshair; }
+#canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
+#canvas-area.snipregion { cursor: crosshair; }
 #canvas-area.count, #canvas-area.stamp { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
 #canvas-area.cutcontent, #canvas-area.eraser { cursor: not-allowed; }
@@ -579,9 +580,13 @@ canvas { display: block; }
       </div>
     </div>
     <div class="separator"></div>
-    <button class="topbar-btn" onclick="snipFromClipboard()" title="Paste a screenshot from the clipboard. Tip: Win+Shift+S to snip, then click this — or press Ctrl+V">
+    <button class="topbar-btn" onclick="setTool('snipregion')" title="Snip a region — drag a rectangle on the page to capture it as an image. (You can also press Ctrl+V to paste a screenshot from the clipboard.)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l3-3 3 3"/><path d="M8 1v8"/><rect x="3" y="9" width="18" height="13" rx="2"/><line x1="3" y1="14" x2="21" y2="14"/></svg>
       Snip
+    </button>
+    <button class="topbar-btn" onclick="openCompressDialog()" title="Compress PDF — re-encode pages at lower resolution / quality to shrink file size">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9l4-4 4 4"/><path d="M20 15l-4 4-4-4"/><line x1="8" y1="5" x2="8" y2="11"/><line x1="16" y1="13" x2="16" y2="19"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+      Compress
     </button>
     <button class="topbar-btn" onclick="flattenAndDownload()" title="Flatten markups into PDF and download">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -864,7 +869,8 @@ const toolNames = {
   polyline:'Polyline Measure', area:'Measure Area', dimension:'Dimension Line',
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
-  stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete'
+  stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
+  snipregion:'Snip Region'
 };
 
 // ============================================================
@@ -2100,16 +2106,16 @@ function drawInProgress(ctx) {
 
   // Handle shape previews while dragging
   if (isDrawing && startPoint && currentMovePoint && (
-    currentTool === 'rectangle' || currentTool === 'ellipse' || 
+    currentTool === 'rectangle' || currentTool === 'ellipse' ||
     currentTool === 'line' || currentTool === 'arrow' ||
     currentTool === 'measure' || currentTool === 'calibrate' ||
     currentTool === 'dimension' || currentTool === 'highlight' ||
-    currentTool === 'cutcontent'
+    currentTool === 'cutcontent' || currentTool === 'snipregion'
   )) {
     const start = toPage(startPoint);
     const move = toPage(currentMovePoint);
-    
-    if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent') {
+
+    if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent' || currentTool === 'snipregion') {
       ctx.strokeRect(Math.min(start.x,move.x), Math.min(start.y,move.y), Math.abs(move.x-start.x), Math.abs(move.y-start.y));
     } else if (currentTool === 'ellipse') {
       const cx = Math.min(start.x,move.x) + Math.abs(move.x-start.x)/2;
@@ -2509,6 +2515,16 @@ function onCanvasMouseUp(e) {
       if (polylinePoints.length > 1) { addPenAnnotation(polylinePoints.map(p => toPage(p))); didDraw = true; } polylinePoints = []; break;
     case 'cloud':
       if (polylinePoints.length > 2) { addCloudAnnotation(polylinePoints.map(p => toPage(p))); didDraw = true; } polylinePoints = []; break;
+    case 'snipregion':
+      if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD)) {
+        // Capture the dragged region from the visible PDF + annotation layers
+        // and add it as a fresh image annotation. Don't mark didDraw=true here —
+        // the capture is async, and the tool reset happens inside the function.
+        captureSnipRegion(startPoint, screenEnd);
+      } else {
+        returnToNavTool();
+      }
+      break;
   }
   startPoint = null; redrawAnnotations();
   // Auto-return to select/pan after completing a drawing
@@ -4202,6 +4218,76 @@ async function addImageFromBlob(blob) {
   }
 }
 
+// Drag-region snip — capture the rectangle the user just dragged on the
+// page canvas and turn it into an image annotation positioned at the same
+// spot, slightly offset so the user can see both the original and the new
+// copy. startScreen / endScreen are in annotation-canvas screen pixels.
+async function captureSnipRegion(startScreen, endScreen) {
+  try {
+    const pdfCanvas = document.getElementById('pdf-canvas');
+    const annCanvas = document.getElementById('annotation-canvas');
+    if (!pdfCanvas || !annCanvas) {
+      alert('Snip is only available in single-page view.');
+      returnToNavTool();
+      return;
+    }
+
+    // Rectangle in screen-canvas pixels
+    const x1 = Math.min(startScreen.x, endScreen.x);
+    const y1 = Math.min(startScreen.y, endScreen.y);
+    const x2 = Math.max(startScreen.x, endScreen.x);
+    const y2 = Math.max(startScreen.y, endScreen.y);
+    const w = Math.max(2, x2 - x1);
+    const h = Math.max(2, y2 - y1);
+
+    // The on-screen annotation canvas dimensions may differ from the PDF canvas's
+    // backing-store dimensions (high-DPI rendering). Use each canvas's own scale.
+    const pdfScaleX = pdfCanvas.width / annCanvas.width;
+    const pdfScaleY = pdfCanvas.height / annCanvas.height;
+
+    // Composite source rectangle from PDF + annotation layers onto a temp canvas
+    const tmp = document.createElement('canvas');
+    tmp.width = Math.round(w);
+    tmp.height = Math.round(h);
+    const tctx = tmp.getContext('2d');
+    tctx.fillStyle = 'white';
+    tctx.fillRect(0, 0, tmp.width, tmp.height);
+    tctx.drawImage(pdfCanvas,
+                   x1 * pdfScaleX, y1 * pdfScaleY,
+                   w * pdfScaleX, h * pdfScaleY,
+                   0, 0, tmp.width, tmp.height);
+    tctx.drawImage(annCanvas, x1, y1, w, h, 0, 0, tmp.width, tmp.height);
+
+    const dataUrl = tmp.toDataURL('image/png');
+
+    // Convert the screen rectangle to PAGE space, then offset slightly so the
+    // new annotation sits down-and-right of the source region.
+    const p1 = toPage({ x: x1, y: y1 });
+    const p2 = toPage({ x: x2, y: y2 });
+    const offset = 16 / currentScale;
+    const ann = {
+      id: generateId(), type: 'image', page: currentPage,
+      points: [
+        { x: p1.x + offset, y: p1.y + offset },
+        { x: p2.x + offset, y: p2.y + offset }
+      ],
+      src: dataUrl,
+      opacity: 100
+    };
+    annotations.push(ann);
+    selectedAnnotationId = ann.id;
+    saveToHistory();
+    redrawAnnotations();
+    returnToNavTool();
+    openPropertiesPanel();
+    showSaveToast('Region snipped — drag to reposition');
+  } catch (err) {
+    console.error('Snip region failed:', err);
+    alert('Could not capture the snipped region: ' + (err.message || err.name));
+    returnToNavTool();
+  }
+}
+
 // Snip button — explicitly fetches an image from the clipboard. Useful when
 // the user has snipped a region with Win+Shift+S (image is on the clipboard).
 async function snipFromClipboard() {
@@ -4487,6 +4573,133 @@ async function thumbCtxDelete() {
 // ============================================================
 // FLATTEN & DOWNLOAD PDF
 // ============================================================
+// ============================================================
+// COMPRESS PDF — re-encode each page as a JPEG at a chosen DPI / quality.
+// Big shrinkage for image-heavy or scan-heavy PDFs; modest for text-only.
+// Output is a sharable flat PDF (not editable in this tool — keep your
+// original if you want to keep marking up).
+// ============================================================
+const COMPRESS_PRESETS = {
+  high:     { label: 'High Quality (mild compression)', scale: 2.0, quality: 0.85 },
+  balanced: { label: 'Balanced (recommended)',          scale: 1.4, quality: 0.70 },
+  max:      { label: 'Maximum Compression (smallest)',  scale: 1.0, quality: 0.55 },
+};
+
+function openCompressDialog() {
+  if (!pdfDoc || !currentPdfBytes) { alert('No PDF loaded'); return; }
+  const origMB = (currentPdfBytes.length / 1048576).toFixed(2);
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:12px;color:var(--text-secondary)">
+        Current size: <b style="color:var(--text-primary)">${origMB} MB</b>
+        &nbsp;&middot;&nbsp; ${pdfDoc.numPages} page${pdfDoc.numPages===1?'':'s'}
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Compression level</label>
+        <select id="compress-level" class="select-input" style="margin-top:4px">
+          <option value="high">${COMPRESS_PRESETS.high.label}</option>
+          <option value="balanced" selected>${COMPRESS_PRESETS.balanced.label}</option>
+          <option value="max">${COMPRESS_PRESETS.max.label}</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px;line-height:1.5">
+        <b>What this does:</b> each page is re-rendered as a JPEG and packed into a fresh PDF. Markups already drawn are baked in. Text becomes part of the image — fine for sharing/printing, not editable as text afterwards.<br><br>
+        <b>Keep your original</b> if you want to continue marking it up — the compressed file is a separate download.
+      </div>
+      <div id="compress-progress" style="font-size:11px;color:var(--accent);text-align:center;display:none">
+        Compressing… <span id="compress-progress-text">0 / ${pdfDoc.numPages}</span>
+      </div>
+    </div>`;
+  showModal('Compress PDF', body, [
+    { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
+    { text: 'Compress & Download', class: 'primary', onclick: 'executeCompress()' }
+  ]);
+}
+
+async function executeCompress() {
+  const levelKey = document.getElementById('compress-level').value;
+  const preset = COMPRESS_PRESETS[levelKey] || COMPRESS_PRESETS.balanced;
+  const progressEl = document.getElementById('compress-progress');
+  const progressText = document.getElementById('compress-progress-text');
+  if (progressEl) progressEl.style.display = 'block';
+
+  // Disable the primary button while we work so it can't be double-clicked.
+  const primaryBtn = document.querySelector('.modal-footer .modal-btn.primary');
+  if (primaryBtn) { primaryBtn.disabled = true; primaryBtn.style.opacity = '0.5'; }
+
+  try {
+    // Make sure any image annotations are decoded before bake.
+    await Promise.all(annotations
+      .filter(a => a.type === 'image' && a.src)
+      .map(a => new Promise((resolve) => {
+        let img = _imageElementCache.get(a.src);
+        if (img && img.complete && img.naturalWidth > 0) return resolve();
+        if (!img) { img = new Image(); _imageElementCache.set(a.src, img); img.src = a.src; }
+        img.addEventListener('load', () => resolve(), { once: true });
+        img.addEventListener('error', () => resolve(), { once: true });
+      })));
+
+    const newPdf = await PDFLib.PDFDocument.create();
+    const totalPages = pdfDoc.numPages;
+
+    for (let i = 0; i < totalPages; i++) {
+      const page = await pdfDoc.getPage(i + 1);
+      const vp = page.getViewport({ scale: preset.scale });
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = vp.width;
+      tempCanvas.height = vp.height;
+      const tempCtx = tempCanvas.getContext('2d');
+      // White background so JPEG doesn't introduce black where the PDF has transparency
+      tempCtx.fillStyle = 'white';
+      tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      await page.render({ canvasContext: tempCtx, viewport: vp }).promise;
+
+      // Bake annotations onto the same page
+      const pageAnns = annotations.filter(a => a.page === i);
+      pageAnns.forEach(ann => {
+        tempCtx.save();
+        tempCtx.setTransform(preset.scale, 0, 0, preset.scale, 0, 0);
+        drawAnnotation(tempCtx, ann, false);
+        tempCtx.restore();
+      });
+
+      // JPEG-encode at the chosen quality
+      const dataUrl = tempCanvas.toDataURL('image/jpeg', preset.quality);
+      const imgBytes = Uint8Array.from(atob(dataUrl.split(',')[1]), c => c.charCodeAt(0));
+      const img = await newPdf.embedJpg(imgBytes);
+
+      // Add a page at the PDF's natural size so it prints/displays correctly
+      const origVp = page.getViewport({ scale: 1 });
+      const newPage = newPdf.addPage([origVp.width, origVp.height]);
+      newPage.drawImage(img, { x: 0, y: 0, width: origVp.width, height: origVp.height });
+
+      if (progressText) progressText.textContent = `${i + 1} / ${totalPages}`;
+      // Yield so the UI gets a chance to update between pages
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    const out = await newPdf.save({ useObjectStreams: true });
+    closeCurrentModal();
+    const origMB = (currentPdfBytes.length / 1048576).toFixed(2);
+    const outMB = (out.length / 1048576).toFixed(2);
+    const ratio = currentPdfBytes.length > 0
+      ? Math.round((1 - out.length / currentPdfBytes.length) * 100)
+      : 0;
+    downloadBlob(out, 'application/pdf',
+      currentFilename.replace(/\.pdf$/i, '') + '_compressed.pdf');
+    setTimeout(() => alert(
+      `Compressed.\n\n` +
+      `Original:    ${origMB} MB\n` +
+      `Compressed:  ${outMB} MB\n` +
+      `Saved:       ${ratio}%`
+    ), 100);
+  } catch (err) {
+    console.error('Compress failed:', err);
+    if (primaryBtn) { primaryBtn.disabled = false; primaryBtn.style.opacity = ''; }
+    alert('Compression failed: ' + (err.message || err.name));
+  }
+}
+
 async function flattenAndDownload() {
   if (!pdfDoc || !currentPdfBytes) { alert('No PDF loaded'); return; }
   try {
