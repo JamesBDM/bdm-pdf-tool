@@ -995,7 +995,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (pdfDoc && wrapper && !wrapper.contains(e.target)) {
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         const startScale = pendingZoom ? pendingZoom.targetScale : currentScale;
-        scheduleZoom(Math.max(0.25, Math.min(5, startScale * factor)), null);
+        scheduleZoom(Math.max(0.25, Math.min(10, startScale * factor)), null);
       }
     }
   }, { passive: false });
@@ -2569,7 +2569,7 @@ function onCanvasWheel(e) {
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     // Stack with any pending zoom that hasn't rendered yet so multiple ticks combine.
     const startScale = pendingZoom ? pendingZoom.targetScale : currentScale;
-    const target = Math.max(0.25, Math.min(5, startScale * factor));
+    const target = Math.max(0.25, Math.min(10, startScale * factor));
     // Always anchor against the scroll wrapper — that's the consistent reference
     // frame for the scroll math below, and it works the same way in single-page,
     // continuous and side-by-side views (the annotation canvas only exists in
@@ -3747,7 +3747,7 @@ function updateZoomIndicator() { document.getElementById('zoom-indicator').textC
 function zoomIn() {
   if (!pdfDoc) return;
   const start = pendingZoom ? pendingZoom.targetScale : currentScale;
-  scheduleZoom(Math.min(5, start * 1.2), null);
+  scheduleZoom(Math.min(10, start * 1.2), null);
 }
 function zoomOut() {
   if (!pdfDoc) return;
