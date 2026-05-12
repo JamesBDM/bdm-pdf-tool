@@ -835,6 +835,7 @@ let currentRenderTask = null;   // pdf.js RenderTask currently in-flight (has .c
 let renderToken = 0;            // Increments each renderPage call; stale calls bail out
 let pendingZoomFrame = null;    // requestAnimationFrame handle for coalesced zoom
 let pendingZoom = null;         // {targetScale, anchor:{mx,my}|null} for next frame
+let zoomRendering = false;      // guard: true while an async re-render is in flight
 
 // Multi-document (tabbed) state
 let openDocs = [];
@@ -2569,11 +2570,12 @@ function onCanvasWheel(e) {
     // Stack with any pending zoom that hasn't rendered yet so multiple ticks combine.
     const startScale = pendingZoom ? pendingZoom.targetScale : currentScale;
     const target = Math.max(0.25, Math.min(5, startScale * factor));
-    // Anchor point: prefer the annotation canvas (single-page view); fall back
-    // to the scroll wrapper for continuous / side-by-side views.
-    const anchorEl = document.getElementById('annotation-canvas')
-                  || document.getElementById('canvas-wrapper');
-    const rect = anchorEl.getBoundingClientRect();
+    // Always anchor against the scroll wrapper — that's the consistent reference
+    // frame for the scroll math below, and it works the same way in single-page,
+    // continuous and side-by-side views (the annotation canvas only exists in
+    // single-page mode and may be offset within the wrapper due to centering).
+    const wrapper = document.getElementById('canvas-wrapper');
+    const rect = wrapper.getBoundingClientRect();
     scheduleZoom(target, { mx: e.clientX - rect.left, my: e.clientY - rect.top });
   } else if (e.shiftKey) {
     document.getElementById('canvas-wrapper').scrollLeft += e.deltaY;
@@ -2593,41 +2595,67 @@ function scheduleZoom(targetScale, anchor) {
   pendingZoomFrame = requestAnimationFrame(applyPendingZoom);
 }
 
-function applyPendingZoom() {
+async function applyPendingZoom() {
   pendingZoomFrame = null;
+  // If a previous zoom render is still in flight, bail out. When it finishes
+  // it checks pendingZoom and re-queues itself, so the latest target won't be lost.
+  if (zoomRendering) return;
   if (!pendingZoom || !pdfDoc) { pendingZoom = null; return; }
-  const { targetScale, anchor } = pendingZoom;
-  pendingZoom = null;
-  const oldScale = currentScale;
-  if (targetScale === oldScale) { updateZoomIndicator(); return; }
-  currentScale = targetScale;
 
-  // Re-render whichever view is currently active. Continuous and side-by-side
-  // rebuild themselves at the new scale, the same way single-page renderPage does.
-  if (pageViewMode === 'continuous') {
-    renderContinuousView();
-  } else if (pageViewMode === 'sidebyside') {
-    renderSideBySideView();
-  } else {
-    renderPage(currentPage);
-  }
+  zoomRendering = true;
+  try {
+    // Drain pendingZoom — fast wheel ticks may stack while we're rendering.
+    while (pendingZoom) {
+      const { targetScale, anchor } = pendingZoom;
+      pendingZoom = null;
+      const oldScale = currentScale;
+      if (targetScale === oldScale) { updateZoomIndicator(); continue; }
 
-  // Adjust scroll so the point under the cursor (or viewport center) stays put.
-  const wrapper = document.getElementById('canvas-wrapper');
-  if (wrapper) {
-    const k = currentScale / oldScale;
-    if (anchor) {
-      // Keep the canvas point under the mouse fixed on screen
-      wrapper.scrollLeft = (wrapper.scrollLeft + anchor.mx) * k - anchor.mx;
-      wrapper.scrollTop  = (wrapper.scrollTop  + anchor.my) * k - anchor.my;
-    } else {
-      // Keep the current viewport-center fixed for button/keyboard zoom
-      const cw = wrapper.clientWidth, ch = wrapper.clientHeight;
-      wrapper.scrollLeft = (wrapper.scrollLeft + cw/2) * k - cw/2;
-      wrapper.scrollTop  = (wrapper.scrollTop  + ch/2) * k - ch/2;
+      const wrapper = document.getElementById('canvas-wrapper');
+      // Anchor point in WRAPPER-VIEWPORT coordinates (mx, my). This is the
+      // pixel under the cursor we want to keep visually fixed across the zoom.
+      let mx, my;
+      if (anchor) {
+        mx = anchor.mx;
+        my = anchor.my;
+      } else {
+        // Button/keyboard zoom — keep the viewport centre fixed.
+        mx = wrapper.clientWidth  / 2;
+        my = wrapper.clientHeight / 2;
+      }
+
+      // Content-space coordinates of that anchor point BEFORE the zoom.
+      const contentX = wrapper.scrollLeft + mx;
+      const contentY = wrapper.scrollTop  + my;
+      const k = targetScale / oldScale;
+      currentScale = targetScale;
+
+      // CRITICAL: await the re-render. Continuous/side-by-side wipe the
+      // container empty and rebuild page-by-page asynchronously; setting
+      // scrollLeft/Top before that completes would clamp them to 0 (because
+      // the container is briefly empty) and the user would "jump" to page 1.
+      if (pageViewMode === 'continuous') {
+        await renderContinuousView();
+      } else if (pageViewMode === 'sidebyside') {
+        await renderSideBySideView();
+      } else {
+        await renderPage(currentPage);
+      }
+
+      // Now the wrapper has its new scrollable size — place the scroll so the
+      // same content-point sits back under the cursor.
+      wrapper.scrollLeft = contentX * k - mx;
+      wrapper.scrollTop  = contentY * k - my;
+      updateZoomIndicator();
+    }
+  } finally {
+    zoomRendering = false;
+    // If more wheel ticks queued another zoom while we were rendering,
+    // process them in the next animation frame.
+    if (pendingZoom && !pendingZoomFrame) {
+      pendingZoomFrame = requestAnimationFrame(applyPendingZoom);
     }
   }
-  updateZoomIndicator();
 }
 
 function onKeyDown(e) {
