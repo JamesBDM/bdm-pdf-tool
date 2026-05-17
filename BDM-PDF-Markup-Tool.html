@@ -2792,6 +2792,12 @@ function applyCssZoomPreview() {
 
 // Do the actual sharp re-render at the current scale. Called after the wheel
 // has been idle for ZOOM_DEBOUNCE_MS, or by buttons/keyboard zoom directly.
+//
+// IMPORTANT: this does NOT tear down the existing DOM. It renders the
+// replacement canvases entirely off-screen first, then swaps them in at the
+// end as a single atomic update. The user sees the CSS-stretched (slightly
+// soft) version continuously until the moment everything snaps crisp — no
+// blank flash, no scroll jump, no "skip to another section."
 async function commitZoomRender() {
   zoomDebounceTimer = null;
   if (zoomRendering) {
@@ -2803,21 +2809,10 @@ async function commitZoomRender() {
 
   zoomRendering = true;
   try {
-    // Capture scroll position so we can put it back after the re-render
-    // momentarily empties the container in continuous / side-by-side modes.
-    const wrapper = document.getElementById('canvas-wrapper');
-    const sl = wrapper.scrollLeft;
-    const st = wrapper.scrollTop;
-
-    if (pageViewMode === 'continuous')       await renderContinuousView();
-    else if (pageViewMode === 'sidebyside')  await renderSideBySideView();
+    if (pageViewMode === 'continuous')       await rerenderContinuousInPlace();
+    else if (pageViewMode === 'sidebyside')  await rerenderSideBySideInPlace();
     else                                     await renderPage(currentPage);
-
-    renderedScale = currentScale;
-    // Re-render restores the page layout at its native CSS size, so the
-    // pixel-perfect scroll position is the one we saved.
-    wrapper.scrollLeft = sl;
-    wrapper.scrollTop  = st;
+    // (renderedScale gets set inside each render function.)
     updateZoomIndicator();
   } finally {
     zoomRendering = false;
@@ -2826,6 +2821,150 @@ async function commitZoomRender() {
       zoomDebounceTimer = setTimeout(commitZoomRender, ZOOM_DEBOUNCE_MS);
     }
   }
+}
+
+// In-place crisp re-render for continuous view. Builds every replacement
+// canvas off-screen, then swaps them in only after the entire batch is ready.
+// While this is running the user keeps seeing the existing (CSS-stretched)
+// canvases — no blank period.
+async function rerenderContinuousInPlace() {
+  const container = document.getElementById('canvas-container');
+  if (!container || !pdfDoc) return;
+  const renderScale = currentScale;
+  const pageDivs = Array.from(container.querySelectorAll('.continuous-page'));
+  // No existing pages? Fall back to the full builder (only happens on first
+  // entry into continuous view).
+  if (pageDivs.length === 0) { await renderContinuousView(); return; }
+
+  // Render visible pages first so the user's actual view sharpens fastest.
+  // We sort the remaining pages by distance from the viewport centre.
+  const wrapper = document.getElementById('canvas-wrapper');
+  const viewMid = wrapper.scrollTop + wrapper.clientHeight / 2;
+  pageDivs.sort((a, b) =>
+    Math.abs((a.offsetTop + a.offsetHeight/2) - viewMid) -
+    Math.abs((b.offsetTop + b.offsetHeight/2) - viewMid)
+  );
+
+  // Build all replacement canvases off-screen.
+  const ready = [];
+  for (const pageDiv of pageDivs) {
+    // If the user kept wheel-zooming during the render, abort and let the
+    // next commit pick up the newer scale.
+    if (currentScale !== renderScale) return;
+
+    const pageIdx = parseInt(pageDiv.dataset.pageIdx, 10);
+    if (isNaN(pageIdx)) continue;
+
+    const page = await pdfDoc.getPage(pageIdx + 1);
+    if (currentScale !== renderScale) return;
+    const viewport = page.getViewport({ scale: renderScale });
+
+    const pdfCanvas = document.createElement('canvas');
+    pdfCanvas.width = viewport.width;
+    pdfCanvas.height = viewport.height;
+    pdfCanvas.style.cssText = 'display:block;background:white;';
+    const pdfCtx = pdfCanvas.getContext('2d');
+    await page.render({ canvasContext: pdfCtx, viewport }).promise;
+    if (currentScale !== renderScale) return;
+
+    // Cut-content (erase) annotations get burned into the PDF canvas so they
+    // properly cover the underlying content — same treatment as the original
+    // single-page renderPage.
+    annotations.forEach(ann => {
+      if (ann.type === 'cutcontent' && ann.page === pageIdx && ann.points && ann.points.length === 2) {
+        pdfCtx.save();
+        pdfCtx.fillStyle = 'white';
+        pdfCtx.globalAlpha = 1;
+        const [p1, p2] = ann.points;
+        pdfCtx.fillRect(p1.x * renderScale, p1.y * renderScale, (p2.x - p1.x) * renderScale, (p2.y - p1.y) * renderScale);
+        pdfCtx.restore();
+      }
+    });
+
+    const annCanvas = document.createElement('canvas');
+    annCanvas.width = viewport.width;
+    annCanvas.height = viewport.height;
+    annCanvas.style.cssText = 'position:absolute;top:0;left:0;';
+    const annCtx = annCanvas.getContext('2d');
+    annotations.filter(a => a.page === pageIdx).forEach(ann => {
+      annCtx.save();
+      annCtx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+      drawAnnotation(annCtx, ann, false);
+      annCtx.restore();
+    });
+
+    ready.push({ pageDiv, pdfCanvas, annCanvas, viewport });
+  }
+
+  if (currentScale !== renderScale) return;
+
+  // Atomic swap: replace every page's canvases in a single DOM op via
+  // replaceChildren, so the pageDiv never has zero children (and therefore
+  // never collapses, even for a single frame). Since the new canvases'
+  // native CSS size matches what the CSS-preview was already showing, there's
+  // NO layout shift and NO scroll jump.
+  ready.forEach(({ pageDiv, pdfCanvas, annCanvas, viewport }) => {
+    pageDiv.style.width = viewport.width + 'px';
+    pageDiv.replaceChildren(pdfCanvas, annCanvas);
+  });
+  renderedScale = renderScale;
+}
+
+// In-place crisp re-render for side-by-side view. Same off-screen-first
+// pattern as the continuous one above.
+async function rerenderSideBySideInPlace() {
+  const container = document.getElementById('canvas-container');
+  if (!container || !pdfDoc) return;
+  const renderScale = currentScale;
+  const pageDivs = Array.from(container.querySelectorAll('.continuous-page'));
+  if (pageDivs.length === 0) { await renderSideBySideView(); return; }
+
+  // Visible-first priority (same idea as continuous).
+  const wrapper = document.getElementById('canvas-wrapper');
+  const viewMid = wrapper.scrollTop + wrapper.clientHeight / 2;
+  pageDivs.sort((a, b) =>
+    Math.abs((a.offsetTop + a.offsetHeight/2) - viewMid) -
+    Math.abs((b.offsetTop + b.offsetHeight/2) - viewMid)
+  );
+
+  const ready = [];
+  for (const pageDiv of pageDivs) {
+    if (currentScale !== renderScale) return;
+
+    const pageIdx = parseInt(pageDiv.dataset.pageIdx, 10);
+    if (isNaN(pageIdx)) continue;
+
+    const page = await pdfDoc.getPage(pageIdx + 1);
+    if (currentScale !== renderScale) return;
+    // Side-by-side renders pages at half-size so two fit per row.
+    const viewport = page.getViewport({ scale: renderScale * 0.5 });
+
+    const pdfCanvas = document.createElement('canvas');
+    pdfCanvas.width = viewport.width;
+    pdfCanvas.height = viewport.height;
+    pdfCanvas.style.cssText = 'display:block;background:white;';
+    await page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
+    if (currentScale !== renderScale) return;
+
+    ready.push({ pageDiv, pdfCanvas, viewport });
+  }
+
+  if (currentScale !== renderScale) return;
+
+  // Atomic swap. In side-by-side the page label sits INSIDE the pageDiv
+  // (next to the canvas), so we have to leave that alone — only replace the
+  // canvas itself.
+  ready.forEach(({ pageDiv, pdfCanvas, viewport }) => {
+    const oldCanvas = pageDiv.querySelector('canvas');
+    if (oldCanvas) {
+      oldCanvas.replaceWith(pdfCanvas);
+    } else {
+      // Pathological case (no canvas at all) — just put one in.
+      pageDiv.insertBefore(pdfCanvas, pageDiv.firstChild);
+    }
+    pageDiv.style.width = viewport.width + 'px';
+  });
+  renderedScale = renderScale;
 }
 
 function onKeyDown(e) {
