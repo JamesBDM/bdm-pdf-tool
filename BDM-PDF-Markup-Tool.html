@@ -2677,14 +2677,66 @@ function applyPendingZoom() {
     const contentX = wrapper.scrollLeft + mx;
     const contentY = wrapper.scrollTop  + my;
     const k = targetScale / oldScale;
+
+    // PAGE-AWARE ANCHOR (continuous + side-by-side only):
+    // The naive "contentY * k" formula assumes every pixel of the document
+    // scales by k. In continuous and side-by-side that's not true — the 8px
+    // gap and ~15px label between pages stay constant regardless of zoom.
+    // With many pages the accumulated error grows large enough to push the
+    // cursor several pages away from where the user is pointing. So before
+    // we zoom, we record which page the cursor is over and where INSIDE
+    // that page it sits. After CSS-preview triggers layout, we use that
+    // SAME page's NEW position as the anchor — exact, no drift.
+    let anchorPageEl = null;
+    let pageRelX = 0, pageRelY = 0;
+    if (pageViewMode !== 'single') {
+      const pages = document.querySelectorAll('#canvas-container .continuous-page');
+      for (let i = 0; i < pages.length; i++) {
+        const p = pages[i];
+        const top = p.offsetTop;
+        const bottom = top + p.offsetHeight;
+        if (contentY >= top && contentY <= bottom) {
+          anchorPageEl = p;
+          pageRelX = contentX - p.offsetLeft;
+          pageRelY = contentY - top;
+          break;
+        }
+      }
+      // Cursor is in a gap between pages (or above first / below last). Pick
+      // the nearest page so we still anchor to something concrete.
+      if (!anchorPageEl && pages.length > 0) {
+        let best = pages[0], bestDist = Infinity;
+        for (let i = 0; i < pages.length; i++) {
+          const p = pages[i];
+          const mid = p.offsetTop + p.offsetHeight / 2;
+          const d = Math.abs(contentY - mid);
+          if (d < bestDist) { bestDist = d; best = p; }
+        }
+        anchorPageEl = best;
+        pageRelX = contentX - anchorPageEl.offsetLeft;
+        pageRelY = contentY - anchorPageEl.offsetTop;
+      }
+    }
+
     currentScale = targetScale;
 
     // Instant visual update: stretch every page's CSS box (and the canvas
-    // inside it) to the new scale. The wrapper picks up the new scroll
-    // dimensions on the next layout, so we set scrollLeft/Top right after.
+    // inside it) to the new scale. Reading offsetTop/offsetLeft below forces
+    // the browser to flush layout so we get fresh positions.
     applyCssZoomPreview();
-    wrapper.scrollLeft = contentX * k - mx;
-    wrapper.scrollTop  = contentY * k - my;
+
+    if (pageViewMode === 'single' || !anchorPageEl) {
+      // Single page — content scales uniformly so the simple formula is exact.
+      wrapper.scrollLeft = contentX * k - mx;
+      wrapper.scrollTop  = contentY * k - my;
+    } else {
+      // Continuous / side-by-side — use the anchor page's POST-layout offset
+      // plus the scaled within-page position. This stays accurate no matter
+      // how many pages you've scrolled past, because we're not trying to
+      // predict the accumulated inter-page gaps — we read them from layout.
+      wrapper.scrollLeft = anchorPageEl.offsetLeft + pageRelX * k - mx;
+      wrapper.scrollTop  = anchorPageEl.offsetTop  + pageRelY * k - my;
+    }
     updateZoomIndicator();
   }
 
