@@ -202,6 +202,42 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .panel-scroll { flex: 1; overflow-y: auto; }
 
+/* Right-panel mode tabs (Properties / Measurements) */
+#panel-tabs {
+  display: flex; border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
+.panel-tab {
+  flex: 1; padding: 8px 10px; background: transparent; border: none;
+  color: var(--text-secondary); font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer;
+  border-bottom: 2px solid transparent; transition: all 0.15s;
+}
+.panel-tab:hover { color: var(--text-primary); }
+.panel-tab.active {
+  color: var(--accent); border-bottom-color: var(--accent);
+  background: var(--bg-secondary);
+}
+.meas-panel-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  background: var(--bg-tertiary); border-radius: 4px; cursor: pointer;
+  border: 1px solid transparent; transition: border-color 0.15s;
+}
+.meas-panel-item:hover { border-color: var(--accent); }
+.meas-panel-type {
+  padding: 2px 6px; background: var(--bg-secondary); border-radius: 3px;
+  font-size: 10px; color: var(--text-secondary); font-weight: 600;
+  text-transform: uppercase; min-width: 30px; text-align: center;
+}
+.meas-panel-label {
+  flex: 1; font-size: 11px; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.meas-panel-value {
+  color: var(--accent); font-weight: 600; font-size: 12px;
+  white-space: nowrap;
+}
+
 /* Properties sections */
 .properties-section { padding: 10px 12px; border-bottom: 1px solid var(--border-color); }
 .properties-section-title {
@@ -663,12 +699,6 @@ canvas { display: block; }
 
     <!-- CANVAS AREA -->
     <div id="canvas-area" class="tool-select">
-      <div id="calibration-banner">
-        <span>⚠ This page is not calibrated — measurements may be inaccurate.</span>
-        <button class="cal-btn" onclick="setTool('calibrate');hideCalibrateNotice()">Calibrate Now</button>
-        <button class="cal-dismiss" onclick="hideCalibrateNotice()">Dismiss</button>
-        <div style="flex:1"></div>
-      </div>
       <div id="drop-zone">
         <div class="drop-icon"><svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9,15 12,12 15,15"/></svg></div>
         <div class="drop-title">Open a PDF to get started</div>
@@ -692,6 +722,10 @@ canvas { display: block; }
       <div class="panel-header">
         <span id="panel-title">Tools</span>
         <button class="modal-close" onclick="togglePanel()">×</button>
+      </div>
+      <div id="panel-tabs">
+        <button class="panel-tab active" data-mode="properties" onclick="setPanelMode('properties')">Properties</button>
+        <button class="panel-tab" data-mode="measurements" onclick="setPanelMode('measurements')">Measurements</button>
       </div>
       <div class="panel-scroll" id="panel-content"></div>
     </div>
@@ -810,6 +844,10 @@ const AREA_DRAG_THRESHOLD = 5; // screen-px distance that counts as a drag
 let resizeAnnotation = null;
 let resizeHandleIndex = -1;
 let measurements = [];
+// Which view the right-hand panel is showing: 'properties' (default — tool /
+// annotation / file properties) or 'measurements' (running tally of every
+// measurement so the user can watch their take-off build up as they draw).
+let panelMode = 'properties';
 let countGroups = {};
 let currentCountGroup = 'Default';
 let mergeFiles = [];
@@ -2605,6 +2643,7 @@ function onCanvasMouseUp(e) {
       saveToHistory();
       redrawAnnotations();
       returnToNavTool();
+      refreshMeasurementsPanel();
       return;
     }
     // No drag — leave polylinePoints in place so a follow-up click extends the polygon.
@@ -3231,6 +3270,7 @@ function addMeasurement(points) {
   annotations.push(ann);
   measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
   saveToHistory();
+  refreshMeasurementsPanel();
 }
 
 function addAnnotation(type, points) {
@@ -3257,6 +3297,14 @@ function addDimension(points) {
   annotations.push(ann);
   measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
   saveToHistory();
+  refreshMeasurementsPanel();
+}
+
+// If the user has the panel open in measurements mode, refresh it so the
+// running tally updates the moment they finish a measurement. Safe no-op
+// when the panel is in any other mode or collapsed.
+function refreshMeasurementsPanel() {
+  if (panelMode === 'measurements') openPropertiesPanel();
 }
 
 function _getCountGroup(name) {
@@ -3372,6 +3420,7 @@ function finishPolyShape() {
   }
   polylinePoints = []; saveToHistory(); redrawAnnotations();
   returnToNavTool();
+  refreshMeasurementsPanel();
 }
 
 function showTextInput(screenPt) {
@@ -3651,6 +3700,20 @@ function openPropertiesPanel() {
   const panelTitle = document.getElementById('panel-title');
   const content = document.getElementById('panel-content');
 
+  // Sync the tab strip with the current mode every time we redraw the panel.
+  document.querySelectorAll('.panel-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.mode === panelMode));
+
+  // Measurements view — running tally of every length / area / count.
+  // We override the regular properties layout so the user can keep watching
+  // their take-off update live as they draw.
+  if (panelMode === 'measurements') {
+    panelTitle.textContent = 'Measurements';
+    content.innerHTML = getMeasurementsPanelHTML();
+    panel.classList.remove('collapsed');
+    return;
+  }
+
   if (selectedAnnotationId) {
     const ann = annotations.find(a => a.id === selectedAnnotationId);
     if (ann) {
@@ -3671,6 +3734,106 @@ function openPropertiesPanel() {
     panel.classList.remove('collapsed');
     attachToolListeners();
   }
+}
+
+// Switch the panel between properties view and measurements view.
+function setPanelMode(mode) {
+  panelMode = mode;
+  // Make sure the panel is open so the user actually sees the new view.
+  document.getElementById('panel').classList.remove('collapsed');
+  openPropertiesPanel();
+}
+
+// Click a measurement in the panel → navigate to its page, select it.
+function selectMeasurementById(id) {
+  const ann = annotations.find(a => a.id === id);
+  if (!ann) return;
+  if (ann.page !== currentPage) {
+    if (pageViewMode === 'sidebyside') setPageView('single');
+    goToPage(ann.page);
+  }
+  selectedAnnotationId = id;
+  redrawAnnotations();
+}
+
+// Build the running-tally HTML shown when panelMode === 'measurements'.
+// Groups by page, totals by type, and links each row back to its annotation.
+function getMeasurementsPanelHTML() {
+  rebuildMeasurements();
+
+  const lengthMeas = measurements.filter(m => m.type === 'length');
+  const areaMeas   = measurements.filter(m => m.type === 'area');
+  const countAnns  = annotations.filter(a => a.type === 'count');
+
+  // Empty-state — nothing to show yet.
+  if (lengthMeas.length === 0 && areaMeas.length === 0 && countAnns.length === 0) {
+    return `<div class="properties-section"><div class="properties-section-content">
+      <div style="text-align:center;color:var(--text-muted);padding:24px 8px;font-size:12px;line-height:1.5">
+        No measurements yet.<br>
+        Use the <strong>Measure</strong>, <strong>Area</strong>, <strong>Dimension</strong> or <strong>Count</strong> tools to start. They'll appear here as you draw.
+      </div>
+    </div></div>`;
+  }
+
+  // Top summary — how many of each.
+  let html = `<div class="properties-section">
+    <div class="properties-section-title">Summary</div>
+    <div class="properties-section-content">
+      <div class="property-row"><div class="property-label">Lengths:</div><div class="property-value">${lengthMeas.length}</div></div>
+      <div class="property-row"><div class="property-label">Areas:</div><div class="property-value">${areaMeas.length}</div></div>
+      <div class="property-row"><div class="property-label">Counts:</div><div class="property-value">${countAnns.length}</div></div>
+    </div>
+  </div>`;
+
+  // Per-page measurement list — only pages with measurements show up.
+  const byPage = {};
+  measurements.forEach(m => {
+    if (!byPage[m.page]) byPage[m.page] = [];
+    byPage[m.page].push(m);
+  });
+  const sortedPages = Object.keys(byPage).map(Number).sort((a, b) => a - b);
+  for (const pg of sortedPages) {
+    html += `<div class="properties-section">
+      <div class="properties-section-title">Page ${pg + 1} <span style="color:var(--text-muted);font-weight:normal;text-transform:none">(${byPage[pg].length})</span></div>
+      <div class="properties-section-content">`;
+    byPage[pg].forEach((m) => {
+      // 'L' = length, 'A' = area — short type tag so the row stays compact.
+      const typeTag = m.type === 'length' ? 'L' : m.type === 'area' ? 'A' : m.type.slice(0, 1).toUpperCase();
+      const labelText = m.label && m.label.length ? m.label : '(unlabelled)';
+      // Escape single quotes in the id (very unlikely but safe).
+      const safeId = (m.id || '').replace(/'/g, "\\'");
+      html += `<div class="meas-panel-item" onclick="selectMeasurementById('${safeId}')">
+        <span class="meas-panel-type">${typeTag}</span>
+        <span class="meas-panel-label" title="${labelText}">${labelText}</span>
+        <span class="meas-panel-value">${m.value}</span>
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Count groups — totals per group, separate from measurements.
+  if (countAnns.length > 0) {
+    const countByGroup = {};
+    countAnns.forEach(a => { countByGroup[a.group || 'Default'] = (countByGroup[a.group || 'Default'] || 0) + 1; });
+    html += `<div class="properties-section">
+      <div class="properties-section-title">Count Groups</div>
+      <div class="properties-section-content">`;
+    Object.entries(countByGroup).forEach(([g, c]) => {
+      html += `<div class="property-row">
+        <div class="property-label" style="width:auto;flex:1">${g}:</div>
+        <div class="property-value" style="flex:0;color:var(--accent);font-weight:600">${c}</div>
+      </div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Footer — quick export so the panel doubles as a take-off station.
+  // Inline-styled so it doesn't rely on a button class that may not exist.
+  html += `<div class="properties-section">
+    <button onclick="exportMeasurementsCSV()" style="width:100%;padding:8px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">Export CSV</button>
+  </div>`;
+
+  return html;
 }
 
 function togglePanel() { document.getElementById('panel').classList.toggle('collapsed'); }
@@ -4318,19 +4481,10 @@ function clearCalibration() {
   redrawAnnotations();
 }
 
-function checkCalibrationBanner() {
-  const banner = document.getElementById('calibration-banner');
-  if (!pdfDoc) { banner.classList.remove('visible'); return; }
-  if (pageCalibrations[currentPage] || calBannerDismissed[currentPage]) {
-    banner.classList.remove('visible');
-  } else {
-    banner.classList.add('visible');
-  }
-}
-function hideCalibrateNotice() {
-  calBannerDismissed[currentPage] = true;
-  document.getElementById('calibration-banner').classList.remove('visible');
-}
+// Calibration banner was removed — these stay as no-ops so the existing
+// callers (e.g. addMeasurement on calibrate, page change, etc.) don't throw.
+function checkCalibrationBanner() { /* banner removed */ }
+function hideCalibrateNotice()   { /* banner removed */ }
 function updateCalibrationIndicator() {
   const el = document.getElementById('cal-indicator');
   const cal = pageCalibrations[currentPage];
