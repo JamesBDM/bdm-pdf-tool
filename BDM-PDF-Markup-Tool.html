@@ -1523,8 +1523,69 @@ function snapScreenPoint(screenPt) {
   return toScreen(snapped);
 }
 
+// In continuous view each page has its own annotation canvas overlaid on the
+// page. This helper returns whichever canvas is currently the "drawing
+// surface" — the single-page one in single mode, or the per-page one for
+// currentPage in continuous mode. Side-by-side has no drawing surface (it's
+// a preview view; clicking a page switches you back to single).
+function getActiveAnnotationCanvas() {
+  if (pageViewMode === 'single') {
+    return document.getElementById('annotation-canvas');
+  }
+  if (pageViewMode === 'continuous') {
+    const pageDiv = document.querySelector(
+      `#canvas-container .continuous-page[data-page-idx="${currentPage}"]`
+    );
+    if (pageDiv) return pageDiv.querySelector('.page-ann-canvas');
+  }
+  return null;
+}
+
+// Attach the standard canvas mouse handlers to a per-page annotation canvas
+// in continuous view. The mousedown wrapper sets currentPage so that
+// onCanvasMouseDown's "what page is this annotation for" lookup picks the
+// correct one — every measurement / shape gets stored against the page it
+// was actually drawn on.
+function attachPageAnnotationListeners(annCanvas, pageIdx) {
+  annCanvas.classList.add('page-ann-canvas');
+  annCanvas.dataset.pageIdx = pageIdx;
+  annCanvas.addEventListener('mousedown', (e) => {
+    // Snapshot which page we're starting on. If currentPage actually changes
+    // (the user clicked on a different page than they were viewing), wipe the
+    // previous page's in-progress preview before the new draw begins.
+    const prevPage = currentPage;
+    if (prevPage !== pageIdx) {
+      currentPage = pageIdx;
+      // Clear stale preview on the previous page if there was one.
+      const prevDiv = document.querySelector(
+        `#canvas-container .continuous-page[data-page-idx="${prevPage}"]`
+      );
+      const prevCanvas = prevDiv && prevDiv.querySelector('.page-ann-canvas');
+      if (prevCanvas) {
+        const pctx = prevCanvas.getContext('2d');
+        pctx.clearRect(0, 0, prevCanvas.width, prevCanvas.height);
+        annotations.forEach(ann => {
+          if (ann.page !== prevPage) return;
+          pctx.save();
+          pctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
+          drawAnnotation(pctx, ann, ann.id === selectedAnnotationId);
+          pctx.restore();
+        });
+      }
+      updatePageIndicator && updatePageIndicator();
+      updateThumbnailHighlight && updateThumbnailHighlight();
+    }
+    onCanvasMouseDown(e);
+  });
+  annCanvas.addEventListener('mousemove', onCanvasMouseMove);
+  annCanvas.addEventListener('mouseup', onCanvasMouseUp);
+  annCanvas.addEventListener('dblclick', onCanvasDoubleClick);
+  annCanvas.addEventListener('contextmenu', onCanvasRightClick);
+}
+
 function redrawAnnotations() {
-  const canvas = document.getElementById('annotation-canvas');
+  const canvas = getActiveAnnotationCanvas();
+  if (!canvas) return;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   annotations.forEach(ann => {
@@ -2892,6 +2953,9 @@ async function rerenderContinuousInPlace() {
       drawAnnotation(annCtx, ann, false);
       annCtx.restore();
     });
+    // Re-attach drawing listeners on the freshly-built annotation canvas —
+    // the old one (with its listeners) gets removed by the swap below.
+    attachPageAnnotationListeners(annCanvas, pageIdx);
 
     ready.push({ pageDiv, pdfCanvas, annCanvas, viewport });
   }
@@ -4077,6 +4141,11 @@ async function renderContinuousView() {
       drawAnnotation(annCtx, ann, false);
       annCtx.restore();
     });
+    // Wire up drawing mouse handlers so tools (measure, line, rectangle…)
+    // work in continuous view too — without this the page receives clicks but
+    // nothing happens because the global handlers only know about the single-
+    // page annotation canvas.
+    attachPageAnnotationListeners(annCanvas, i);
 
     // Page label
     const label = document.createElement('div');
