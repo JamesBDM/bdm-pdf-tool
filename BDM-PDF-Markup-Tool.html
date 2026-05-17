@@ -2711,6 +2711,23 @@ function scheduleZoom(targetScale, anchor) {
   pendingZoomFrame = requestAnimationFrame(applyPendingZoom);
 }
 
+// Scale every "in-progress drawing" screen coordinate by k. Called from
+// applyPendingZoom once per zoom step so points pinned during a drawing
+// gesture (first click of a measure / line, polyline vertices, callout anchor
+// + knees, area-drag corners) keep referring to the same physical place on
+// the page after the canvas resizes.
+function rescaleInProgressDrawingCoords(k) {
+  const scale = (p) => p ? { x: p.x * k, y: p.y * k } : p;
+  if (startPoint)        startPoint        = scale(startPoint);
+  if (currentMovePoint)  currentMovePoint  = scale(currentMovePoint);
+  if (twoClickStart)     twoClickStart     = scale(twoClickStart);
+  if (calloutAnchor)     calloutAnchor     = scale(calloutAnchor);
+  if (areaDragStartScreen)   areaDragStartScreen   = scale(areaDragStartScreen);
+  if (areaDragCurrentScreen) areaDragCurrentScreen = scale(areaDragCurrentScreen);
+  if (polylinePoints && polylinePoints.length) polylinePoints = polylinePoints.map(scale);
+  if (calloutKnees   && calloutKnees.length)   calloutKnees   = calloutKnees.map(scale);
+}
+
 // New smooth-zoom strategy: a wheel tick scales the existing canvases visually
 // using plain CSS (instant, no pdf.js re-render) and adjusts the scroll so the
 // cursor anchor stays put. Once the wheel goes idle for ~140ms we do ONE proper
@@ -2738,6 +2755,14 @@ function applyPendingZoom() {
     const contentX = wrapper.scrollLeft + mx;
     const contentY = wrapper.scrollTop  + my;
     const k = targetScale / oldScale;
+
+    // Drawing tools store click points in SCREEN pixels relative to the
+    // canvas. When the canvas grows / shrinks under zoom those stored values
+    // no longer point to the same physical spot on the document, so the
+    // measure / polyline / callout / area-drag previews drift and any second
+    // click commits to the wrong place. Scaling those stored points by the
+    // same factor the canvas changed by keeps them locked to the document.
+    rescaleInProgressDrawingCoords(k);
 
     // PAGE-AWARE ANCHOR (continuous + side-by-side only):
     // The naive "contentY * k" formula assumes every pixel of the document
@@ -2797,6 +2822,13 @@ function applyPendingZoom() {
       // predict the accumulated inter-page gaps — we read them from layout.
       wrapper.scrollLeft = anchorPageEl.offsetLeft + pageRelX * k - mx;
       wrapper.scrollTop  = anchorPageEl.offsetTop  + pageRelY * k - my;
+    }
+    // Refresh the in-progress preview so any pinned first-click point /
+    // polyline draft / callout leader visually lands on the same physical
+    // document position after the zoom. Without this redraw the user sees
+    // the preview ghost in stale coordinates for one frame.
+    if (isDrawing || polylinePoints.length > 0 || calloutMode || twoClickStart) {
+      redrawAnnotations();
     }
     updateZoomIndicator();
   }
@@ -2874,6 +2906,12 @@ async function commitZoomRender() {
     else if (pageViewMode === 'sidebyside')  await rerenderSideBySideInPlace();
     else                                     await renderPage(currentPage);
     // (renderedScale gets set inside each render function.)
+    // The crisp re-render replaces the annotation canvases, which wipes any
+    // in-progress preview line (measure first-click, polyline draft, callout
+    // leader, etc.). Put it back so the user can keep drawing seamlessly.
+    if (isDrawing || polylinePoints.length || calloutMode || twoClickStart) {
+      redrawAnnotations();
+    }
     updateZoomIndicator();
   } finally {
     zoomRendering = false;
