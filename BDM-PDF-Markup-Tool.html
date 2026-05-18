@@ -847,7 +847,7 @@ let measurements = [];
 // Which view the right-hand panel is showing: 'properties' (default — tool /
 // annotation / file properties) or 'measurements' (running tally of every
 // measurement so the user can watch their take-off build up as they draw).
-let panelMode = 'properties'; // build: 2026-05-18 (force pages rebuild)
+let panelMode = 'properties';
 let countGroups = {};
 let currentCountGroup = 'Default';
 let mergeFiles = [];
@@ -5871,27 +5871,60 @@ function handleProjectLoad(event) {
 // ============================================================
 // PRINT
 // ============================================================
+// Cache for the most recently rendered preview page (raw colour, no greyscale)
+let _printPreviewCache = { pageIdx: -1, canvas: null };
+
 function openPrintDialog() {
   if (!pdfDoc) { alert('No PDF loaded'); return; }
   const body = `
-    <div style="display:flex;flex-direction:column;gap:12px">
-      <div><label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Pages</label>
-        <select id="print-pages" class="select-input" style="margin-top:4px">
-          <option value="current">Current Page (${currentPage+1})</option>
-          <option value="all">All Pages (${pdfDoc.numPages})</option>
-        </select></div>
-      <div><label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Scale</label>
-        <select id="print-scale" class="select-input" style="margin-top:4px">
-          <option value="fit">Fit to Page</option>
-          <option value="actual">Actual Size (100%)</option>
-          <option value="custom">Custom</option>
-        </select></div>
-      <div id="print-custom-wrap" class="hidden">
-        <label style="font-size:12px;color:var(--text-secondary)">Custom Scale %</label>
-        <input type="number" id="print-custom-pct" class="property-input" value="100" min="10" max="400" style="margin-top:4px">
+    <div style="display:flex;gap:16px;min-width:560px">
+      <div style="flex:1;display:flex;flex-direction:column;gap:12px">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Pages</label>
+          <select id="print-pages" class="select-input" style="margin-top:4px">
+            <option value="current">Current Page (${currentPage+1})</option>
+            <option value="all">All Pages (${pdfDoc.numPages})</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Scale</label>
+          <select id="print-scale" class="select-input" style="margin-top:4px">
+            <option value="fit" selected>Fit to Page (edge to edge)</option>
+            <option value="actual">Actual Size (100%)</option>
+            <option value="custom">Custom %</option>
+          </select>
+        </div>
+        <div id="print-custom-wrap" class="hidden">
+          <label style="font-size:12px;color:var(--text-secondary)">Custom Scale %</label>
+          <input type="number" id="print-custom-pct" class="property-input" value="100" min="10" max="400" style="margin-top:4px">
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Margins</label>
+          <select id="print-margins" class="select-input" style="margin-top:4px">
+            <option value="none" selected>None (edge to edge)</option>
+            <option value="small">Small (5mm)</option>
+            <option value="default">Default (10mm)</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="print-greyscale" style="margin:0">
+            Black &amp; white (greyscale)
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
+          <b>Fit to Page</b> stretches the whole page to fill the paper while keeping its shape — no blank strips. Markups are always included.
+        </div>
       </div>
-      <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px">
-        Annotations will be included in the print output.</div>
+      <div style="width:220px;display:flex;flex-direction:column">
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Preview</label>
+        <div id="print-preview-wrap" style="margin-top:4px;background:#1a1a24;border:1px solid #333;border-radius:4px;padding:10px;display:flex;align-items:center;justify-content:center;flex:1;min-height:260px;position:relative">
+          <div id="print-preview-paper" style="background:white;box-shadow:0 2px 8px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;max-width:100%;max-height:280px;position:relative;overflow:hidden">
+            <canvas id="print-preview-canvas" style="display:block;max-width:100%;max-height:100%"></canvas>
+          </div>
+        </div>
+        <div id="print-preview-status" style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:6px">Rendering preview…</div>
+      </div>
     </div>`;
   showModal('Print', body, [
     { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
@@ -5901,48 +5934,177 @@ function openPrintDialog() {
     const sel = document.getElementById('print-scale');
     if (sel) sel.addEventListener('change', () => {
       document.getElementById('print-custom-wrap').classList.toggle('hidden', sel.value !== 'custom');
+      updatePrintPreview();
     });
+    ['print-pages','print-margins','print-greyscale','print-custom-pct'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', updatePrintPreview);
+      if (el.tagName === 'INPUT') el.addEventListener('input', updatePrintPreview);
+    });
+    _printPreviewCache = { pageIdx: -1, canvas: null };
+    updatePrintPreview();
   }, 100);
+}
+
+async function updatePrintPreview() {
+  const canvas = document.getElementById('print-preview-canvas');
+  const paper = document.getElementById('print-preview-paper');
+  const status = document.getElementById('print-preview-status');
+  if (!canvas || !pdfDoc) return;
+
+  const pages = document.getElementById('print-pages')?.value || 'current';
+  const greyscale = document.getElementById('print-greyscale')?.checked;
+  const margins = document.getElementById('print-margins')?.value || 'none';
+  const scaleMode = document.getElementById('print-scale')?.value || 'fit';
+
+  const pageIdx = pages === 'all' ? 0 : currentPage;
+
+  try {
+    // Re-render the source canvas only if page changed
+    if (_printPreviewCache.pageIdx !== pageIdx || !_printPreviewCache.canvas) {
+      const page = await pdfDoc.getPage(pageIdx + 1);
+      const vp1 = page.getViewport({ scale: 1 });
+      const maxDim = 280;
+      const renderScale = Math.min(maxDim / vp1.width, maxDim / vp1.height) * 2;
+      const vp = page.getViewport({ scale: renderScale });
+      const c = document.createElement('canvas');
+      c.width = vp.width; c.height = vp.height;
+      const cctx = c.getContext('2d');
+      cctx.fillStyle = 'white';
+      cctx.fillRect(0, 0, vp.width, vp.height);
+      await page.render({ canvasContext: cctx, viewport: vp }).promise;
+      const pageAnns = annotations.filter(a => a.page === pageIdx);
+      pageAnns.forEach(ann => {
+        cctx.save();
+        cctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+        drawAnnotation(cctx, ann, false);
+        cctx.restore();
+      });
+      _printPreviewCache = { pageIdx, canvas: c };
+    }
+
+    const src = _printPreviewCache.canvas;
+    canvas.width = src.width;
+    canvas.height = src.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(src, 0, 0);
+
+    if (greyscale) {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+        d[i] = d[i+1] = d[i+2] = g;
+      }
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    // Visualise margins as inner padding on the "paper" element
+    const marginPx = margins === 'none' ? 0 : margins === 'small' ? 6 : 12;
+    if (paper) paper.style.padding = marginPx + 'px';
+
+    // For "actual" / "custom" modes, hint that scale is fixed (no auto-fit)
+    let modeNote = scaleMode === 'fit' ? 'Fit to page' : scaleMode === 'actual' ? 'Actual size' : 'Custom';
+    if (status) status.textContent = `Page ${pageIdx+1} • ${modeNote} • ${margins} margin${greyscale ? ' • B&W' : ''}`;
+  } catch(e) {
+    if (status) status.textContent = 'Preview failed: ' + (e.message || e);
+  }
 }
 
 async function executePrint() {
   const pages = document.getElementById('print-pages').value;
   const scaleMode = document.getElementById('print-scale').value;
+  const margins = document.getElementById('print-margins').value;
+  const greyscale = document.getElementById('print-greyscale').checked;
+  const customPct = parseInt(document.getElementById('print-custom-pct')?.value) || 100;
   closeCurrentModal();
 
+  const marginVal = margins === 'none' ? '0' : margins === 'small' ? '5mm' : '10mm';
   const printWin = window.open('', '_blank');
-  printWin.document.write('<html><head><title>Print - '+currentFilename+'</title><style>body{margin:0}canvas{display:block;page-break-after:always}@media print{canvas{page-break-after:always}}</style></head><body>');
+  printWin.document.write(`<!DOCTYPE html><html><head>
+    <title>Print - ${currentFilename}</title>
+    <style>
+      @page { size: auto; margin: ${marginVal}; }
+      html, body { margin: 0; padding: 0; background: white; }
+      .print-page {
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        page-break-after: always;
+        overflow: hidden;
+        box-sizing: border-box;
+      }
+      .print-page:last-child { page-break-after: auto; }
+      .print-page img.fit {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+      .print-page img.actual {
+        display: block;
+      }
+      @media print {
+        .print-page { width: 100%; height: 100vh; }
+      }
+    </style>
+  </head><body>`);
 
   const pageList = pages === 'all' ? Array.from({length:pdfDoc.numPages},(_,i)=>i) : [currentPage];
 
   for (const pi of pageList) {
     const page = await pdfDoc.getPage(pi + 1);
-    let scale = 1;
-    if (scaleMode === 'fit') scale = 1;
-    else if (scaleMode === 'actual') scale = 1;
-    else scale = (parseInt(document.getElementById('print-custom-pct')?.value)||100) / 100;
-
-    const vp = page.getViewport({ scale: scale * 1.5 });
-    const canvas = printWin.document.createElement('canvas');
-    canvas.width = vp.width; canvas.height = vp.height;
-    printWin.document.body.appendChild(canvas);
+    // High-quality render scale (2x for crisp print)
+    const renderScale = 2;
+    const vp = page.getViewport({ scale: renderScale });
+    const canvas = document.createElement('canvas');
+    canvas.width = vp.width;
+    canvas.height = vp.height;
     const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, vp.width, vp.height);
     await page.render({ canvasContext: ctx, viewport: vp }).promise;
 
-    // Draw annotations (page space coords, transform handles scaling)
     const pageAnns = annotations.filter(a => a.page === pi);
-    const printScale = scale * 1.5;
     pageAnns.forEach(ann => {
       ctx.save();
-      ctx.setTransform(printScale, 0, 0, printScale, 0, 0);
+      ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
       drawAnnotation(ctx, ann, false);
       ctx.restore();
     });
+
+    // Greyscale at canvas-level (more reliable than CSS filter on print)
+    if (greyscale) {
+      const imageData = ctx.getImageData(0, 0, vp.width, vp.height);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const g = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+        d[i] = d[i+1] = d[i+2] = g;
+      }
+      ctx.putImageData(imageData, 0, 0);
+    }
+
+    const dataUrl = canvas.toDataURL('image/png');
+
+    if (scaleMode === 'fit') {
+      // Edge-to-edge: image fills the whole printable area, aspect ratio preserved
+      printWin.document.write(`<div class="print-page"><img class="fit" src="${dataUrl}"></div>`);
+    } else {
+      // Actual / Custom: render at fixed physical size (PDF page mm * pct)
+      const vp1 = page.getViewport({ scale: 1 });
+      const pct = scaleMode === 'actual' ? 100 : customPct;
+      const physWmm = (vp1.width / 72) * 25.4 * (pct / 100);
+      const physHmm = (vp1.height / 72) * 25.4 * (pct / 100);
+      printWin.document.write(`<div class="print-page"><img class="actual" src="${dataUrl}" style="width:${physWmm.toFixed(2)}mm;height:${physHmm.toFixed(2)}mm"></div>`);
+    }
   }
 
   printWin.document.write('</body></html>');
   printWin.document.close();
-  setTimeout(() => { printWin.print(); }, 500);
+  setTimeout(() => { printWin.print(); }, 800);
 }
 
 // ============================================================
