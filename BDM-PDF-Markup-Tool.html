@@ -297,7 +297,7 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
 #canvas-area.snipregion { cursor: crosshair; }
-#canvas-area.count, #canvas-area.stamp { cursor: pointer; }
+#canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
 #canvas-area.cutcontent, #canvas-area.eraser { cursor: not-allowed; }
 #canvas-area.cloud, #canvas-area.pen { cursor: crosshair; }
@@ -672,6 +672,8 @@ canvas { display: block; }
       <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
       <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
       <button class="tool-btn" data-tool="stamp" onclick="setTool('stamp')" title="Stamp (S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 10h8M8 14h8"/></svg><span class="shortcut">S</span></button>
+      <button class="tool-btn" data-tool="tick" onclick="setTool('tick')" title="Tick / Check Mark (J)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,13 10,18 20,6"/></svg><span class="shortcut">J</span></button>
+      <button class="tool-btn" data-tool="signature" onclick="setTool('signature')" title="Signature Stamp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-1 3-3 6-3s4 4 7 2 4-5 5-7"/><path d="M3 21h18"/></svg></button>
       <div class="tool-divider"></div>
       <button class="tool-btn" data-tool="pen" onclick="setTool('pen')" title="Pen (P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="shortcut">P</span></button>
       <button class="tool-btn" data-tool="highlight" onclick="setTool('highlight')" title="Highlight (G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="1" fill="rgba(251,191,36,0.3)"/></svg><span class="shortcut">G</span></button>
@@ -852,6 +854,18 @@ let countGroups = {};
 let currentCountGroup = 'Default';
 let mergeFiles = [];
 let selectedStamp = 'APPROVED';
+// Stamp options — when a stamp is placed, the text can optionally have today's
+// date and the user's initials appended (e.g. "APPROVED 02/06/26 — JG").
+let stampIncludeDate = false;
+let stampInitials = '';
+// In-app clipboard for annotation copy/paste (Ctrl+C / Ctrl+V on a selected shape).
+// Stores a JSON-cloned copy of the source annotation; paste creates a new id
+// and offsets the points slightly so the copy is visible next to the original.
+let annotationClipboard = null;
+// Signature image stored as a data URL. Persisted in localStorage so the user
+// only has to upload their signature once, then click to stamp it onto pages.
+let signatureImage = null;
+try { signatureImage = localStorage.getItem('bdm-signature-image') || null; } catch(e) {}
 let polylinePoints = [];
 let measureMode = null;
 let twoClickStart = null; // For click-click line/arrow/dimension/measure/calibrate
@@ -919,7 +933,7 @@ const toolNames = {
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
-  snipregion:'Snip Region'
+  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature'
 };
 
 // ============================================================
@@ -1721,6 +1735,8 @@ function drawAnnotation(ctx, ann, isSelected) {
     case 'text': drawTextAnn(ctx, ann); break;
     case 'callout': drawCalloutAnn(ctx, ann); break;
     case 'stamp': drawStampAnn(ctx, ann); break;
+    case 'tick': drawTickAnn(ctx, ann); break;
+    case 'signature': drawSignatureAnn(ctx, ann); break;
     case 'image': drawImageAnn(ctx, ann); break;
     case 'pen': drawPenAnn(ctx, ann); break;
     case 'highlight': drawHighlightAnn(ctx, ann); break;
@@ -1808,7 +1824,25 @@ function drawMeasureLine(ctx, ann) {
   const label = getCalibratedLabel(dist, ann.page);
   ann.label = label;
   const basePos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
-  drawLabel(ctx, label, offsetPos(basePos, ann), { ann, recordKey: '_labelRect' });
+  // Short-measure auto-offset — if the label is wider than the line itself,
+  // shift it perpendicular to the line so it doesn't sit on top of the measure.
+  // Only kicks in when the user hasn't manually dragged the label.
+  let drawPos = offsetPos(basePos, ann);
+  const userDragged = ann.labelOffset && (ann.labelOffset.dx || ann.labelOffset.dy);
+  if (!userDragged && !ann.hideLabel) {
+    const fontSize = ann.labelFontSize || 11;
+    const approxLabelW = (label.length * fontSize * 0.6) + 8;
+    if (dist < approxLabelW) {
+      // Perpendicular unit vector to the line, pointing "up" in page space.
+      const dx = p2.x - p1.x, dy = p2.y - p1.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const px = -dy / len, py = dx / len;
+      const off = fontSize + 6;
+      const sign = py < 0 ? 1 : -1; // prefer above the line
+      drawPos = { x: basePos.x + px * off * sign, y: basePos.y + py * off * sign };
+    }
+  }
+  drawLabel(ctx, label, drawPos, { ann, recordKey: '_labelRect' });
 }
 
 function drawPolylineMeasure(ctx, ann) {
@@ -2010,6 +2044,33 @@ function drawStampAnn(ctx, ann) {
   ctx.textAlign = 'left';
 }
 
+// Tick / check-mark — drawn as a 3-segment polyline (short down stroke, long up stroke).
+// Centered on ann.points[0]. Size and thickness are user-configurable.
+function drawTickAnn(ctx, ann) {
+  const c = ann.points[0];
+  const s = ann.tickSize || 24;       // overall side length of the tick
+  const t = ann.thickness || 4;
+  ctx.strokeStyle = ann.color || '#22c55e';
+  ctx.lineWidth = t;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(c.x - s*0.45, c.y + s*0.05);
+  ctx.lineTo(c.x - s*0.10, c.y + s*0.40);
+  ctx.lineTo(c.x + s*0.50, c.y - s*0.40);
+  ctx.stroke();
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+}
+
+// Signature stamp — renders the saved signature image inside ann.points = [tl, br].
+function drawSignatureAnn(ctx, ann) {
+  if (!ann.src || !ann.points || ann.points.length < 2) return;
+  const [p1, p2] = ann.points;
+  const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y);
+  const w = Math.abs(p2.x - p1.x), h = Math.abs(p2.y - p1.y);
+  const img = getCachedImageElement(ann.src, () => redrawAnnotations());
+  if (img) ctx.drawImage(img, x, y, w, h);
+}
+
 // Image annotation — typically pasted from a screenshot (Win+Shift+S → Ctrl+V).
 // ann.points = [topLeft, bottomRight], ann.src = data: URL (PNG or JPEG).
 // HTMLImageElements are cached by data URL so we don't decode on every redraw.
@@ -2114,6 +2175,12 @@ function drawCutContentAnn(ctx, ann) {
 function drawLabel(ctx, text, pos, opts) {
   opts = opts || {};
   const ann = opts.ann || {};
+  // If the user ticked "Hide label" on this annotation, skip drawing entirely.
+  // (Still clear any old hit-test rect so the label can't be grabbed.)
+  if (ann.hideLabel) {
+    if (opts.recordKey) ann[opts.recordKey] = null;
+    return;
+  }
   const fontSize = ann.labelFontSize || 11;
   const bg = ann.labelBg || 'rgba(18,19,26,0.8)';
   const fg = ann.labelColor || '#D97757';
@@ -2432,7 +2499,7 @@ function onCanvasMouseDown(e) {
 
   // Apply snap to start point for most shape tools
   let startSnap = screenPt;
-  if (!['pan','select','pen','highlight','cloud','count','stamp','text','eraser'].includes(currentTool)) {
+  if (!['pan','select','pen','highlight','cloud','count','stamp','text','eraser','tick','signature'].includes(currentTool)) {
     startSnap = snapScreenPoint(screenPt);
   }
   isDrawing = true; startPoint = startSnap; currentMovePoint = startSnap;
@@ -2456,6 +2523,8 @@ function onCanvasMouseDown(e) {
   }
   if (currentTool === 'count') { addCountMarker(screenPt); isDrawing = false; return; }
   if (currentTool === 'stamp') { addStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
+  if (currentTool === 'tick') { addTickMark(screenPt); isDrawing = false; returnToNavTool(); return; }
+  if (currentTool === 'signature') { addSignatureStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
   if (currentTool === 'text') { showTextInput(screenPt); isDrawing = false; /* returnToNavTool called after text input blur */ return; }
   if (currentTool === 'callout') {
     if (!calloutMode) { calloutAnchor = screenPt; calloutKnees = []; calloutMode = true; }
@@ -3141,7 +3210,40 @@ function onKeyDown(e) {
   }
 
   const key = e.key.toLowerCase();
-  if (key === 'v') setTool('select');
+  const mod = e.ctrlKey || e.metaKey;
+
+  // Escape — cancel any in-progress draw and drop back to the Select tool.
+  // Covers click-click lines, polylines/polygons/areas, callouts, and pen strokes.
+  if (key === 'escape') {
+    e.preventDefault();
+    twoClickStart = null; isDrawing = false; startPoint = null; currentMovePoint = null;
+    polylinePoints = [];
+    calloutMode = false; calloutAnchor = null; calloutKnees = [];
+    areaDragStartScreen = null; areaDragCurrentScreen = null;
+    setTool('select');
+    redrawAnnotations();
+    return;
+  }
+
+  // Ctrl+C / Ctrl+V on a selected annotation — duplicate it.
+  // Handled BEFORE the tool-shortcut block so plain "c" still picks the Count tool
+  // but Ctrl+C copies the selection instead of switching tools.
+  if (mod && key === 'c' && selectedAnnotationId) {
+    e.preventDefault();
+    copySelectedAnnotation();
+    return;
+  }
+  if (mod && key === 'v' && annotationClipboard) {
+    e.preventDefault();
+    pasteAnnotationClipboard();
+    return;
+  }
+
+  // Tool shortcuts — guarded with !mod so Ctrl-combos (save, copy, etc.) don't
+  // accidentally swap the active tool. Previously "c" with Ctrl held was firing
+  // the Count tool when the user was trying to copy.
+  if (mod) { /* let the Ctrl-shortcut block below handle it */ }
+  else if (key === 'v') setTool('select');
   else if (key === 'k') setTool('calibrate');
   else if (key === 'm') setTool('measure');
   else if (key === 'l') setTool('polyline');
@@ -3155,13 +3257,15 @@ function onKeyDown(e) {
   else if (key === 'd') setTool('cloud');
   else if (key === 't') setTool('text');
   else if (key === 'b') setTool('callout');
-  else if (key === 's' && !e.ctrlKey) setTool('stamp');
+  else if (key === 's') setTool('stamp');
+  else if (key === 'j') setTool('tick');
   else if (key === 'p') setTool('pen');
   else if (key === 'g') setTool('highlight');
   else if (key === 'e') setTool('cutcontent');
   else if (key === 'x') setTool('eraser');
   else if (key === 'i') setTool('dimension');
-  else if (key === 'delete' && selectedAnnotationId) deleteSelectedAnnotation();
+
+  if (key === 'delete' && selectedAnnotationId) deleteSelectedAnnotation();
   else if ((e.ctrlKey||e.metaKey) && (key === '=' || key === '+')) { e.preventDefault(); zoomIn(); }
   else if ((e.ctrlKey||e.metaKey) && key === '-') { e.preventDefault(); zoomOut(); }
   else if ((e.ctrlKey||e.metaKey) && key === '0') { e.preventDefault(); resetZoom(); }
@@ -3370,13 +3474,111 @@ function setCountGroupColor(color) {
 }
 
 function addStamp(point) {
-  const colors = { 'APPROVED':'#4ade80','FOR REVIEW':'#60a5fa','HOLD POINT':'#fbbf24','REJECTED':'#f87171','REVISED':'#a855f7','NOT FOR CONSTRUCTION':'#f14170','PRELIMINARY':'#f97316','SUPERSEDED':'#6b7280' };
+  const colors = { 'APPROVED':'#4ade80','FOR REVIEW':'#60a5fa','HOLD POINT':'#fbbf24','REJECTED':'#f87171','REVISED':'#a855f7','NOT FOR CONSTRUCTION':'#f14170','PRELIMINARY':'#f97316','SUPERSEDED':'#6b7280','PAID':'#10b981' };
   const pagePoint = toPage(point);
+  // Build the text with optional date and initials appended.
+  let text = selectedStamp;
+  if (stampIncludeDate) text += ' ' + todayDateString();
+  if (stampInitials && stampInitials.trim()) text += ' — ' + stampInitials.trim();
   const ann = {
     id: generateId(), type: 'stamp', page: currentPage, points: [pagePoint],
-    text: selectedStamp, stampColor: colors[selectedStamp] || '#D97757', color: '#D97757'
+    text, stampColor: colors[selectedStamp] || '#D97757', color: '#D97757'
   };
   annotations.push(ann); saveToHistory(); redrawAnnotations();
+}
+
+// Today's date as dd/mm/yy — matches the BDM Australian short-date convention.
+function todayDateString() {
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${dd}/${mm}/${yy}`;
+}
+
+// Tick / check-mark annotation — a single green tick the user can place anywhere.
+// Stored with one center point; size is in page units so it scales with zoom.
+function addTickMark(point) {
+  const pagePoint = toPage(point);
+  const ann = {
+    id: generateId(), type: 'tick', page: currentPage, points: [pagePoint],
+    color: toolProperties.tickColor || '#22c55e',
+    tickSize: toolProperties.tickSize || 24,
+    thickness: toolProperties.tickThickness || 4
+  };
+  annotations.push(ann); saveToHistory(); redrawAnnotations();
+}
+
+// Signature stamp — places the user's saved signature image as an annotation.
+// If no signature is saved yet, prompts the user to upload one.
+function addSignatureStamp(point) {
+  if (!signatureImage) {
+    alert('No signature saved yet. Open the Signature tool panel on the right and upload a PNG/JPG of your signature first (transparent PNG works best).');
+    return;
+  }
+  const pagePoint = toPage(point);
+  // Default signature box: 140 x 50 page units. User can resize after placing.
+  const w = 140, h = 50;
+  const ann = {
+    id: generateId(), type: 'signature', page: currentPage,
+    points: [pagePoint, { x: pagePoint.x + w, y: pagePoint.y + h }],
+    src: signatureImage
+  };
+  annotations.push(ann); saveToHistory(); redrawAnnotations();
+}
+
+// Called from the signature tool panel's file input. Reads the chosen image,
+// stores it in localStorage, and refreshes the panel so the user sees the preview.
+function uploadSignatureImage(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    signatureImage = e.target.result;
+    try { localStorage.setItem('bdm-signature-image', signatureImage); } catch(err) { console.warn('Could not save signature to localStorage', err); }
+    openPropertiesPanel();
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearSignatureImage() {
+  if (!confirm('Remove the saved signature?')) return;
+  signatureImage = null;
+  try { localStorage.removeItem('bdm-signature-image'); } catch(e) {}
+  openPropertiesPanel();
+}
+
+// ============================================================
+// COPY / PASTE for annotations
+// ============================================================
+// Snapshot the selected annotation into an in-app clipboard. We deep-clone
+// via JSON so further edits to the source don't mutate what's on the clipboard.
+function copySelectedAnnotation() {
+  if (!selectedAnnotationId) return;
+  const ann = annotations.find(a => a.id === selectedAnnotationId);
+  if (!ann) return;
+  try { annotationClipboard = JSON.parse(JSON.stringify(ann)); } catch(e) { annotationClipboard = null; return; }
+  if (typeof showToast === 'function') showToast('Copied');
+}
+
+// Paste the clipboard annotation onto the CURRENT page (so the user can copy
+// from one page and paste on another). Offsets all points by ~20 page-units
+// so the duplicate sits next to (not on top of) the original.
+function pasteAnnotationClipboard() {
+  if (!annotationClipboard) return;
+  const copy = JSON.parse(JSON.stringify(annotationClipboard));
+  copy.id = generateId();
+  copy.page = currentPage;
+  const dx = 20, dy = 20;
+  if (Array.isArray(copy.points)) {
+    copy.points = copy.points.map(p => ({ x: (p.x||0) + dx, y: (p.y||0) + dy }));
+  }
+  // Drop cached hit-test rects from the source — they belong to the original render.
+  delete copy._labelRect; delete copy._perimRect;
+  annotations.push(copy);
+  selectedAnnotationId = copy.id;
+  saveToHistory();
+  redrawAnnotations();
+  openPropertiesPanel();
 }
 
 function addPenAnnotation(pts) {
@@ -3646,6 +3848,18 @@ function hitTest(x, y, ann, tol) {
       const cx = ann.points[0].x, cy = ann.points[0].y;
       return x >= cx - w/2 - tol && x <= cx + w/2 + tol && y >= cy - 14 - tol && y <= cy + 14 + tol;
     }
+    case 'tick': {
+      const c = ann.points[0];
+      const s = ann.tickSize || 24;
+      return x >= c.x - s/2 - tol && x <= c.x + s/2 + tol && y >= c.y - s/2 - tol && y <= c.y + s/2 + tol;
+    }
+    case 'signature': {
+      if (!ann.points || ann.points.length < 2) return false;
+      const [p1, p2] = ann.points;
+      const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+      const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+      return x >= minX - tol && x <= maxX + tol && y >= minY - tol && y <= maxY + tol;
+    }
     case 'count':
       return Math.hypot(x-ann.points[0].x, y-ann.points[0].y) <= tol+10;
     default: return false;
@@ -3908,7 +4122,22 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
-  if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp') {
+  if (ann.type === 'tick') {
+    html += `<div class="properties-section"><div class="properties-section-title">Tick</div><div class="properties-section-content">
+      <div class="property-row"><div class="property-label">Color:</div><input type="color" id="prop-tick-color" class="color-picker" value="${ann.color||'#22c55e'}"></div>
+      <div class="color-swatches" data-target="prop-tick-color"></div>
+      <div class="property-row"><div class="property-label">Size:</div><input type="number" id="prop-tick-size" class="property-input" min="8" max="120" step="2" value="${ann.tickSize||24}"></div>
+      <div class="property-row"><div class="property-label">Thickness:</div><input type="number" id="prop-tick-thickness" class="property-input" min="1" max="12" step="0.5" value="${ann.thickness||4}"></div>
+    </div></div>`;
+  }
+
+  if (ann.type === 'signature') {
+    html += `<div class="properties-section"><div class="properties-section-title">Signature</div><div class="properties-section-content">
+      <div style="font-size:11px;color:var(--text-secondary)">Drag the corner handle to resize. Drag the body to move.</div>
+    </div></div>`;
+  }
+
+  if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature') {
     html += `<div class="properties-section"><div class="properties-section-title">Appearance</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Colour:</div><input type="color" id="prop-color" class="color-picker" value="${ann.color||'#D97757'}"></div>
       <div class="color-swatches" data-target="prop-color"></div>`;
@@ -3966,11 +4195,14 @@ function getAnnotationPropertiesHTML(ann) {
     // input value is what the user sees as a starting swatch.
     const lbg = ann.labelBg || '#12131a';
     html += `<div class="properties-section"><div class="properties-section-title">Label</div><div class="properties-section-content">
+      <div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="prop-labelhide" class="checkbox-input" ${ann.hideLabel?'checked':''}>
+        Hide label (text only)</label></div>
       <div class="property-row"><div class="property-label">Text Color:</div><input type="color" id="prop-labelcolor" class="color-picker" value="${lc}"></div>
       <div class="color-swatches" data-target="prop-labelcolor"></div>
       <div class="property-row"><div class="property-label">Background:</div><input type="color" id="prop-labelbg" class="color-picker" value="${lbg}"></div>
       <div class="color-swatches" data-target="prop-labelbg"></div>
-      <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-labelfontsize" class="property-input" min="8" max="32" step="1" value="${ann.labelFontSize||11}"></div>
+      <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-labelfontsize" class="property-input" min="4" max="48" step="1" value="${ann.labelFontSize||11}"></div>
       <div class="property-row"><button id="prop-labelreset" style="flex:1;padding:6px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer">Reset Label Position</button></div>
     </div></div>`;
   }
@@ -4039,6 +4271,9 @@ function attachAnnotationListeners(ann) {
   bind('prop-color', 'color');
   bind('prop-stamp-text', 'text');
   bind('prop-stamp-color', 'stampColor');
+  bind('prop-tick-color', 'color');
+  bind('prop-tick-size', 'tickSize', t => parseInt(t.value) || 24);
+  bind('prop-tick-thickness', 'thickness', t => parseFloat(t.value) || 4);
   bind('prop-thickness', 'thickness', t => parseFloat(t.value));
   bind('prop-linestyle', 'lineStyle');
   bind('prop-hatch', 'hatch');
@@ -4065,7 +4300,13 @@ function attachAnnotationListeners(ann) {
   // Measurement label styling
   bind('prop-labelcolor', 'labelColor');
   bind('prop-labelbg', 'labelBg');
-  bind('prop-labelfontsize', 'labelFontSize', t => parseInt(t.value) || 11);
+  bind('prop-labelfontsize', 'labelFontSize', t => Math.max(4, parseInt(t.value) || 11));
+  const hideLabelEl = document.getElementById('prop-labelhide');
+  if (hideLabelEl) hideLabelEl.addEventListener('change', e => {
+    ann.hideLabel = e.target.checked;
+    saveToHistory();
+    redrawAnnotations();
+  });
   const resetBtn = document.getElementById('prop-labelreset');
   if (resetBtn) resetBtn.addEventListener('click', () => {
     ann.labelOffset = { dx: 0, dy: 0 };
@@ -4138,9 +4379,51 @@ function getToolPropertiesHTML(tool) {
         <button class="stamp-btn stamp-nfc" onclick="selectStamp('NOT FOR CONSTRUCTION')">NFC</button>
         <button class="stamp-btn stamp-preliminary" onclick="selectStamp('PRELIMINARY')">PRELIM.</button>
         <button class="stamp-btn stamp-superseded" onclick="selectStamp('SUPERSEDED')">SUPERSEDED</button>
+        <button class="stamp-btn stamp-approved" style="background:#10b981" onclick="selectStamp('PAID')">PAID</button>
       </div>
       <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">Selected: <strong id="sel-stamp">${selectedStamp}</strong></div>
+      <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="stamp-include-date" class="checkbox-input" ${stampIncludeDate?'checked':''}>
+        Include today's date (${todayDateString()})
+      </label>
+      <div class="property-row"><div class="property-label">Initials:</div>
+        <input type="text" id="stamp-initials" class="property-input" maxlength="6" placeholder="e.g. JG" value="${(stampInitials||'').replace(/"/g,'&quot;')}"></div>
+      <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
+        Tip: tick "Include today's date" and add your initials, then place the stamp — perfect for approving invoices or marking documents as paid.</div>
     </div>`;
+  } else if (tool === 'tick') {
+    html += `<div style="display:flex;flex-direction:column;gap:8px">
+      <label style="font-size:11px;color:var(--text-secondary)">Tick / Check Mark</label>
+      <div class="property-row"><div class="property-label">Colour:</div>
+        <input type="color" id="tool-tick-color" class="color-picker" value="${toolProperties.tickColor||'#22c55e'}"></div>
+      <div class="color-swatches" data-target="tool-tick-color"></div>
+      <div class="property-row"><div class="property-label">Size:</div>
+        <input type="number" id="tool-tick-size" class="property-input" min="8" max="120" step="2" value="${toolProperties.tickSize||24}"></div>
+      <div class="property-row"><div class="property-label">Thickness:</div>
+        <input type="number" id="tool-tick-thickness" class="property-input" min="1" max="12" step="0.5" value="${toolProperties.tickThickness||4}"></div>
+      <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">Click anywhere on the page to place a tick. (Shortcut: J)</div>
+    </div>`;
+  } else if (tool === 'signature') {
+    if (signatureImage) {
+      html += `<div style="display:flex;flex-direction:column;gap:8px">
+        <label style="font-size:11px;color:var(--text-secondary)">Your Signature</label>
+        <div style="padding:8px;background:white;border:1px solid var(--border-color);border-radius:4px;text-align:center">
+          <img src="${signatureImage}" style="max-width:100%;max-height:80px;display:inline-block"></div>
+        <div style="display:flex;gap:6px">
+          <label class="modal-btn secondary" style="flex:1;text-align:center;cursor:pointer;font-size:11px">Replace
+            <input type="file" accept="image/*" style="display:none" onchange="uploadSignatureImage(this.files[0])"></label>
+          <button class="modal-btn secondary" style="flex:1;font-size:11px" onclick="clearSignatureImage()">Remove</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">Click on the page to stamp your signature. Drag corner handles to resize after placing.</div>
+      </div>`;
+    } else {
+      html += `<div style="display:flex;flex-direction:column;gap:8px">
+        <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
+          Upload an image of your signature (transparent PNG works best). It's saved on this computer only and re-used every time you click Signature.</div>
+        <label class="modal-btn primary" style="text-align:center;cursor:pointer;font-size:12px;padding:10px">Upload Signature Image
+          <input type="file" accept="image/*" style="display:none" onchange="uploadSignatureImage(this.files[0])"></label>
+      </div>`;
+    }
   } else {
     // Generic tool properties
     html += `<div style="display:flex;flex-direction:column;gap:8px">
@@ -4227,6 +4510,20 @@ function attachToolListeners() {
 
   const cd = document.getElementById('calibrate-distance');
   if (cd) cd.addEventListener('change', e => { calibrationMM = parseFloat(e.target.value) || 100; });
+
+  // Stamp options — include-today's-date checkbox + initials text input
+  const sd = document.getElementById('stamp-include-date');
+  if (sd) sd.addEventListener('change', e => { stampIncludeDate = e.target.checked; });
+  const si = document.getElementById('stamp-initials');
+  if (si) si.addEventListener('input', e => { stampInitials = e.target.value; });
+
+  // Tick tool options — store on toolProperties so they persist across placements
+  const tc = document.getElementById('tool-tick-color');
+  if (tc) tc.addEventListener('change', e => { toolProperties.tickColor = e.target.value; });
+  const ts = document.getElementById('tool-tick-size');
+  if (ts) ts.addEventListener('change', e => { toolProperties.tickSize = parseInt(e.target.value) || 24; });
+  const tt = document.getElementById('tool-tick-thickness');
+  if (tt) tt.addEventListener('change', e => { toolProperties.tickThickness = parseFloat(e.target.value) || 4; });
 
   populateSwatches();
 }
@@ -6022,6 +6319,16 @@ async function executePrint() {
 
   const marginVal = margins === 'none' ? '0' : margins === 'small' ? '5mm' : '10mm';
   const printWin = window.open('', '_blank');
+  if (!printWin) {
+    alert('Could not open the print window — please allow pop-ups for this page and try Print again.');
+    return;
+  }
+  // Wait for any embedded fonts (from pdf.js or our own UI fonts) to fully
+  // load before we render to canvas. Without this, the first page render can
+  // produce tofu / box glyphs because pdf.js requests fonts asynchronously.
+  if (document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch(e) {}
+  }
   printWin.document.write(`<!DOCTYPE html><html><head>
     <title>Print - ${currentFilename}</title>
     <style>
@@ -6066,7 +6373,11 @@ async function executePrint() {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = 'white';
     ctx.fillRect(0, 0, vp.width, vp.height);
-    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    // intent:'print' tells pdf.js to render at print fidelity — it embeds the
+    // actual font glyphs into the canvas instead of falling back to system
+    // fonts. Without this, PDFs with embedded subsets often print as boxes.
+    // annotationMode:0 disables pdf.js's own annotation layer (we draw our own).
+    await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 0 }).promise;
 
     const pageAnns = annotations.filter(a => a.page === pi);
     pageAnns.forEach(ann => {
@@ -6087,7 +6398,12 @@ async function executePrint() {
       ctx.putImageData(imageData, 0, 0);
     }
 
-    const dataUrl = canvas.toDataURL('image/png');
+    // Large canvases (A1 / A0 at 2x) blow past the 25 MB threshold some browsers
+    // accept for inline PNG data URLs in a printed window — silently producing
+    // a blank/boxed page. Fall back to high-quality JPEG above ~6 megapixels.
+    const px = canvas.width * canvas.height;
+    const useJpeg = px > 6000000;
+    const dataUrl = useJpeg ? canvas.toDataURL('image/jpeg', 0.92) : canvas.toDataURL('image/png');
 
     if (scaleMode === 'fit') {
       // Edge-to-edge: image fills the whole printable area, aspect ratio preserved
