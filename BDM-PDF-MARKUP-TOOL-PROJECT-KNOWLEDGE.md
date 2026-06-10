@@ -1,5 +1,7 @@
 # BDM PDF Markup Tool — Project Knowledge & Lessons Learned
 
+> **v2 (June 2026):** `BDM-PDF-Markup-Tool-v2.html` (7,768 lines) — bug-fix + Cubit-style takeoff release. v1 kept unchanged. See "v2 Changelog" at the end of this document.
+
 **Project:** BDM PDF Markup & Measurement Tool  
 **Owner:** James @ Bentley Development Management  
 **Purpose:** Replace Bluebeam for internal QS/PM team (3-4 people, all Windows)  
@@ -273,3 +275,56 @@ while ((m = re.exec(h))) {
 - Team of 3-4 on Windows desktops
 - No server infrastructure — everything must work as a local file
 - Iterates quickly — gives bug reports + feature lists in one go, expects continuous implementation ("keep working")
+
+---
+
+## v2 Changelog (June 2026) — BDM-PDF-Markup-Tool-v2.html
+
+### Critical bug fixes
+- **Scale presets crashed silently** — `updatePanel()` was called but never defined; preset clicks set calibration but never refreshed the UI. Replaced with `openPropertiesPanel()` + `updateCalibrationIndicator()` + `rebuildMeasurements()`.
+- **Calibration leaked between document tabs** — `pageCalibrations` was never reset in `loadPdf` and was shared by reference across tabs. Now reset per document.
+- **Cut Content didn't redact in output files** — white cover only existed on the live canvas; saved/flattened/compressed/printed PDFs showed the "removed" content. The white fill now lives in `drawCutContentAnn` (with an `isBakingAnnotations` flag to drop the on-screen dashed border in outputs), so every export path covers correctly. Deleting/undoing a cutcontent re-renders the page so content reappears.
+- **Manual calibration reported wrong scale (~33% off)** — `guessScale` used 96-DPI (3.78) instead of PDF points (72/25.4). Measurements were right; the label was wrong. Now also snaps to common architectural scales within 3%.
+- **Undo could corrupt markups after page operations** — history only snapshotted annotations; Ctrl+Z after a page delete/insert/rotate restored stale page indices. Page ops now reset history (`resetHistoryAfterPageOp`); snapshots now include measurements + countGroups + takeoffItems.
+- **Half-finished drawings leaked across pages/tabs** — first click of a click-click tool survived page nav/tab switch and committed at wrong coordinates. `cancelInProgressDrawing()` is now called from all page-nav paths, tab switch, and continuous-view page-cross clicks.
+- **Rotating a page displaced its markups** — annotation coords are viewport-space; rotation now remaps every point (`remapAnnotationsForRotation`).
+- **Baked overlay mis-rotated on pages with /Rotate ≠ 0** — save bake now draws the overlay with compensating rotation in pdf-lib.
+
+### Other fixes
+- `showToast` finally exists (snap/copy/calibration feedback now visible)
+- Line/arrow hit-testing uses segment distance, not infinite-line (eraser no longer deletes lines you didn't click)
+- Search result navigation no longer breaks continuous view (routes through `goToPage`)
+- `measurements[].page` resyncs after page restructure (`rebuildMeasurements` updates `m.page`)
+- Escape in text/callout/inline editors cancels instead of committing; Escape while drawing keeps the tool armed (Bluebeam-style), second Escape deselects
+- Backspace deletes selection; Backspace mid-polyline removes the last vertex
+- Properties-panel edits are undoable (debounced history)
+- Right panel respects being closed (`panelUserCollapsed`); no more force-reopen on every page turn
+- Middle-click pans from any tool; right-click no longer places stray points
+- Eraser stays armed for bulk deletes; count numbering recounts on delete
+- Calibrate-by-line prompts for the reference length if the input isn't visible (no more silent stale-value calibrations)
+- "Apply to ALL pages" checkbox in calibrate panel (presets + drawn line) — big QS win on multi-sheet sets
+- Zero-size highlight/cutcontent click-artifacts prevented (minD check)
+- `closeDoc` clears the right thumbnail container; deleting an earlier page keeps the current sheet in view
+- Select-mode hover cursors (resize arrows / move) now actually work; snap indicator shows before the first click
+- History/saved JSON no longer bloated by `_labelRect`/`_perimRect` transients
+
+### NEW: Cubit-style Takeoff (third panel tab)
+- **Items** (e.g. "Slab", "Skirting", "Downlights") with result type Length (m) / Area (m²) / Count (no.), auto-assigned colour
+- **Select item → tool arms automatically → draw shapes → quantity accumulates live** (tool stays armed between shapes while an item is active; Esc stops)
+- **Deduct toggle** — shapes drawn while ON subtract (openings/voids), rendered dashed with a − label
+- Quantities computed numerically from geometry + per-page calibration (never parsed from display strings); ⚠ shown if any source page is uncalibrated
+- Per-item colour recolours all linked shapes; rename/delete (shapes stay, just unlinked); count items get their own count group
+- **Export Takeoff CSV** (Item, Type, Unit, Quantity, Shapes, Deductions)
+- State persists in saved PDFs (`takeoffItems` in the project JSON, version 4) and per tab
+
+### Post-release fix (10 Jun 2026)
+- **"Invalid PDF structure" on reopen of old saves** — files saved by the early build deployed on jamesbdm.github.io stored the clean source as a literal PDF string, which mangles binary (extraction yields a ~540-byte fragment). v2 now validates the extracted clean source (must start with %PDF and be >1KB) and falls back to the visible baked copy with a clear warning instead of refusing to open. Second net: if pdf.js still rejects the clean copy, retry with the original bytes. **Action: redeploy v2 to jamesbdm.github.io — the live site still runs the old build with the broken save format.**
+
+### v2.1 additions (10 Jun 2026)
+- **Takeoff level 2:** new result types — Vertical (length × height → m², for walls/render) and Volume (area × depth → m³, for slabs/excavation) with per-item height/depth; $ rate per item with live amounts, per-trade subtotals and an estimate total; trade groupings in the panel; ◎ button highlights (glows) all of an item's shapes on the drawing.
+- **Excel export:** dependency-free .xlsx writer (`_buildZip`/`_xlsxFromSheets`, stored-zip + inline-string SpreadsheetML). Two sheets: Takeoff Summary (trade subtotals + estimate total) and Shape Breakdown (per-shape, with scale used). CSV export retained.
+- **Compressed saves:** clean source is deflate-compressed (CompressionStream) before hex-embedding — flag `BDMCleanCompressed`; loader inflates when flagged, old uncompressed files unaffected. Embed cap raised 25MB → 60MB.
+- **Viewports:** calibrate panel → "Draw Viewport" — drag a region, give it its own scale (e.g. 1:20 detail on a 1:100 sheet). All measurement labels and takeoff quantities are viewport-aware via `_calFor(page, point)` (anchor point: midpoint for lines, first vertex for polylines, centroid for areas). Teal dashed outline + scale tag; manage/delete in calibrate panel; persisted in saves/tabs/history.
+
+### Lesson learned (tooling)
+- The OneDrive-synced project folder can serve a **stale/truncated copy to the sandbox shell** while the real file (via Read/Write tools) is fine — verify against the real file, and beware `sed -i` on the mount. A mid-edit OneDrive lock once truncated the file tail (EBUSY); if a file ever ends mid-line, the missing tail can be restored from v1 since the last ~400 lines are unchanged between versions.
