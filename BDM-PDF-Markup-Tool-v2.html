@@ -285,21 +285,18 @@ input, select, textarea { font: inherit; color: inherit; }
 
 /* Canvas area */
 #canvas-area { flex: 1; overflow: hidden; position: relative; display: flex; flex-direction: column; }
-#canvas-area.tool-select { cursor: default; }
-#canvas-area.tool-select.resize-nwse { cursor: nwse-resize; }
-#canvas-area.tool-select.resize-nesw { cursor: nesw-resize; }
-#canvas-area.tool-select.resize-ns { cursor: ns-resize; }
-#canvas-area.tool-select.resize-ew { cursor: ew-resize; }
-#canvas-area.tool-select.resize-move { cursor: move; }
+#canvas-area.select { cursor: default; }
 #canvas-area.pan { cursor: grab; }
 #canvas-area.pan.active { cursor: grabbing; }
+/* Cut Content / eraser get a crosshair+pointer rather than the hostile not-allowed */
+#canvas-area.eraser { cursor: pointer; }
 #canvas-area.calibrate, #canvas-area.measure, #canvas-area.polyline, #canvas-area.area,
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
-#canvas-area.snipregion { cursor: crosshair; }
+#canvas-area.snipregion, #canvas-area.viewport { cursor: crosshair; }
 #canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
-#canvas-area.cutcontent, #canvas-area.eraser { cursor: not-allowed; }
+#canvas-area.cutcontent { cursor: crosshair; }
 #canvas-area.cloud, #canvas-area.pen { cursor: crosshair; }
 
 /* Calibration banner */
@@ -727,6 +724,7 @@ canvas { display: block; }
       </div>
       <div id="panel-tabs">
         <button class="panel-tab active" data-mode="properties" onclick="setPanelMode('properties')">Properties</button>
+        <button class="panel-tab" data-mode="takeoff" onclick="setPanelMode('takeoff')">Takeoff</button>
         <button class="panel-tab" data-mode="measurements" onclick="setPanelMode('measurements')">Measurements</button>
       </div>
       <div class="panel-scroll" id="panel-content"></div>
@@ -819,6 +817,7 @@ canvas { display: block; }
 
 <script>
 // ============================================================
+// BDM PDF Markup Tool v2 — bug-fix + Cubit-style takeoff release
 // GLOBALS & STATE
 // ============================================================
 let pdfDoc = null;
@@ -908,6 +907,50 @@ let pageCalibrations = {};
 let calibrationPixels = 0;
 let calibrationMM = 100;
 
+// ============================================================
+// TAKEOFF (Cubit-style) STATE
+// ============================================================
+// Each takeoff item accumulates quantities from multiple shapes, like a
+// Cubit estimate line. resultType: 'length' | 'area' | 'count'.
+// Shapes link back via annotation.takeoffItemId; annotation.isDeduction
+// subtracts from the total (openings/voids).
+let takeoffItems = [];           // [{id, name, resultType, color, trade, rate, factor}]
+let activeTakeoffItemId = null;  // item currently being measured against
+let takeoffDeductMode = false;   // when true, new shapes are deductions
+let highlightTakeoffItemId = null; // item whose shapes are glowing on the canvas
+
+// Viewports — regions of a sheet with their OWN scale (Bluebeam-style),
+// e.g. a 1:20 detail beside a 1:100 plan. Measurements whose anchor point
+// falls inside a viewport use the viewport's calibration instead of the page's.
+// [{id, page, rect:{x,y,w,h} (page coords), pixelsPerMm, scale, label}]
+let viewports = [];
+const TAKEOFF_COLORS = ['#D97757','#2E86DE','#27AE60','#8E44AD','#E67E22','#16A085','#C0392B','#7F8C8D','#D4AC0D','#2C3E50'];
+
+// Right panel: remember when the user explicitly closed it so we stop
+// force-reopening it on every page turn / deselect (usability fix M10)
+let panelUserCollapsed = false;
+
+// True while annotations are being baked into an output file (save / flatten /
+// compress / print). Lets draw functions skip on-screen-only chrome like the
+// Cut Content dashed border.
+let isBakingAnnotations = false;
+
+// Cancel any half-finished drawing (click-click first point, polyline in
+// progress, callout, drag-draw). Called on Escape, page change, tab switch.
+function cancelInProgressDrawing() {
+  twoClickStart = null;
+  isDrawing = false;
+  startPoint = null;
+  currentMovePoint = null;
+  polylinePoints = [];
+  calloutMode = false;
+  calloutAnchor = null;
+  calloutKnees = [];
+  areaDragStartScreen = null;
+  areaDragCurrentScreen = null;
+  if (typeof redrawAnnotations === 'function') { try { redrawAnnotations(); } catch(e) {} }
+}
+
 // Tool properties
 const toolProperties = {
   color: '#D97757',
@@ -933,7 +976,8 @@ const toolNames = {
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
-  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature'
+  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature',
+  viewport:'Viewport (region scale)'
 };
 
 // ============================================================
@@ -1073,7 +1117,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (pdfDoc && wrapper && !wrapper.contains(e.target)) {
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         const startScale = pendingZoom ? pendingZoom.targetScale : currentScale;
-        scheduleZoom(Math.max(0.25, Math.min(10, startScale * factor)), null);
+        scheduleZoom(Math.max(0.1, Math.min(10, startScale * factor)), null);
       }
     }
   }, { passive: false });
@@ -1184,6 +1228,10 @@ function captureActiveDocState() {
   d.calBannerDismissed = calBannerDismissed;
   d.currentFilename = currentFilename;
   d.currentFileHandle = currentFileHandle;
+  d.takeoffItems = takeoffItems;
+  d.activeTakeoffItemId = activeTakeoffItemId;
+  d.pageViewMode = pageViewMode;
+  d.viewports = viewports;
 }
 
 function restoreDocState(idx) {
@@ -1205,12 +1253,29 @@ function restoreDocState(idx) {
   calBannerDismissed = d.calBannerDismissed || {};
   currentFilename = d.currentFilename || 'document.pdf';
   currentFileHandle = d.currentFileHandle || null;
+  takeoffItems = d.takeoffItems || [];
+  activeTakeoffItemId = d.activeTakeoffItemId || null;
+  takeoffDeductMode = false;
+  highlightTakeoffItemId = null;
+  viewports = d.viewports || [];
   activeDocIndex = idx;
+
+  // Cancel any half-finished drawing from the previous document
+  cancelInProgressDrawing();
 
   document.getElementById('filename').textContent = currentFilename;
   document.getElementById('drop-zone').style.display = 'none';
   document.getElementById('canvas-wrapper').style.display = 'block';
 
+  // Restore this document's view mode (continuous view DOM must be rebuilt,
+  // otherwise redrawAnnotations silently no-ops on missing canvases)
+  const savedViewMode = d.pageViewMode || 'single';
+  if (pageViewMode !== 'single' || savedViewMode !== 'single') {
+    pageViewMode = 'single'; // renderPage below rebuilds single-page DOM
+    if (savedViewMode !== 'single' && typeof setPageView === 'function') {
+      setTimeout(() => setPageView(savedViewMode), 0);
+    }
+  }
   renderPage(currentPage);
   generateThumbnails();
   updatePageIndicator();
@@ -1251,6 +1316,12 @@ function closeDoc(idx) {
     currentFileHandle = null;
     currentPage = 0;
     activeDocIndex = -1;
+    takeoffItems = [];
+    activeTakeoffItemId = null;
+    takeoffDeductMode = false;
+    highlightTakeoffItemId = null;
+    viewports = [];
+    cancelInProgressDrawing();
 
     const canvasWrap = document.getElementById('canvas-wrapper');
     const dropZone = document.getElementById('drop-zone');
@@ -1258,8 +1329,8 @@ function closeDoc(idx) {
     if (dropZone) dropZone.style.display = '';
     const fn = document.getElementById('filename');
     if (fn) fn.textContent = '';
-    // Clear thumbnail strip
-    const thumbList = document.getElementById('thumb-list');
+    // Clear thumbnail strip (fix: correct container id)
+    const thumbList = document.getElementById('thumb-scroll-area');
     if (thumbList) thumbList.innerHTML = '';
     renderDocTabs();
     return;
@@ -1350,17 +1421,37 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     // Check whether this PDF was previously saved by the BDM tool.
     // If so, pull out the clean source + editable project state.
     let restoredProject = null;
+    let bakedFallbackBytes = null;  // original file bytes, kept in case the embedded clean source is corrupt
     try {
       const bdmData = await readBDMDataFromPdfBytes(incomingBytes.slice());
       if (bdmData && bdmData.project) {
         restoredProject = bdmData.project;
-        if (bdmData.cleanBytes && bdmData.cleanBytes.length > 0) {
+        // Validate the embedded clean source before trusting it. Files saved
+        // by an early build stored it as a literal PDF string, which mangles
+        // binary data — extraction then yields a short corrupt fragment that
+        // crashes pdf.js ("Invalid PDF structure") and the file won't open at all.
+        let cb = bdmData.cleanBytes;
+        if (cb && !(cb instanceof Uint8Array)) cb = new Uint8Array(cb);
+        const looksLikePdf = cb && cb.length > 1024 &&
+          cb[0] === 0x25 && cb[1] === 0x50 && cb[2] === 0x44 && cb[3] === 0x46; // "%PDF"
+        let cleanCorrupt = false;
+        if (cb && cb.length > 0 && !looksLikePdf) {
+          console.warn('BDM: embedded clean source is corrupt (' + cb.length + ' bytes) — using baked PDF instead');
+          cb = null;
+          cleanCorrupt = true;
+          setTimeout(() => alert(
+            'This file was saved by an earlier version of the BDM tool and its embedded ' +
+            'clean source is unrecoverable. The document has been opened from its visible ' +
+            '(baked) copy instead — existing markups are part of the page image. ' +
+            'New markups and a re-save will work normally.'
+          ), 300);
+        }
+        if (cb && cb.length > 0) {
           // Render the clean source (without baked overlays) so live
           // annotations drawn on top don't double-stack visually.
-          incomingBytes = bdmData.cleanBytes instanceof Uint8Array
-            ? bdmData.cleanBytes.slice()
-            : new Uint8Array(bdmData.cleanBytes).slice();
-        } else if (bdmData.bakedOverlay) {
+          bakedFallbackBytes = incomingBytes;   // keep the original in case pdf.js still rejects the clean copy
+          incomingBytes = cb.slice();
+        } else if (bdmData.bakedOverlay && !cleanCorrupt) {
           // Legacy file saved by the old build where the clean-source
           // attachment couldn't be recovered. Warn once — markups will
           // still be editable but will appear duplicated on top of the
@@ -1380,7 +1471,25 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     }
 
     currentPdfBytes = incomingBytes.slice();
-    pdfDoc = await pdfjsLib.getDocument({data: incomingBytes.slice()}).promise;
+    try {
+      pdfDoc = await pdfjsLib.getDocument({data: incomingBytes.slice()}).promise;
+    } catch (parseErr) {
+      // If we substituted an embedded clean source and pdf.js rejects it,
+      // fall back to the original (baked) file rather than failing to open.
+      if (bakedFallbackBytes) {
+        console.warn('BDM: clean source failed to parse (' + parseErr.message + ') — falling back to baked PDF');
+        incomingBytes = bakedFallbackBytes;
+        currentPdfBytes = incomingBytes.slice();
+        pdfDoc = await pdfjsLib.getDocument({data: incomingBytes.slice()}).promise;
+        setTimeout(() => alert(
+          'The clean copy embedded in this file could not be read, so the document ' +
+          'was opened from its visible (baked) copy instead. Existing markups are part ' +
+          'of the page image; new markups and a re-save will work normally.'
+        ), 300);
+      } else {
+        throw parseErr;
+      }
+    }
     currentPage = 0;
     annotations = [];
     selectedAnnotationId = null;
@@ -1388,6 +1497,14 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     measurements = [];
     countGroups = {};
     currentCountGroup = 'Default';
+    pageCalibrations = {};        // fresh per-document calibration (was leaking between tabs)
+    calBannerDismissed = {};
+    takeoffItems = [];
+    activeTakeoffItemId = null;
+    takeoffDeductMode = false;
+    highlightTakeoffItemId = null;
+    viewports = [];
+    cancelInProgressDrawing();
     currentFilename = filename || 'document.pdf';
 
     // Restore editable project state if this file was saved by the BDM tool
@@ -1396,6 +1513,8 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       if (restoredProject.pageCalibrations) pageCalibrations = restoredProject.pageCalibrations;
       if (restoredProject.countGroups) countGroups = restoredProject.countGroups;
       if (Array.isArray(restoredProject.measurements)) measurements = restoredProject.measurements;
+      if (Array.isArray(restoredProject.takeoffItems)) takeoffItems = restoredProject.takeoffItems;
+      if (Array.isArray(restoredProject.viewports)) viewports = restoredProject.viewports;
       // Intentionally NOT restoring toolPresets — user's local presets take priority
     }
 
@@ -1427,7 +1546,8 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       annotations, selectedAnnotationId, history, historyIndex,
       measurements, countGroups, currentCountGroup,
       pageCalibrations, pdfMetadata, calBannerDismissed,
-      currentFilename, currentFileHandle
+      currentFilename, currentFileHandle,
+      takeoffItems, activeTakeoffItemId, pageViewMode, viewports
     };
     openDocs.push(newDocEntry);
     activeDocIndex = openDocs.length - 1;
@@ -1534,6 +1654,35 @@ function toScreen(pagePt) {
 // Snap-to-drawing: returns page point snapped to nearest annotation endpoint/edge on current page.
 let snapEnabled = true;
 let lastSnapHit = null; // for drawing a snap indicator
+// Tools that show a snap indicator while hovering (before the first click)
+const SNAP_HOVER_TOOLS = ['measure','polyline','area','dimension','calibrate','line','arrow','polygon'];
+
+// Select-mode hover cursor: resize arrows over handles, move cursor over bodies.
+function updateSelectHoverCursor(screenPt) {
+  const canvas = (typeof getActiveAnnotationCanvas === 'function') ? getActiveAnnotationCanvas() : document.getElementById('annotation-canvas');
+  if (!canvas) return;
+  const pagePt = toPage(screenPt);
+  const tol = 8 / currentScale;
+  let cursor = '';
+  // Check the selected annotation's handles first
+  if (selectedAnnotationId) {
+    const sel = annotations.find(a => a.id === selectedAnnotationId && a.page === currentPage);
+    if (sel) {
+      const hi = getResizeHandleAtPoint(sel, pagePt.x, pagePt.y, tol);
+      if (hi >= 0) {
+        if (['rectangle','ellipse','highlight','cutcontent','image'].includes(sel.type) && sel.points.length === 2) {
+          // 0=TL 1=TC 2=TR 3=ML 4=MR 5=BL 6=BC 7=BR
+          cursor = ['nwse-resize','ns-resize','nesw-resize','ew-resize','ew-resize','nesw-resize','ns-resize','nwse-resize'][hi] || 'move';
+        } else cursor = 'crosshair';
+      }
+    }
+  }
+  if (!cursor) {
+    const over = getAnnotationAtPoint(screenPt.x, screenPt.y);
+    if (over) cursor = 'move';
+  }
+  canvas.style.cursor = cursor;
+}
 function snapPagePoint(pagePt) {
   lastSnapHit = null;
   if (!snapEnabled) return pagePt;
@@ -1607,6 +1756,9 @@ function attachPageAnnotationListeners(annCanvas, pageIdx) {
     // previous page's in-progress preview before the new draw begins.
     const prevPage = currentPage;
     if (prevPage !== pageIdx) {
+      // Abort any half-finished drawing from the previous page so its first
+      // click can't combine with a click on this page (wrong-coords markup).
+      cancelInProgressDrawing();
       currentPage = pageIdx;
       // Clear stale preview on the previous page if there was one.
       const prevDiv = document.querySelector(
@@ -1640,17 +1792,26 @@ function redrawAnnotations() {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Viewport regions go underneath the markups
+  drawViewportOverlays(ctx);
   annotations.forEach(ann => {
     if (ann.page !== currentPage) return;
     ctx.save();
     ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
+    // Takeoff highlight — glow every shape linked to the highlighted item
+    if (highlightTakeoffItemId && ann.takeoffItemId === highlightTakeoffItemId) {
+      ctx.shadowColor = ann.color || '#D97757';
+      ctx.shadowBlur = 12;
+    }
     drawAnnotation(ctx, ann, ann.id === selectedAnnotationId);
     ctx.restore();
   });
   // Draw in-progress shapes
   drawInProgress(ctx);
-  // Draw snap indicator
-  if (lastSnapHit && isDrawing) {
+  // Draw snap indicator — shown while drawing AND while hovering with a
+  // drawing tool armed, so the FIRST click of a measurement can be snapped
+  // with visual feedback (previously the first click snapped invisibly).
+  if (lastSnapHit && (isDrawing || twoClickStart || (typeof SNAP_HOVER_TOOLS !== 'undefined' && SNAP_HOVER_TOOLS.includes(currentTool)))) {
     ctx.save();
     ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
     ctx.strokeStyle = '#00E5A0'; ctx.lineWidth = 2 / currentScale;
@@ -1779,15 +1940,82 @@ function drawAnnotation(ctx, ann, isSelected) {
   ctx.restore();
 }
 
-function getCalibratedLabel(pixelDist, page) {
-  const cal = pageCalibrations[page];
+// Resolve the calibration for a point on a page. Viewports (regions with
+// their own scale, e.g. a 1:20 detail on a 1:100 sheet) take priority over
+// the page calibration when the point falls inside one.
+function _calFor(page, pt) {
+  if (pt && viewports.length) {
+    for (const v of viewports) {
+      if (v.page === page && v.rect &&
+          pt.x >= v.rect.x && pt.x <= v.rect.x + v.rect.w &&
+          pt.y >= v.rect.y && pt.y <= v.rect.y + v.rect.h) return v;
+    }
+  }
+  return pageCalibrations[page];
+}
+// Create a viewport from a dragged rectangle (page coords). Asks for the
+// region's scale, then all measurements inside it use that scale.
+function createViewportFromRect(p1, p2) {
+  const answer = prompt('Scale for this viewport region — enter the denominator only\n(e.g. 20 for 1:20, 50 for 1:50):', '20');
+  const s = parseFloat(answer);
+  if (!(s > 0)) { showToast('Viewport cancelled'); return; }
+  viewports.push({
+    id: generateId(),
+    page: currentPage,
+    rect: { x: Math.min(p1.x,p2.x), y: Math.min(p1.y,p2.y), w: Math.abs(p2.x-p1.x), h: Math.abs(p2.y-p1.y) },
+    pixelsPerMm: (72/25.4) / s,
+    scale: '1:' + s
+  });
+  saveToHistory();
+  redrawAnnotations();
+  rebuildMeasurements();
+  refreshTakeoffPanel();
+  showToast('Viewport added at 1:' + s + ' — measurements inside it use this scale');
+  openPropertiesPanel();
+}
+
+function deleteViewport(id) {
+  viewports = viewports.filter(v => v.id !== id);
+  saveToHistory();
+  redrawAnnotations();
+  openPropertiesPanel();
+}
+
+// Draw viewport regions on the current page (dashed teal outline + scale tag)
+function drawViewportOverlays(ctx) {
+  const vps = viewports.filter(v => v.page === currentPage);
+  if (!vps.length) return;
+  ctx.save();
+  ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
+  vps.forEach(v => {
+    ctx.strokeStyle = '#14b8a6';
+    ctx.lineWidth = 1.5 / currentScale;
+    ctx.setLineDash([8 / currentScale, 5 / currentScale]);
+    ctx.globalAlpha = 0.85;
+    ctx.strokeRect(v.rect.x, v.rect.y, v.rect.w, v.rect.h);
+    ctx.setLineDash([]);
+    // Scale tag in the top-left corner
+    const fs = 11 / currentScale;
+    ctx.font = '600 ' + fs + 'px "Segoe UI", sans-serif';
+    const tag = ' ' + v.scale + ' ';
+    const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = '#14b8a6';
+    ctx.fillRect(v.rect.x, v.rect.y - fs - 4 / currentScale, tw, fs + 4 / currentScale);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(tag, v.rect.x, v.rect.y - 3 / currentScale);
+  });
+  ctx.restore();
+}
+
+function getCalibratedLabel(pixelDist, page, pt) {
+  const cal = _calFor(page, pt);
   if (!cal) return pixelDist.toFixed(1) + 'px';
   const mm = pixelDist / cal.pixelsPerMm;
   if (mm >= 1000) return (mm / 1000).toFixed(2) + 'm';
   return mm.toFixed(0) + 'mm';
 }
-function getCalibratedArea(pixelArea, page) {
-  const cal = pageCalibrations[page];
+function getCalibratedArea(pixelArea, page, pt) {
+  const cal = _calFor(page, pt);
   if (!cal) return pixelArea.toFixed(0) + 'px²';
   const mmSq = pixelArea / (cal.pixelsPerMm * cal.pixelsPerMm);
   if (mmSq >= 1000000) return (mmSq / 1000000).toFixed(2) + 'm²';
@@ -1819,9 +2047,12 @@ function getCentroid(points) {
 // Individual drawing functions
 function drawMeasureLine(ctx, ann) {
   const [p1, p2] = ann.points;
+  if (ann.isDeduction) ctx.setLineDash([6, 4]);
   ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  if (ann.isDeduction) ctx.setLineDash([]);
   const dist = Math.hypot(p2.x-p1.x, p2.y-p1.y);
-  const label = getCalibratedLabel(dist, ann.page);
+  let label = getCalibratedLabel(dist, ann.page, { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 });
+  if (ann.isDeduction) label = '−' + label;
   ann.label = label;
   const basePos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
   // Short-measure auto-offset — if the label is wider than the line itself,
@@ -1847,11 +2078,14 @@ function drawMeasureLine(ctx, ann) {
 
 function drawPolylineMeasure(ctx, ann) {
   if (!ann.points || ann.points.length < 2) return;
+  if (ann.isDeduction) ctx.setLineDash([6, 4]);
   ctx.beginPath(); ctx.moveTo(ann.points[0].x, ann.points[0].y);
   ann.points.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
+  if (ann.isDeduction) ctx.setLineDash([]);
   let totalDist = 0;
   for (let i = 1; i < ann.points.length; i++) totalDist += Math.hypot(ann.points[i].x-ann.points[i-1].x, ann.points[i].y-ann.points[i-1].y);
-  const label = getCalibratedLabel(totalDist, ann.page);
+  let label = getCalibratedLabel(totalDist, ann.page, ann.points[0]);
+  if (ann.isDeduction) label = '−' + label;
   ann.label = label;
   if (ann.points.length > 1) {
     const basePos = ann.points[Math.floor(ann.points.length/2)];
@@ -1861,6 +2095,7 @@ function drawPolylineMeasure(ctx, ann) {
 
 function drawAreaMeasure(ctx, ann) {
   if (!ann.points || ann.points.length < 3) return;
+  if (ann.isDeduction) ctx.setLineDash([6, 4]);
   ctx.beginPath(); ctx.moveTo(ann.points[0].x, ann.points[0].y);
   ann.points.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
   if (ann.fillColor && ann.fillColor !== 'none') {
@@ -1873,10 +2108,13 @@ function drawAreaMeasure(ctx, ann) {
     const xs = ann.points.map(p=>p.x), ys = ann.points.map(p=>p.y);
     drawHatchPattern(ctx, {x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs)-Math.min(...xs), h:Math.max(...ys)-Math.min(...ys)}, ann.hatch, ann.color||'#D97757');
   }
+  if (ann.isDeduction) ctx.setLineDash([]);
   const area = getPolygonArea(ann.points);
   const perim = getPerimeter(ann.points);
-  const areaLabel = getCalibratedArea(area, ann.page);
-  const perimLabel = getCalibratedLabel(perim, ann.page);
+  const cen = getCentroid(ann.points);
+  let areaLabel = getCalibratedArea(area, ann.page, cen);
+  if (ann.isDeduction) areaLabel = '−' + areaLabel;
+  const perimLabel = getCalibratedLabel(perim, ann.page, cen);
   ann.label = areaLabel; ann.perimLabel = perimLabel;
   const c = getCentroid(ann.points);
   const labelPos = offsetPos(c, ann);
@@ -2149,23 +2387,34 @@ function drawDimensionAnn(ctx, ann) {
     ctx.closePath(); ctx.fillStyle = ann.color||'#D97757'; ctx.fill();
   });
   const dist = Math.hypot(dx, dy);
-  const label = getCalibratedLabel(dist, ann.page);
+  const label = getCalibratedLabel(dist, ann.page, { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 });
   ann.label = label;
   const dimPos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
   drawLabel(ctx, label, offsetPos(dimPos, ann), { ann, recordKey: '_labelRect' });
 }
 
 function drawCutContentAnn(ctx, ann) {
-  // The actual white fill is rendered on the PDF canvas in renderPage().
-  // On the annotation canvas, just draw a subtle dashed border so the user can see the region.
+  // CRITICAL: paint the solid white cover here so it is included in EVERY
+  // output path (save bake, flatten, compress, print) — previously the white
+  // fill only existed on the live PDF canvas and exported files showed the
+  // "removed" content untouched.
   const [p1, p2] = ann.points;
+  const x = Math.min(p1.x,p2.x), y = Math.min(p1.y,p2.y);
+  const w = Math.abs(p2.x-p1.x), h = Math.abs(p2.y-p1.y);
   ctx.save();
-  ctx.strokeStyle = '#ccc';
-  ctx.lineWidth = 1 / currentScale;
-  ctx.setLineDash([4 / currentScale, 3 / currentScale]);
-  ctx.globalAlpha = 0.6;
-  ctx.strokeRect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
-  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x, y, w, h);
+  // Subtle dashed border so the user can find the region on screen —
+  // skipped when baking so exported files show a clean white area.
+  if (!isBakingAnnotations) {
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1 / currentScale;
+    ctx.setLineDash([4 / currentScale, 3 / currentScale]);
+    ctx.globalAlpha = 0.6;
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+  }
   ctx.restore();
 }
 
@@ -2308,7 +2557,8 @@ function drawInProgress(ctx) {
     currentTool === 'line' || currentTool === 'arrow' ||
     currentTool === 'measure' || currentTool === 'calibrate' ||
     currentTool === 'dimension' || currentTool === 'highlight' ||
-    currentTool === 'cutcontent' || currentTool === 'snipregion'
+    currentTool === 'cutcontent' || currentTool === 'snipregion' ||
+    currentTool === 'viewport'
   )) {
     const start = toPage(startPoint);
     let move = toPage(currentMovePoint);
@@ -2318,7 +2568,7 @@ function drawInProgress(ctx) {
       else if (SHIFT_LINE_TOOLS.includes(currentTool)) move = applyShiftLineLock(start, move);
     }
 
-    if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent' || currentTool === 'snipregion') {
+    if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent' || currentTool === 'snipregion' || currentTool === 'viewport') {
       ctx.strokeRect(Math.min(start.x,move.x), Math.min(start.y,move.y), Math.abs(move.x-start.x), Math.abs(move.y-start.y));
     } else if (currentTool === 'ellipse') {
       const cx = Math.min(start.x,move.x) + Math.abs(move.x-start.x)/2;
@@ -2391,6 +2641,17 @@ function onCanvasMouseDown(e) {
   const rect = e.target.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const screenPt = { x, y };
+
+  // Middle mouse button = pan from ANY tool (previously dead in select mode).
+  if (e.button === 1) {
+    e.preventDefault();
+    panStart = { x: e.clientX, y: e.clientY };
+    return;
+  }
+  // Ignore non-left buttons for drawing/selecting — right-click is handled by
+  // onCanvasRightClick (finish polyline etc.), and was previously placing
+  // stray points / starting accidental drags.
+  if (e.button !== 0) return;
 
   if (currentTool === 'select') {
     const pagePt = toPage(screenPt);
@@ -2531,7 +2792,8 @@ function onCanvasMouseDown(e) {
     else { calloutKnees.push(screenPt); }
     redrawAnnotations(); isDrawing = false; return;
   }
-  if (currentTool === 'eraser') { eraseAnnotationAtPoint(x, y); isDrawing = false; returnToNavTool(); return; }
+  // Eraser stays armed so multiple markups can be deleted in a row (Escape or V to exit)
+  if (currentTool === 'eraser') { eraseAnnotationAtPoint(x, y); isDrawing = false; return; }
 }
 
 function onCanvasMouseMove(e) {
@@ -2597,7 +2859,23 @@ function onCanvasMouseMove(e) {
     return;
   }
 
-  if (!isDrawing || !startPoint) return;
+  if (!isDrawing || !startPoint) {
+    const rect2 = e.target.getBoundingClientRect();
+    const hoverPt = { x: e.clientX - rect2.left, y: e.clientY - rect2.top };
+    // Hover snap indicator — lets the FIRST click of a measurement land on a
+    // snapped point with visual feedback.
+    if (snapEnabled && SNAP_HOVER_TOOLS.includes(currentTool)) {
+      const prev = lastSnapHit;
+      snapScreenPoint(hoverPt);
+      const changed = (!!prev !== !!lastSnapHit) ||
+        (prev && lastSnapHit && (prev.x !== lastSnapHit.x || prev.y !== lastSnapHit.y));
+      if (changed) redrawAnnotations();
+    }
+    // Cursor feedback in select mode — show resize/move cursors over handles
+    // and annotation bodies (CSS classes existed but were never applied).
+    if (currentTool === 'select') updateSelectHoverCursor(hoverPt);
+    return;
+  }
   const rect = e.target.getBoundingClientRect();
   let screenPt = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   if (!['pen','highlight','cloud'].includes(currentTool)) screenPt = snapScreenPoint(screenPt);
@@ -2620,11 +2898,14 @@ function onCanvasMouseUp(e) {
   
   // Handle resize completion
   if (resizeAnnotation) {
+    const wasMeasurement = ['measure','polyline','area','dimension'].includes(resizeAnnotation.type);
     resizeAnnotation = null;
     resizeHandleIndex = -1;
     dragLast = null;
     saveToHistory();
     redrawAnnotations();
+    // Refresh stale measurement value in the open properties panel + tallies
+    if (wasMeasurement) { rebuildMeasurements(); openPropertiesPanel(); refreshMeasurementsPanel(); if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel(); }
     return;
   }
 
@@ -2698,8 +2979,9 @@ function onCanvasMouseUp(e) {
         opacity: toolProperties.opacity, hatch: 'none'
       };
       annotations.push(ann);
+      takeoffTagAnnotation(ann);
       const aPx = getPolygonArea(corners);
-      const aLabel = getCalibratedArea(aPx, currentPage);
+      const aLabel = getCalibratedArea(aPx, currentPage, getCentroid(corners));
       measurements.push({ id: ann.id, page: currentPage, type: 'area', label: '', value: aLabel });
 
       // Clear any in-flight polygon state and return to nav
@@ -2711,7 +2993,7 @@ function onCanvasMouseUp(e) {
       currentMovePoint = null;
       saveToHistory();
       redrawAnnotations();
-      returnToNavTool();
+      if (!activeTakeoffItemId) returnToNavTool(); // keep measuring while a takeoff item is active
       refreshMeasurementsPanel();
       return;
     }
@@ -2733,13 +3015,22 @@ function onCanvasMouseUp(e) {
     case 'ellipse':
       if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD))
         { addAnnotation('ellipse', [sp, ep]); didDraw = true; } break;
-    case 'cutcontent': if (sp) { addAnnotation('cutcontent', [sp, ep]); didDraw = true; } break;
+    case 'cutcontent':
+      if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD))
+        { addAnnotation('cutcontent', [sp, ep]); didDraw = true; } break;
     case 'highlight':
-      if (sp) { addAnnotation('highlight', [sp, ep]); didDraw = true; } polylinePoints = []; break;
+      if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD))
+        { addAnnotation('highlight', [sp, ep]); didDraw = true; } polylinePoints = []; break;
     case 'pen':
       if (polylinePoints.length > 1) { addPenAnnotation(polylinePoints.map(p => toPage(p))); didDraw = true; } polylinePoints = []; break;
     case 'cloud':
       if (polylinePoints.length > 2) { addCloudAnnotation(polylinePoints.map(p => toPage(p))); didDraw = true; } polylinePoints = []; break;
+    case 'viewport':
+      if (sp && Math.abs(ep.x-sp.x)>minD && Math.abs(ep.y-sp.y)>minD) {
+        createViewportFromRect(sp, ep);
+        didDraw = true;
+      }
+      break;
     case 'snipregion':
       if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD)) {
         // Capture the dragged region from the visible PDF + annotation layers
@@ -2793,7 +3084,7 @@ function onCanvasWheel(e) {
     const factor = e.deltaY > 0 ? 0.9 : 1.1;
     // Stack with any pending zoom that hasn't rendered yet so multiple ticks combine.
     const startScale = pendingZoom ? pendingZoom.targetScale : currentScale;
-    const target = Math.max(0.25, Math.min(10, startScale * factor));
+    const target = Math.max(0.1, Math.min(10, startScale * factor));
     // Always anchor against the scroll wrapper — that's the consistent reference
     // frame for the scroll math below, and it works the same way in single-page,
     // continuous and side-by-side views (the annotation canvas only exists in
@@ -3212,15 +3503,31 @@ function onKeyDown(e) {
   const key = e.key.toLowerCase();
   const mod = e.ctrlKey || e.metaKey;
 
-  // Escape — cancel any in-progress draw and drop back to the Select tool.
-  // Covers click-click lines, polylines/polygons/areas, callouts, and pen strokes.
+  // Escape — Bluebeam-style: first press cancels the in-progress draw but
+  // KEEPS the tool armed (so a misclick doesn't force re-picking the tool);
+  // pressing Escape with nothing in progress deselects / returns to Select.
   if (key === 'escape') {
     e.preventDefault();
-    twoClickStart = null; isDrawing = false; startPoint = null; currentMovePoint = null;
-    polylinePoints = [];
-    calloutMode = false; calloutAnchor = null; calloutKnees = [];
-    areaDragStartScreen = null; areaDragCurrentScreen = null;
-    setTool('select');
+    const hadDraft = twoClickStart || isDrawing || polylinePoints.length > 0 || calloutMode || areaDragStartScreen;
+    cancelInProgressDrawing();
+    if (!hadDraft) {
+      if (activeTakeoffItemId) {
+        // Stop measuring against the active takeoff item
+        activeTakeoffItemId = null; takeoffDeductMode = false;
+        setTool('select'); refreshTakeoffPanel(); showToast('Stopped measuring');
+      }
+      else if (selectedAnnotationId) { selectedAnnotationId = null; openPropertiesPanel(); }
+      else setTool('select');
+    }
+    redrawAnnotations();
+    return;
+  }
+
+  // Backspace while drawing a polyline / area / polygon — remove the last
+  // placed vertex instead of forcing a full restart.
+  if (key === 'backspace' && polylinePoints.length > 0) {
+    e.preventDefault();
+    polylinePoints.pop();
     redrawAnnotations();
     return;
   }
@@ -3242,7 +3549,8 @@ function onKeyDown(e) {
   // Tool shortcuts — guarded with !mod so Ctrl-combos (save, copy, etc.) don't
   // accidentally swap the active tool. Previously "c" with Ctrl held was firing
   // the Count tool when the user was trying to copy.
-  if (mod) { /* let the Ctrl-shortcut block below handle it */ }
+  if (mod || e.altKey) { /* let the Ctrl-shortcut block below handle it */ }
+  else if (!pdfDoc) { /* no document loaded — tool shortcuts do nothing useful */ }
   else if (key === 'v') setTool('select');
   else if (key === 'k') setTool('calibrate');
   else if (key === 'm') setTool('measure');
@@ -3265,7 +3573,7 @@ function onKeyDown(e) {
   else if (key === 'x') setTool('eraser');
   else if (key === 'i') setTool('dimension');
 
-  if (key === 'delete' && selectedAnnotationId) deleteSelectedAnnotation();
+  if ((key === 'delete' || key === 'backspace') && selectedAnnotationId) { e.preventDefault(); deleteSelectedAnnotation(); }
   else if ((e.ctrlKey||e.metaKey) && (key === '=' || key === '+')) { e.preventDefault(); zoomIn(); }
   else if ((e.ctrlKey||e.metaKey) && key === '-') { e.preventDefault(); zoomOut(); }
   else if ((e.ctrlKey||e.metaKey) && key === '0') { e.preventDefault(); resetZoom(); }
@@ -3352,26 +3660,45 @@ function addMeasurement(points) {
   if (currentTool === 'calibrate') {
     calibrationPixels = dist;
     const mmInput = document.getElementById('calibrate-distance');
-    const mm = mmInput ? parseFloat(mmInput.value) : calibrationMM;
+    let mm = mmInput ? parseFloat(mmInput.value) : NaN;
+    // The reference-length input only exists while the calibrate panel is
+    // visible — if it's missing or invalid, ASK rather than silently using a
+    // stale value (which calibrated whole drawings wrongly).
+    if (!(mm > 0)) {
+      const answer = prompt('Real-world length of the line you just drew (in mm):', calibrationMM || 1000);
+      mm = parseFloat(answer);
+      if (!(mm > 0)) { showToast('Calibration cancelled'); setTool('select'); return; }
+    }
     if (mm > 0 && dist > 0) {
       calibrationMM = mm;
-      pageCalibrations[currentPage] = { pixelsPerMm: dist / mm, scale: guessScale(dist, mm) };
+      const guessed = guessScale(dist, mm);
+      const applyAllEl = document.getElementById('cal-all-pages');
+      const cal = { pixelsPerMm: dist / mm, scale: guessed };
+      if (applyAllEl && applyAllEl.checked && pdfDoc) {
+        for (let p = 0; p < pdfDoc.numPages; p++) pageCalibrations[p] = { ...cal };
+      } else {
+        pageCalibrations[currentPage] = cal;
+      }
       updateCalibrationIndicator();
       checkCalibrationBanner();
+      rebuildMeasurements();
+      redrawAnnotations();
       const status = document.getElementById('calibrate-status');
       if (status) status.textContent = `Calibrated: ${pageCalibrations[currentPage].scale}`;
+      showToast('Calibrated ' + guessed + (applyAllEl && applyAllEl.checked ? ' (all pages)' : ' on page ' + (currentPage+1)));
     }
     setTool('select');
     return;
   }
 
-  const label = getCalibratedLabel(dist, currentPage);
+  const label = getCalibratedLabel(dist, currentPage, { x:(points[0].x+points[1].x)/2, y:(points[0].y+points[1].y)/2 });
   const ann = {
     id: generateId(), type: 'measure', page: currentPage, points,
     label, measLabel: '', color: toolProperties.color,
     thickness: toolProperties.thickness, opacity: toolProperties.opacity, lineStyle: toolProperties.lineStyle
   };
   annotations.push(ann);
+  takeoffTagAnnotation(ann);
   measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
   saveToHistory();
   refreshMeasurementsPanel();
@@ -3393,12 +3720,13 @@ function addAnnotation(type, points) {
 
 function addDimension(points) {
   const dist = Math.hypot(points[1].x-points[0].x, points[1].y-points[0].y);
-  const label = getCalibratedLabel(dist, currentPage);
+  const label = getCalibratedLabel(dist, currentPage, { x:(points[0].x+points[1].x)/2, y:(points[0].y+points[1].y)/2 });
   const ann = {
     id: generateId(), type: 'dimension', page: currentPage, points, label, measLabel: '',
     color: toolProperties.color, thickness: toolProperties.thickness, opacity: toolProperties.opacity
   };
   annotations.push(ann);
+  takeoffTagAnnotation(ann);
   measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
   saveToHistory();
   refreshMeasurementsPanel();
@@ -3427,7 +3755,9 @@ function addCountMarker(point) {
     id: generateId(), type: 'count', page: currentPage, points: [pagePoint],
     group: currentCountGroup, number: grp.count, color: grp.color || toolProperties.color
   };
-  annotations.push(ann); saveToHistory(); redrawAnnotations();
+  annotations.push(ann);
+  takeoffTagAnnotation(ann);
+  saveToHistory(); redrawAnnotations();
   openPropertiesPanel(); // refresh count display
 }
 
@@ -3604,16 +3934,18 @@ function finishPolyShape() {
   if (currentTool === 'polyline') {
     let totalDist = 0;
     for (let i=1; i<pagePts.length; i++) totalDist += Math.hypot(pagePts[i].x-pagePts[i-1].x, pagePts[i].y-pagePts[i-1].y);
-    const label = getCalibratedLabel(totalDist, currentPage);
+    const label = getCalibratedLabel(totalDist, currentPage, pagePts[0]);
     const ann = { id: generateId(), type: 'polyline', page: currentPage, points: [...pagePts], label, measLabel: '', color: toolProperties.color, thickness: toolProperties.thickness, opacity: toolProperties.opacity, lineStyle: toolProperties.lineStyle };
     annotations.push(ann);
+    takeoffTagAnnotation(ann);
     measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
   } else if (currentTool === 'area') {
     if (pagePts.length < 3) { polylinePoints = []; return; }
     const ann = { id: generateId(), type: 'area', page: currentPage, points: [...pagePts], label: '', perimLabel: '', measLabel: '', color: toolProperties.color, fillColor: toolProperties.fillColor, fillOpacity: toolProperties.fillOpacity, thickness: toolProperties.thickness, opacity: toolProperties.opacity, hatch: 'none' };
     annotations.push(ann);
+    takeoffTagAnnotation(ann);
     const area = getPolygonArea(ann.points);
-    const aLabel = getCalibratedArea(area, currentPage);
+    const aLabel = getCalibratedArea(area, currentPage, getCentroid(ann.points));
     measurements.push({ id: ann.id, page: currentPage, type: 'area', label: '', value: aLabel });
   } else if (currentTool === 'polygon') {
     if (pagePts.length < 3) { polylinePoints = []; return; }
@@ -3621,7 +3953,9 @@ function finishPolyShape() {
     annotations.push(ann);
   }
   polylinePoints = []; saveToHistory(); redrawAnnotations();
-  returnToNavTool();
+  // Cubit-style continue-measuring: while a takeoff item is active, the tool
+  // stays armed so the next room/wall can be traced immediately.
+  if (!activeTakeoffItemId) returnToNavTool();
   refreshMeasurementsPanel();
 }
 
@@ -3639,12 +3973,12 @@ function showTextInput(screenPt) {
   overlay.addEventListener('mousedown', (e) => e.stopPropagation());
   overlay.addEventListener('mouseup', (e) => e.stopPropagation());
   overlay.addEventListener('click', (e) => e.stopPropagation());
-  document.getElementById('canvas-container').appendChild(overlay);
+  _appendOverlayAtActivePage(overlay);
   // Delay focus to let the mousedown/up cycle complete first
   setTimeout(() => overlay.focus(), 10);
   overlay.addEventListener('blur', () => {
     const text = overlay.innerText.trim();
-    if (text) {
+    if (text && !overlay._cancelled) {
       const ann = { id: generateId(), type: 'text', page: currentPage, points: [pagePt], text,
         color: toolProperties.color, fontSize: toolProperties.fontSize, fontFamily: toolProperties.fontFamily,
         fontWeight: toolProperties.fontWeight, fontStyle: toolProperties.fontStyle,
@@ -3655,7 +3989,7 @@ function showTextInput(screenPt) {
     returnToNavTool();
   });
   overlay.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') overlay.blur();
+    if (e.key === 'Escape') { overlay._cancelled = true; overlay.blur(); }  // Escape = abort, don't commit
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); overlay.blur(); }
   });
 }
@@ -3673,9 +4007,10 @@ function showCalloutTextInput(anchor, knees, textPos) {
   overlay.addEventListener('mousedown', (e) => e.stopPropagation());
   overlay.addEventListener('mouseup', (e) => e.stopPropagation());
   overlay.addEventListener('click', (e) => e.stopPropagation());
-  document.getElementById('canvas-container').appendChild(overlay);
+  _appendOverlayAtActivePage(overlay);
   setTimeout(() => overlay.focus(), 10);
   overlay.addEventListener('blur', () => {
+    if (overlay._cancelled) { overlay.remove(); returnToNavTool(); redrawAnnotations(); return; }
     const text = overlay.innerText.trim() || 'Note';
     const ann = { id: generateId(), type: 'callout', page: currentPage, anchor: {...anchor}, knees: knees.map(k=>({...k})), textPos: {...textPos}, text,
       color: toolProperties.color, thickness: toolProperties.thickness, opacity: toolProperties.opacity,
@@ -3688,9 +4023,22 @@ function showCalloutTextInput(anchor, knees, textPos) {
     returnToNavTool();
   });
   overlay.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') overlay.blur();
+    if (e.key === 'Escape') { overlay._cancelled = true; overlay.blur(); }  // Escape = abort, don't commit
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); overlay.blur(); }
   });
+}
+
+// Text-editing overlays are positioned in canvas-relative coordinates. In
+// continuous / side-by-side view the container holds ALL pages, so append the
+// overlay to the CURRENT page's div (position:relative) instead — otherwise
+// the editor appeared at the top page's offset, far from the click.
+function _appendOverlayAtActivePage(overlay) {
+  let parent = document.getElementById('canvas-container');
+  if (pageViewMode !== 'single') {
+    const c = (typeof getActiveAnnotationCanvas === 'function') ? getActiveAnnotationCanvas() : null;
+    if (c && c.parentElement) parent = c.parentElement;
+  }
+  parent.appendChild(overlay);
 }
 
 function editTextAnnotationInline(ann, e) {
@@ -3711,16 +4059,19 @@ function editTextAnnotationInline(ann, e) {
   overlay.addEventListener('mousedown', (ev) => ev.stopPropagation());
   overlay.addEventListener('mouseup', (ev) => ev.stopPropagation());
   overlay.addEventListener('click', (ev) => ev.stopPropagation());
-  container.appendChild(overlay);
+  _appendOverlayAtActivePage(overlay);
   setTimeout(() => { overlay.focus(); selectAllText(overlay); }, 10);
   overlay.addEventListener('blur', () => {
-    const newText = overlay.innerText.trim();
-    if (newText) { ann.text = newText; } else { ann.text = ann.text || 'Text'; }
-    saveToHistory(); redrawAnnotations();
+    if (!overlay._cancelled) {  // Escape = keep the original text untouched
+      const newText = overlay.innerText.trim();
+      if (newText) { ann.text = newText; } else { ann.text = ann.text || 'Text'; }
+      saveToHistory();
+    }
+    redrawAnnotations();
     overlay.remove();
   });
   overlay.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') overlay.blur();
+    if (ev.key === 'Escape') { overlay._cancelled = true; overlay.blur(); }
     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); overlay.blur(); }
   });
 }
@@ -3747,6 +4098,9 @@ function setTool(tool) {
     btn.classList.toggle('active', btn.dataset.tool === tool);
   });
   document.getElementById('canvas-area').className = tool;
+  // Clear any inline hover-cursor left over from select mode
+  const annCanvas = (typeof getActiveAnnotationCanvas === 'function') ? getActiveAnnotationCanvas() : null;
+  if (annCanvas) annCanvas.style.cursor = '';
   updateToolIndicator();
   openPropertiesPanel();
 }
@@ -3880,8 +4234,13 @@ function hitTestLabel(x, y, ann) {
 }
 
 function ptNearLine(x,y,p1,p2,tol) {
-  const d = Math.abs((p2.y-p1.y)*x - (p2.x-p1.x)*y + p2.x*p1.y - p2.y*p1.x) / (Math.hypot(p2.y-p1.y, p2.x-p1.x)||1);
-  return d <= tol;
+  // Distance to the SEGMENT (not the infinite line) — project and clamp t to [0,1].
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const lenSq = dx*dx + dy*dy;
+  let t = lenSq ? ((x - p1.x)*dx + (y - p1.y)*dy) / lenSq : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = p1.x + t*dx, cy = p1.y + t*dy;
+  return Math.hypot(x - cx, y - cy) <= tol;
 }
 
 function deleteSelectedAnnotation() {
@@ -3892,9 +4251,19 @@ function deleteSelectedAnnotation() {
     // Remove from measurements
     const mIdx = measurements.findIndex(m => m.id === ann.id);
     if (mIdx !== -1) measurements.splice(mIdx, 1);
+    // Keep count-group numbering in sync when a count marker is removed
+    if (ann.type === 'count' && ann.group && countGroups[ann.group]) {
+      const grp = _getCountGroup(ann.group);
+      grp.count = annotations.filter(a => a.type === 'count' && a.group === ann.group && a.id !== ann.id).length;
+    }
     annotations.splice(idx, 1);
     selectedAnnotationId = null;
     saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+    // Cut Content paints onto the PDF canvas at render time — re-render so
+    // the hidden content actually comes back when the markup is deleted.
+    if (ann.type === 'cutcontent') renderPage(currentPage);
+    if (ann.takeoffItemId && typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
+    if (typeof refreshMeasurementsPanel === 'function') refreshMeasurementsPanel();
   }
 }
 
@@ -3909,14 +4278,26 @@ function eraseAnnotationAtPoint(x, y) {
 // ============================================================
 // PROPERTIES PANEL
 // ============================================================
-function openPropertiesPanel() {
+function openPropertiesPanel(forceOpen) {
   const panel = document.getElementById('panel');
   const panelTitle = document.getElementById('panel-title');
   const content = document.getElementById('panel-content');
 
+  // Respect the user's choice to keep the panel closed — only force it open
+  // on an explicit action (tab click / selection), not on every page turn.
+  const maybeOpen = () => { if (forceOpen || !panelUserCollapsed) panel.classList.remove('collapsed'); };
+
   // Sync the tab strip with the current mode every time we redraw the panel.
   document.querySelectorAll('.panel-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.mode === panelMode));
+
+  // Takeoff view — Cubit-style item list with running totals.
+  if (panelMode === 'takeoff') {
+    panelTitle.textContent = 'Takeoff';
+    content.innerHTML = getTakeoffPanelHTML();
+    maybeOpen();
+    return;
+  }
 
   // Measurements view — running tally of every length / area / count.
   // We override the regular properties layout so the user can keep watching
@@ -3924,7 +4305,7 @@ function openPropertiesPanel() {
   if (panelMode === 'measurements') {
     panelTitle.textContent = 'Measurements';
     content.innerHTML = getMeasurementsPanelHTML();
-    panel.classList.remove('collapsed');
+    maybeOpen();
     return;
   }
 
@@ -3933,7 +4314,7 @@ function openPropertiesPanel() {
     if (ann) {
       panelTitle.textContent = (ann.type.charAt(0).toUpperCase()+ann.type.slice(1)) + ' Properties';
       content.innerHTML = getAnnotationPropertiesHTML(ann);
-      panel.classList.remove('collapsed');
+      maybeOpen();
       attachAnnotationListeners(ann); return;
     }
   }
@@ -3941,21 +4322,22 @@ function openPropertiesPanel() {
   if (currentTool === 'select') {
     panelTitle.textContent = 'File Properties';
     content.innerHTML = getFilePropertiesHTML();
-    panel.classList.remove('collapsed');
+    // File properties is background info — never force the panel open for it.
   } else {
     panelTitle.textContent = toolNames[currentTool] || 'Tool';
     content.innerHTML = getToolPropertiesHTML(currentTool);
-    panel.classList.remove('collapsed');
+    maybeOpen();
     attachToolListeners();
   }
 }
 
-// Switch the panel between properties view and measurements view.
+// Switch the panel between properties / measurements / takeoff views.
 function setPanelMode(mode) {
   panelMode = mode;
-  // Make sure the panel is open so the user actually sees the new view.
+  // Explicit user action — open the panel and clear the "keep closed" flag.
+  panelUserCollapsed = false;
   document.getElementById('panel').classList.remove('collapsed');
-  openPropertiesPanel();
+  openPropertiesPanel(true);
 }
 
 // Click a measurement in the panel → navigate to its page, select it.
@@ -4050,7 +4432,502 @@ function getMeasurementsPanelHTML() {
   return html;
 }
 
-function togglePanel() { document.getElementById('panel').classList.toggle('collapsed'); }
+// ============================================================
+// TAKEOFF (Cubit-style) — items with running totals, deductions,
+// continue-measuring, CSV export.
+// Workflow: create an item (e.g. "Slab", "Skirting", "Downlights"),
+// click it to make it ACTIVE, then measure — every shape you draw is
+// assigned to that item and its quantity accumulates live. Toggle
+// "Deduct" to subtract openings/voids. Like Cubit: select the result
+// row, draw shapes, watch the quantity build.
+// ============================================================
+function getTakeoffItem(id) { return takeoffItems.find(t => t.id === id); }
+
+// Result types:
+//   length   — m   (trace lines)
+//   area     — m²  (trace plan outlines)
+//   vertical — m²  (length × item height — walls, render, skirting-as-area; Cubit "vertical area")
+//   volume   — m³  (area × item depth — slabs, excavation)
+//   count    — no.
+const TAKEOFF_TYPE_TOOLS = { length: 'polyline', area: 'area', vertical: 'polyline', volume: 'area', count: 'count' };
+const TAKEOFF_TYPE_UNITS = { length: 'm', area: 'm²', vertical: 'm²', volume: 'm³', count: 'no.' };
+const TAKEOFF_TYPE_LABELS = { length: 'Length (m)', area: 'Area (m²)', vertical: 'Vertical: length × height (m²)', volume: 'Volume: area × depth (m³)', count: 'Count (no.)' };
+
+// Compute an item's quantity NUMERICALLY from its shapes + calibration
+// (display strings like "1.25m" are never parsed). Viewport-aware.
+function computeTakeoffQty(item) {
+  let raw = 0, shapes = 0, uncal = false;
+  const lengthLike = item.resultType === 'length' || item.resultType === 'vertical';
+  const areaLike   = item.resultType === 'area'   || item.resultType === 'volume';
+  annotations.forEach(a => {
+    if (a.takeoffItemId !== item.id || !a.points || !a.points.length) return;
+    shapes++;
+    const sign = a.isDeduction ? -1 : 1;
+    if (item.resultType === 'count') { raw += sign; return; }
+    const cal = _calFor(a.page, a.points[0]);
+    if (!cal) { uncal = true; return; }
+    if (lengthLike) {
+      let d = 0;
+      for (let i = 1; i < a.points.length; i++)
+        d += Math.hypot(a.points[i].x - a.points[i-1].x, a.points[i].y - a.points[i-1].y);
+      raw += sign * (d / cal.pixelsPerMm);            // mm
+    } else if (areaLike && a.points.length >= 3) {
+      raw += sign * (getPolygonArea(a.points) / (cal.pixelsPerMm * cal.pixelsPerMm)); // mm²
+    }
+  });
+  const factor = parseFloat(item.factor) || 0;        // height / depth in mm
+  let qty;
+  switch (item.resultType) {
+    case 'length':   qty = raw / 1000; break;                       // mm → m
+    case 'area':     qty = raw / 1e6; break;                        // mm² → m²
+    case 'vertical': qty = (raw * factor) / 1e6; break;             // mm × mm → m²
+    case 'volume':   qty = (raw * factor) / 1e9; break;             // mm² × mm → m³
+    default:         qty = raw;                                     // count
+  }
+  const rate = parseFloat(item.rate) || 0;
+  const amount = qty * rate;
+  // Missing factor on a factored type — flag like uncalibrated
+  const needsFactor = (item.resultType === 'vertical' || item.resultType === 'volume') && !(factor > 0);
+  return { qty, shapes, uncal: uncal || needsFactor, amount, needsFactor };
+}
+
+function formatTakeoffQty(item, qty) {
+  if (item.resultType === 'count') return qty + ' no.';
+  return qty.toFixed(2) + ' ' + TAKEOFF_TYPE_UNITS[item.resultType];
+}
+function formatMoney(n) {
+  return '$' + n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function addTakeoffItem() {
+  const nameEl = document.getElementById('takeoff-new-name');
+  const typeEl = document.getElementById('takeoff-new-type');
+  const factorEl = document.getElementById('takeoff-new-factor');
+  const name = nameEl && nameEl.value.trim();
+  if (!name) { showToast('Enter an item name first'); if (nameEl) nameEl.focus(); return; }
+  const resultType = typeEl ? typeEl.value : 'length';
+  const usedColors = takeoffItems.map(t => t.color);
+  const color = TAKEOFF_COLORS.find(c => !usedColors.includes(c)) || TAKEOFF_COLORS[takeoffItems.length % TAKEOFF_COLORS.length];
+  const item = { id: generateId(), name, resultType, color, trade: '', rate: 0, factor: 0 };
+  if (resultType === 'vertical' || resultType === 'volume') {
+    item.factor = parseFloat(factorEl && factorEl.value) || 0;
+    if (!(item.factor > 0)) {
+      const what = resultType === 'vertical' ? 'height' : 'depth';
+      const ans = prompt('Item ' + what + ' in mm (e.g. 2700 for a 2.7m wall):', resultType === 'vertical' ? '2700' : '200');
+      item.factor = parseFloat(ans) || 0;
+    }
+  }
+  takeoffItems.push(item);
+  saveToHistory();
+  setActiveTakeoffItem(item.id); // arm immediately — Cubit flow: pick item, draw
+}
+
+// Inline edit of an item's trade / rate / height-depth from the panel
+function updateTakeoffItemField(id, field, value) {
+  const item = getTakeoffItem(id);
+  if (!item) return;
+  if (field === 'rate' || field === 'factor') value = parseFloat(value) || 0;
+  item[field] = value;
+  saveToHistory();
+  redrawAnnotations(); // factored labels don't change, but totals do
+  refreshTakeoffPanel();
+}
+
+// Toggle the on-canvas glow for an item's shapes
+function toggleTakeoffHighlight(id) {
+  highlightTakeoffItemId = (highlightTakeoffItemId === id) ? null : id;
+  // Jump to the first shape so the glow is actually visible
+  if (highlightTakeoffItemId) {
+    const first = annotations.find(a => a.takeoffItemId === id);
+    if (first && first.page !== currentPage) goToPage(first.page);
+  }
+  redrawAnnotations();
+  refreshTakeoffPanel();
+}
+
+function setActiveTakeoffItem(id) {
+  if (activeTakeoffItemId === id) {
+    // Clicking the active item again deactivates it
+    activeTakeoffItemId = null;
+    takeoffDeductMode = false;
+    setTool('select');
+    refreshTakeoffPanel();
+    return;
+  }
+  const item = getTakeoffItem(id);
+  if (!item) return;
+  activeTakeoffItemId = id;
+  toolProperties.color = item.color;
+  if (item.resultType === 'count') {
+    // Use a count group named after the item so numbering stays per-item
+    if (!countGroups[item.name]) countGroups[item.name] = { count: 0, color: item.color };
+    currentCountGroup = item.name;
+  }
+  setTool(TAKEOFF_TYPE_TOOLS[item.resultType] || 'polyline');
+  panelMode = 'takeoff'; // keep the takeoff panel visible while measuring
+  refreshTakeoffPanel();
+  showToast('Measuring: ' + item.name + (takeoffDeductMode ? ' (DEDUCT)' : '') + ' — Esc to stop');
+}
+
+function toggleTakeoffDeduct() {
+  takeoffDeductMode = !takeoffDeductMode;
+  refreshTakeoffPanel();
+  if (takeoffDeductMode) showToast('Deduction mode ON — shapes now subtract');
+}
+
+function renameTakeoffItem(id) {
+  const item = getTakeoffItem(id);
+  if (!item) return;
+  const name = prompt('Rename takeoff item:', item.name);
+  if (name && name.trim()) { item.name = name.trim(); saveToHistory(); refreshTakeoffPanel(); }
+}
+
+function setTakeoffItemColor(id, color) {
+  const item = getTakeoffItem(id);
+  if (!item) return;
+  item.color = color;
+  // Recolour every shape already measured against this item
+  annotations.forEach(a => {
+    if (a.takeoffItemId === id) { a.color = color; if (a.type === 'area') a.fillColor = color; }
+  });
+  if (activeTakeoffItemId === id) toolProperties.color = color;
+  saveToHistory(); redrawAnnotations(); refreshTakeoffPanel();
+}
+
+function deleteTakeoffItem(id) {
+  const item = getTakeoffItem(id);
+  if (!item) return;
+  const n = annotations.filter(a => a.takeoffItemId === id).length;
+  if (!confirm('Delete takeoff item "' + item.name + '"?\n\n' + n + ' measured shape(s) stay on the drawing — they\'re just unlinked from this item.')) return;
+  annotations.forEach(a => { if (a.takeoffItemId === id) { delete a.takeoffItemId; delete a.isDeduction; } });
+  takeoffItems = takeoffItems.filter(t => t.id !== id);
+  if (activeTakeoffItemId === id) { activeTakeoffItemId = null; takeoffDeductMode = false; setTool('select'); }
+  if (highlightTakeoffItemId === id) { highlightTakeoffItemId = null; redrawAnnotations(); }
+  saveToHistory(); refreshTakeoffPanel();
+}
+
+// Tag a freshly committed shape against the active takeoff item (if compatible)
+function takeoffTagAnnotation(ann) {
+  const item = getTakeoffItem(activeTakeoffItemId);
+  if (!item || !ann) return;
+  const lengthLike = item.resultType === 'length' || item.resultType === 'vertical';
+  const areaLike   = item.resultType === 'area'   || item.resultType === 'volume';
+  const ok =
+    (lengthLike && ['measure','polyline','dimension'].includes(ann.type)) ||
+    (areaLike   && ann.type === 'area') ||
+    (item.resultType === 'count' && ann.type === 'count');
+  if (!ok) return;
+  ann.takeoffItemId = item.id;
+  if (item.resultType !== 'count') ann.isDeduction = !!takeoffDeductMode;
+  ann.color = item.color;
+  if (ann.type === 'area') ann.fillColor = item.color;
+  refreshTakeoffPanel();
+}
+
+function refreshTakeoffPanel() {
+  if (panelMode === 'takeoff') openPropertiesPanel();
+}
+
+function getTakeoffPanelHTML() {
+  const active = getTakeoffItem(activeTakeoffItemId);
+  let html = `<div class="properties-section"><div class="properties-section-content">
+    <div style="display:flex;gap:4px;margin-bottom:6px">
+      <input type="text" id="takeoff-new-name" class="property-input" placeholder="New item, e.g. Slab" style="flex:1"
+             onkeydown="if(event.key==='Enter')addTakeoffItem()">
+    </div>
+    <div style="display:flex;gap:4px">
+      <select id="takeoff-new-type" class="select-input" style="flex:1"
+              onchange="document.getElementById('takeoff-new-factor-row').style.display=(this.value==='vertical'||this.value==='volume')?'flex':'none'">
+        <option value="length">${TAKEOFF_TYPE_LABELS.length}</option>
+        <option value="area">${TAKEOFF_TYPE_LABELS.area}</option>
+        <option value="vertical">${TAKEOFF_TYPE_LABELS.vertical}</option>
+        <option value="volume">${TAKEOFF_TYPE_LABELS.volume}</option>
+        <option value="count">${TAKEOFF_TYPE_LABELS.count}</option>
+      </select>
+      <button onclick="addTakeoffItem()" class="modal-btn primary" style="font-size:11px;white-space:nowrap">+ Add</button>
+    </div>
+    <div id="takeoff-new-factor-row" style="display:none;gap:4px;margin-top:6px;align-items:center">
+      <label style="font-size:10px;color:var(--text-muted);white-space:nowrap">Height / depth (mm)</label>
+      <input type="number" id="takeoff-new-factor" class="property-input" placeholder="e.g. 2700" style="flex:1">
+    </div>
+  </div></div>`;
+
+  if (takeoffItems.length === 0) {
+    html += `<div class="properties-section"><div class="properties-section-content">
+      <div style="color:var(--text-muted);font-size:12px;line-height:1.6;padding:8px 4px">
+        <strong style="color:var(--text-secondary)">Cubit-style takeoff:</strong><br>
+        1. Add an item (e.g. "Slab", "Wall render", "Downlights")<br>
+        2. Click the item — the right tool arms automatically<br>
+        3. Draw shapes; the quantity accumulates live<br>
+        4. Toggle <strong>Deduct</strong> to subtract openings<br>
+        5. Add a $ rate for instant estimates; export to Excel when done<br><br>
+        <strong style="color:var(--text-secondary)">Vertical</strong> = length × height (walls).<br>
+        <strong style="color:var(--text-secondary)">Volume</strong> = area × depth (slabs, excavation).
+      </div>
+    </div></div>`;
+    return html;
+  }
+
+  // Active banner + deduct toggle
+  html += `<div class="properties-section"><div class="properties-section-content">
+    <div style="display:flex;gap:6px;align-items:center">
+      <div style="flex:1;font-size:11px;color:${active ? 'var(--accent)' : 'var(--text-muted)'}">
+        ${active ? 'Measuring: <strong>' + escapeHtml(active.name) + '</strong>' : 'Click an item to start measuring'}
+      </div>
+      <button onclick="toggleTakeoffDeduct()" title="Shapes drawn while ON subtract from the total (openings, voids)"
+        style="padding:4px 10px;font-size:10px;font-weight:700;border-radius:4px;cursor:pointer;border:1px solid ${takeoffDeductMode ? '#e74c3c' : 'var(--border-color)'};background:${takeoffDeductMode ? 'rgba(231,76,60,0.25)' : 'var(--bg-tertiary)'};color:${takeoffDeductMode ? '#e74c3c' : 'var(--text-secondary)'}">
+        ${takeoffDeductMode ? 'DEDUCT ON' : 'Deduct'}</button>
+    </div>
+  </div></div>`;
+
+  // Items grouped by trade
+  const trades = {};
+  takeoffItems.forEach(item => {
+    const t = (item.trade || '').trim() || 'General';
+    (trades[t] = trades[t] || []).push(item);
+  });
+  let grandTotal = 0, anyRate = false;
+
+  Object.keys(trades).sort((a,b) => a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b)).forEach(trade => {
+    let tradeTotal = 0, tradeHasRate = false;
+    let rows = '';
+    trades[trade].forEach(item => {
+      const { qty, shapes, uncal, amount } = computeTakeoffQty(item);
+      const isActive = item.id === activeTakeoffItemId;
+      const isLit = item.id === highlightTakeoffItemId;
+      const rate = parseFloat(item.rate) || 0;
+      if (rate > 0) { tradeTotal += amount; grandTotal += amount; tradeHasRate = true; anyRate = true; }
+      const typeTag = { length:'L', area:'A', vertical:'V', volume:'V³', count:'C' }[item.resultType] || '?';
+      rows += `<div onclick="setActiveTakeoffItem('${item.id}')"
+        style="display:flex;align-items:center;gap:5px;padding:6px 7px;border-radius:6px;cursor:pointer;
+               border:1px solid ${isActive ? item.color : 'var(--border-color)'};
+               background:${isActive ? 'rgba(255,255,255,0.06)' : 'var(--bg-tertiary)'};
+               box-shadow:${isActive ? 'inset 3px 0 0 ' + item.color : 'none'}">
+        <input type="color" value="${item.color}" title="Item colour"
+               onclick="event.stopPropagation()" onchange="setTakeoffItemColor('${item.id}', this.value)"
+               style="width:15px;height:15px;padding:0;border:none;background:none;cursor:pointer;flex:none">
+        <span style="flex:none;font-size:9px;font-weight:700;color:var(--text-muted);border:1px solid var(--border-color);border-radius:3px;padding:1px 3px" title="${TAKEOFF_TYPE_LABELS[item.resultType]}">${typeTag}</span>
+        <span style="flex:1;min-width:0;font-size:12px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(item.name)} — ${shapes} shape(s)">${escapeHtml(item.name)}</span>
+        <span style="flex:none;text-align:right">
+          <span style="display:block;font-size:11px;font-weight:700;color:${item.color}" title="${shapes} shape(s)${uncal ? ' — check calibration / height-depth!' : ''}">${formatTakeoffQty(item, qty)}${uncal ? ' ⚠' : ''}</span>
+          ${rate > 0 ? `<span style="display:block;font-size:10px;color:var(--success, #4ade80)">${formatMoney(amount)}</span>` : ''}
+        </span>
+        <button onclick="event.stopPropagation();toggleTakeoffHighlight('${item.id}')" title="Highlight this item's shapes on the drawing"
+          style="flex:none;background:none;border:none;cursor:pointer;font-size:12px;padding:2px;color:${isLit ? item.color : 'var(--text-muted)'}">${isLit ? '◉' : '◎'}</button>
+        <button onclick="event.stopPropagation();deleteTakeoffItem('${item.id}')" title="Delete item (shapes stay)" style="flex:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px;padding:2px">×</button>
+      </div>`;
+      // Inline editor for the ACTIVE item — trade, rate, height/depth, rename
+      if (isActive) {
+        const needsFactor = item.resultType === 'vertical' || item.resultType === 'volume';
+        rows += `<div style="margin:-2px 0 2px;padding:6px 8px;border:1px dashed var(--border-color);border-top:none;border-radius:0 0 6px 6px;display:flex;flex-direction:column;gap:5px" onclick="event.stopPropagation()">
+          <div style="display:flex;gap:4px;align-items:center">
+            <label style="font-size:10px;color:var(--text-muted);width:62px">Trade</label>
+            <input type="text" class="property-input" style="flex:1;font-size:11px" value="${escapeHtml(item.trade || '')}" placeholder="e.g. Concrete"
+                   onchange="updateTakeoffItemField('${item.id}','trade',this.value)">
+          </div>
+          <div style="display:flex;gap:4px;align-items:center">
+            <label style="font-size:10px;color:var(--text-muted);width:62px">Rate $/${TAKEOFF_TYPE_UNITS[item.resultType]}</label>
+            <input type="number" step="0.01" class="property-input" style="flex:1;font-size:11px" value="${item.rate || ''}" placeholder="0.00"
+                   onchange="updateTakeoffItemField('${item.id}','rate',this.value)">
+          </div>
+          ${needsFactor ? `<div style="display:flex;gap:4px;align-items:center">
+            <label style="font-size:10px;color:var(--text-muted);width:62px">${item.resultType === 'vertical' ? 'Height' : 'Depth'} mm</label>
+            <input type="number" class="property-input" style="flex:1;font-size:11px" value="${item.factor || ''}" placeholder="e.g. 2700"
+                   onchange="updateTakeoffItemField('${item.id}','factor',this.value)">
+          </div>` : ''}
+          <button onclick="renameTakeoffItem('${item.id}')" style="font-size:10px;background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;padding:3px">Rename item</button>
+        </div>`;
+      }
+    });
+    html += `<div class="properties-section">
+      <div class="properties-section-title" style="display:flex;justify-content:space-between">
+        <span>${escapeHtml(trade)}</span>
+        ${tradeHasRate ? `<span style="color:var(--success, #4ade80);text-transform:none">${formatMoney(tradeTotal)}</span>` : ''}
+      </div>
+      <div class="properties-section-content" style="display:flex;flex-direction:column;gap:4px">${rows}</div>
+    </div>`;
+  });
+
+  // Grand total + footer actions
+  html += `<div class="properties-section" style="display:flex;flex-direction:column;gap:6px">
+    ${anyRate ? `<div style="display:flex;justify-content:space-between;padding:6px 8px;background:var(--bg-tertiary);border-radius:4px;font-size:12px">
+      <span style="color:var(--text-secondary);font-weight:600">Estimate total</span>
+      <span style="color:var(--success, #4ade80);font-weight:700">${formatMoney(grandTotal)}</span></div>` : ''}
+    <button onclick="exportTakeoffXLSX()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">Export to Excel (.xlsx)</button>
+    <button onclick="exportTakeoffCSV()" style="width:100%;padding:7px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer">Export CSV</button>
+    <div style="font-size:10px;color:var(--text-muted);text-align:center">Esc stops measuring · ◎ highlights an item's shapes</div>
+  </div>`;
+  return html;
+}
+
+function exportTakeoffCSV() {
+  if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
+  let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Amount,Shapes,Deductions\n';
+  takeoffItems.forEach(item => {
+    const { qty, shapes, amount } = computeTakeoffQty(item);
+    const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
+    const unit = TAKEOFF_TYPE_UNITS[item.resultType];
+    const qv = item.resultType === 'count' ? qty : qty.toFixed(3);
+    const rate = parseFloat(item.rate) || 0;
+    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${item.resultType},${item.factor||''},${unit},${qv},${rate||''},${rate>0?amount.toFixed(2):''},${shapes},${deds}\n`;
+  });
+  downloadBlob(csv, 'text/csv', currentFilename.replace(/\.pdf$/i, '') + '_takeoff.csv');
+  showToast('Takeoff CSV exported');
+}
+
+// ============================================================
+// XLSX EXPORT — dependency-free minimal .xlsx writer
+// (zip with stored entries + SpreadsheetML with inline strings)
+// ============================================================
+const _CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function _crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = _CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+// Build a zip (no compression — xlsx files are small and Excel doesn't care)
+function _buildZip(files) { // files: [{name, data: Uint8Array}]
+  const enc = new TextEncoder();
+  const parts = [], central = [];
+  let offset = 0;
+  const u16 = (v) => new Uint8Array([v & 255, (v >> 8) & 255]);
+  const u32 = (v) => new Uint8Array([v & 255, (v >> 8) & 255, (v >> 16) & 255, (v >>> 24) & 255]);
+  files.forEach(f => {
+    const nameB = enc.encode(f.name);
+    const crc = _crc32(f.data);
+    const local = [u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(crc), u32(f.data.length), u32(f.data.length), u16(nameB.length), u16(0), nameB, f.data];
+    central.push({ nameB, crc, size: f.data.length, offset });
+    local.forEach(p => { parts.push(p); offset += p.length; });
+  });
+  const cdStart = offset;
+  central.forEach(c => {
+    [u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(c.crc), u32(c.size), u32(c.size),
+     u16(c.nameB.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(c.offset), c.nameB
+    ].forEach(p => { parts.push(p); offset += p.length; });
+  });
+  const cdSize = offset - cdStart;
+  [u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(cdSize), u32(cdStart), u16(0)]
+    .forEach(p => parts.push(p));
+  let total = 0; parts.forEach(p => total += p.length);
+  const out = new Uint8Array(total);
+  let pos = 0; parts.forEach(p => { out.set(p, pos); pos += p.length; });
+  return out;
+}
+function _xmlEsc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function _colRef(i) { // 0 → A, 25 → Z, 26 → AA
+  let s = '';
+  i++;
+  while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); }
+  return s;
+}
+// sheets: [{name, rows: [[v, ...], ...]}] — numbers become numeric cells, everything else inline strings
+function _xlsxFromSheets(sheets) {
+  const enc = new TextEncoder();
+  const files = [];
+  const sheetRefs = sheets.map((s, i) =>
+    `<sheet name="${_xmlEsc(s.name.slice(0,31))}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('');
+  const sheetRels = sheets.map((s, i) =>
+    `<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('');
+  const types = sheets.map((s, i) =>
+    `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+  files.push({ name: '[Content_Types].xml', data: enc.encode(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+    types + `</Types>`) });
+  files.push({ name: '_rels/.rels', data: enc.encode(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`) });
+  files.push({ name: 'xl/workbook.xml', data: enc.encode(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<sheets>${sheetRefs}</sheets></workbook>`) });
+  files.push({ name: 'xl/_rels/workbook.xml.rels', data: enc.encode(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheetRels}</Relationships>`) });
+  sheets.forEach((s, i) => {
+    let rowsXml = '';
+    s.rows.forEach((row, r) => {
+      let cells = '';
+      row.forEach((v, c) => {
+        if (v === null || v === undefined || v === '') return;
+        const ref = _colRef(c) + (r + 1);
+        if (typeof v === 'number' && isFinite(v)) cells += `<c r="${ref}"><v>${v}</v></c>`;
+        else cells += `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${_xmlEsc(v)}</t></is></c>`;
+      });
+      rowsXml += `<row r="${r+1}">${cells}</row>`;
+    });
+    files.push({ name: `xl/worksheets/sheet${i+1}.xml`, data: enc.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+      `<sheetData>${rowsXml}</sheetData></worksheet>`) });
+  });
+  return _buildZip(files);
+}
+
+function exportTakeoffXLSX() {
+  if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
+  // Sheet 1 — Takeoff summary, grouped by trade with subtotals
+  const sum = [['Trade','Item','Result type','Height/Depth (mm)','Unit','Quantity','Rate ($/unit)','Amount ($)','Shapes','Deductions']];
+  const trades = {};
+  takeoffItems.forEach(item => {
+    const t = (item.trade || '').trim() || 'General';
+    (trades[t] = trades[t] || []).push(item);
+  });
+  let grand = 0;
+  Object.keys(trades).sort((a,b) => a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b)).forEach(trade => {
+    let sub = 0;
+    trades[trade].forEach(item => {
+      const { qty, shapes, amount } = computeTakeoffQty(item);
+      const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
+      const rate = parseFloat(item.rate) || 0;
+      sub += rate > 0 ? amount : 0;
+      sum.push([trade, item.name, TAKEOFF_TYPE_LABELS[item.resultType] || item.resultType,
+        item.factor ? Number(item.factor) : '', TAKEOFF_TYPE_UNITS[item.resultType],
+        Number(qty.toFixed(3)), rate || '', rate > 0 ? Number(amount.toFixed(2)) : '', shapes, deds]);
+    });
+    grand += sub;
+    sum.push(['', trade + ' subtotal', '', '', '', '', '', sub ? Number(sub.toFixed(2)) : '', '', '']);
+    sum.push([]);
+  });
+  sum.push(['', 'ESTIMATE TOTAL', '', '', '', '', '', grand ? Number(grand.toFixed(2)) : '', '', '']);
+
+  // Sheet 2 — per-shape breakdown
+  const shapes = [['Trade','Item','Page','Shape type','Deduction','Measured value','Scale used']];
+  takeoffItems.forEach(item => {
+    annotations.filter(a => a.takeoffItemId === item.id).forEach(a => {
+      const cal = _calFor(a.page, a.points && a.points[0]);
+      shapes.push([(item.trade || 'General'), item.name, a.page + 1, a.type,
+        a.isDeduction ? 'Yes' : '', (a.label || '').replace('−','-'), cal ? cal.scale : 'NOT CALIBRATED']);
+    });
+  });
+
+  const bytes = _xlsxFromSheets([
+    { name: 'Takeoff Summary', rows: sum },
+    { name: 'Shape Breakdown', rows: shapes }
+  ]);
+  downloadBlob(bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    currentFilename.replace(/\.pdf$/i, '') + '_takeoff.xlsx');
+  showToast('Takeoff exported to Excel');
+}
+
+function togglePanel() {
+  const collapsed = document.getElementById('panel').classList.toggle('collapsed');
+  panelUserCollapsed = collapsed; // remember the user's explicit choice
+}
 
 function getFilePropertiesHTML() {
   let pageSizeHTML = 'Loading...';
@@ -4244,6 +5121,13 @@ function populateSwatches() {
 }
 
 function attachAnnotationListeners(ann) {
+  // Debounced history push — property edits are now undoable, but rapid
+  // slider/typing changes collapse into a single undo step.
+  let historyTimer = null;
+  const pushHistorySoon = () => {
+    clearTimeout(historyTimer);
+    historyTimer = setTimeout(() => saveToHistory(), 400);
+  };
   const bind = (id, prop, transform) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -4256,6 +5140,7 @@ function attachAnnotationListeners(ann) {
         if (m) m.label = ann.measLabel;
       }
       redrawAnnotations();
+      pushHistorySoon();
     });
   };
   bind('prop-subject', 'subject');
@@ -4279,10 +5164,10 @@ function attachAnnotationListeners(ann) {
   bind('prop-hatch', 'hatch');
 
   const opSlider = document.getElementById('prop-opacity');
-  if (opSlider) opSlider.addEventListener('input', e => { ann.opacity = parseInt(e.target.value); document.getElementById('prop-op-val').textContent = e.target.value+'%'; redrawAnnotations(); });
+  if (opSlider) opSlider.addEventListener('input', e => { ann.opacity = parseInt(e.target.value); document.getElementById('prop-op-val').textContent = e.target.value+'%'; redrawAnnotations(); pushHistorySoon(); });
 
   const foSlider = document.getElementById('prop-fill-opacity');
-  if (foSlider) foSlider.addEventListener('input', e => { ann.fillOpacity = parseInt(e.target.value); document.getElementById('prop-fo-val').textContent = e.target.value+'%'; redrawAnnotations(); });
+  if (foSlider) foSlider.addEventListener('input', e => { ann.fillOpacity = parseInt(e.target.value); document.getElementById('prop-fo-val').textContent = e.target.value+'%'; redrawAnnotations(); pushHistorySoon(); });
 
   const fillOn = document.getElementById('prop-fill-on');
   if (fillOn) fillOn.addEventListener('change', e => {
@@ -4290,9 +5175,10 @@ function attachAnnotationListeners(ann) {
     if (e.target.checked) { ann.fillColor = fc.value; fc.disabled = false; }
     else { ann.fillColor = 'none'; fc.disabled = true; }
     redrawAnnotations();
+    pushHistorySoon();
   });
   const fillC = document.getElementById('prop-fill-color');
-  if (fillC) fillC.addEventListener('change', e => { ann.fillColor = e.target.value; redrawAnnotations(); });
+  if (fillC) fillC.addEventListener('change', e => { ann.fillColor = e.target.value; redrawAnnotations(); pushHistorySoon(); });
 
   // Callout box fill colour
   bind('prop-callout-fill', 'fillColor');
@@ -4327,16 +5213,31 @@ function getToolPropertiesHTML(tool) {
         <input type="number" id="calibrate-distance" class="property-input" placeholder="e.g. 1000" value="${calibrationMM}"></div>
       <label style="font-size:11px;color:var(--text-secondary)">Scale Presets</label>
       <div style="display:flex;gap:4px;flex-wrap:wrap">
-        <button onclick="applyScalePreset(50)" class="modal-btn secondary" style="flex:1;min-width:50px;font-size:10px">1:50</button>
-        <button onclick="applyScalePreset(100)" class="modal-btn secondary" style="flex:1;min-width:50px;font-size:10px">1:100</button>
-        <button onclick="applyScalePreset(200)" class="modal-btn secondary" style="flex:1;min-width:50px;font-size:10px">1:200</button>
-        <button onclick="applyScalePreset(500)" class="modal-btn secondary" style="flex:1;min-width:50px;font-size:10px">1:500</button>
+        <button onclick="applyScalePreset(20)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:20</button>
+        <button onclick="applyScalePreset(50)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:50</button>
+        <button onclick="applyScalePreset(100)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:100</button>
+        <button onclick="applyScalePreset(200)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:200</button>
+        <button onclick="applyScalePreset(250)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:250</button>
+        <button onclick="applyScalePreset(500)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:500</button>
       </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);cursor:pointer">
+        <input type="checkbox" id="cal-all-pages"> Apply to ALL pages</label>
       <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">
         Pick a scale preset above for instant calibration, OR draw a line of known length on the drawing and enter its real length above.</div>
       <div id="calibrate-status" style="font-size:11px;color:${cal?'var(--success)':'var(--warning)'};padding:6px;background:var(--bg-tertiary);border-radius:4px;text-align:center">
         ${cal ? 'Calibrated: '+cal.scale : 'Page '+( currentPage+1)+' not calibrated'}</div>
       ${cal ? `<button onclick="clearCalibration()" class="modal-btn secondary" style="font-size:11px">Recalibrate (clear this page)</button>` : ''}
+      <div style="border-top:1px solid var(--border-color);padding-top:8px;margin-top:4px">
+        <label style="font-size:11px;color:var(--text-secondary);font-weight:600">Viewports — regions with their own scale</label>
+        <div style="font-size:10px;color:var(--text-muted);margin:4px 0 6px">For details drawn at a different scale on the same sheet (e.g. a 1:20 detail on a 1:100 plan). Measurements inside a viewport use its scale.</div>
+        <button onclick="setTool('viewport')" class="modal-btn secondary" style="width:100%;font-size:11px">+ Draw Viewport (drag a box)</button>
+        ${viewports.filter(v => v.page === currentPage).map(v => `
+          <div style="display:flex;align-items:center;gap:6px;margin-top:4px;padding:4px 6px;background:var(--bg-tertiary);border-radius:4px;font-size:11px">
+            <span style="color:#14b8a6;font-weight:700">${v.scale}</span>
+            <span style="flex:1;color:var(--text-muted)">${Math.round(v.rect.w)}×${Math.round(v.rect.h)} pt</span>
+            <button onclick="deleteViewport('${v.id}')" title="Remove viewport" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:13px">×</button>
+          </div>`).join('')}
+      </div>
     </div>`;
   } else if (tool === 'count') {
     const groupCounts = {};
@@ -4537,24 +5438,69 @@ function selectStamp(s) {
 // ============================================================
 // UNDO / REDO
 // ============================================================
+// Strip per-render transients (label hit-rects, etc.) before snapshotting —
+// they were bloating history and the saved project JSON.
+function _annotationsForSnapshot() {
+  return annotations.map(a => {
+    const c = Object.assign({}, a);
+    delete c._labelRect; delete c._perimRect;
+    return c;
+  });
+}
 function saveToHistory() {
   historyIndex++;
   history = history.slice(0, historyIndex);
-  history.push(JSON.stringify(annotations));
+  // Snapshot measurements + countGroups + takeoffItems alongside annotations
+  // so undo/redo can't desync them (counts skipping numbers, stale totals).
+  history.push(JSON.stringify({
+    annotations: _annotationsForSnapshot(),
+    measurements: measurements,
+    countGroups: countGroups,
+    takeoffItems: takeoffItems,
+    viewports: viewports
+  }));
   if (history.length > 50) { history.shift(); historyIndex--; }
 }
+// Page-structure operations (delete/insert/rotate/reorder pages) change
+// annotation page indices in ways the annotation-only history can't undo.
+// Reset history at those points rather than corrupting markups on Ctrl+Z.
+function resetHistoryAfterPageOp() {
+  history = [];
+  historyIndex = -1;
+  saveToHistory();
+}
+function _applyHistorySnapshot(snap) {
+  const hadCut = annotations.some(a => a.type === 'cutcontent');
+  const s = JSON.parse(snap);
+  if (Array.isArray(s)) {
+    // Legacy snapshot (annotations only)
+    annotations = s;
+  } else {
+    annotations = s.annotations || [];
+    measurements = s.measurements || [];
+    countGroups = s.countGroups || {};
+    takeoffItems = s.takeoffItems || takeoffItems;
+    if (s.viewports) viewports = s.viewports;
+  }
+  selectedAnnotationId = null;
+  redrawAnnotations(); openPropertiesPanel();
+  if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
+  // Cut Content paints onto the PDF canvas at render time — re-render when
+  // a snapshot adds/removes one so hidden content appears/restores correctly.
+  if (hadCut || annotations.some(a => a.type === 'cutcontent')) renderPage(currentPage);
+}
 function undo() {
-  if (historyIndex > 0) { historyIndex--; annotations = JSON.parse(history[historyIndex]); selectedAnnotationId = null; redrawAnnotations(); openPropertiesPanel(); }
+  if (historyIndex > 0) { historyIndex--; _applyHistorySnapshot(history[historyIndex]); }
 }
 function redo() {
-  if (historyIndex < history.length-1) { historyIndex++; annotations = JSON.parse(history[historyIndex]); selectedAnnotationId = null; redrawAnnotations(); openPropertiesPanel(); }
+  if (historyIndex < history.length-1) { historyIndex++; _applyHistorySnapshot(history[historyIndex]); }
 }
 
 // ============================================================
 // PAGINATION & ZOOM
 // ============================================================
-function previousPage() { if (currentPage > 0) { currentPage--; selectedAnnotationId=null; renderPage(currentPage); updatePageIndicator(); checkCalibrationBanner(); updateCalibrationIndicator(); openPropertiesPanel(); }}
-function nextPage() { if (pdfDoc && currentPage < pdfDoc.numPages-1) { currentPage++; selectedAnnotationId=null; renderPage(currentPage); updatePageIndicator(); checkCalibrationBanner(); updateCalibrationIndicator(); openPropertiesPanel(); }}
+function previousPage() { if (currentPage > 0) { cancelInProgressDrawing(); currentPage--; selectedAnnotationId=null; renderPage(currentPage); updatePageIndicator(); checkCalibrationBanner(); updateCalibrationIndicator(); openPropertiesPanel(); }}
+function nextPage() { if (pdfDoc && currentPage < pdfDoc.numPages-1) { cancelInProgressDrawing(); currentPage++; selectedAnnotationId=null; renderPage(currentPage); updatePageIndicator(); checkCalibrationBanner(); updateCalibrationIndicator(); openPropertiesPanel(); }}
 function updatePageIndicator() {
   const total = pdfDoc ? pdfDoc.numPages : 0;
   // Update bottom bar page input and total
@@ -4723,7 +5669,7 @@ function zoomIn() {
 function zoomOut() {
   if (!pdfDoc) return;
   const start = pendingZoom ? pendingZoom.targetScale : currentScale;
-  scheduleZoom(Math.max(0.25, start / 1.2), null);
+  scheduleZoom(Math.max(0.1, start / 1.2), null);
 }
 function resetZoom() {
   if (!pdfDoc) return;
@@ -4742,31 +5688,40 @@ async function zoomFit() {
 // CALIBRATION
 // ============================================================
 function guessScale(pixelDist, mmDist) {
-  // Try to guess common architectural scales
-  const ppm = pixelDist / mmDist;
-  const scales = [25,50,100,200,250,500,1000];
-  // At 96 DPI, 1mm = 96/25.4 = 3.78 pixels at 1:1
-  // At scale S, 1mm on drawing represents S mm in reality
-  // So ppm (pixels per real mm) = 3.78/S (approximately)
+  // Page space is PDF points: 72 pt/inch = 72/25.4 ≈ 2.835 px per paper-mm.
+  // At scale 1:S, 1 paper-mm represents S real-mm, so S = mmDist / (pixelDist / (72/25.4)).
+  const PT_PER_MM = 72 / 25.4;
+  const raw = mmDist / (pixelDist / PT_PER_MM);
+  // Snap to a common architectural scale when within 3%
+  const scales = [1,2,5,10,20,25,50,100,125,150,200,250,500,1000];
   for (const s of scales) {
-    const expected = 3.78 / s * mmDist; // expected pixels if this were the scale... nah
+    if (Math.abs(raw - s) / s < 0.03) return '1:' + s;
   }
-  return '1:' + Math.round(mmDist / (pixelDist / 3.78));
+  return '1:' + Math.round(raw);
 }
 
-function applyScalePreset(scale) {
-  // Directly calibrate the current page using architectural scale.
+function applyScalePreset(scale, allPages) {
+  // Directly calibrate using architectural scale.
   // Annotation coords are in PDF-point page space (72 pt/inch = 72/25.4 px per paper-mm).
   // At 1:scale, 1mm on paper = scale mm real, so pixelsPerMm(real) = (72/25.4)/scale.
   const pxPerMm = (72/25.4) / scale;
-  pageCalibrations[currentPage] = { pixelsPerMm: pxPerMm, scale: '1:' + scale };
+  const applyAll = allPages !== undefined ? allPages : (document.getElementById('cal-all-pages') && document.getElementById('cal-all-pages').checked);
+  if (applyAll && pdfDoc) {
+    for (let p = 0; p < pdfDoc.numPages; p++) {
+      pageCalibrations[p] = { pixelsPerMm: pxPerMm, scale: '1:' + scale };
+    }
+  } else {
+    pageCalibrations[currentPage] = { pixelsPerMm: pxPerMm, scale: '1:' + scale };
+  }
   calibrationMM = scale;
   const el = document.getElementById('calibrate-distance');
   if (el) el.value = scale;
   checkCalibrationBanner();
-  updatePanel();
+  updateCalibrationIndicator();
+  rebuildMeasurements();
+  openPropertiesPanel();
   redrawAnnotations();
-  if (typeof showToast === 'function') showToast('Calibration set to 1:' + scale + ' on page ' + (currentPage+1));
+  if (typeof showToast === 'function') showToast('Calibration set to 1:' + scale + (applyAll ? ' on all pages' : ' on page ' + (currentPage+1)));
 }
 
 function clearCalibration() {
@@ -4774,7 +5729,9 @@ function clearCalibration() {
   delete pageCalibrations[currentPage];
   delete calBannerDismissed[currentPage];
   checkCalibrationBanner();
-  updatePanel();
+  updateCalibrationIndicator();
+  rebuildMeasurements();
+  openPropertiesPanel();
   redrawAnnotations();
 }
 
@@ -4996,6 +5953,7 @@ function initThumbResize() {
 function goToPage(i) {
   if (!pdfDoc) return;
   i = Math.max(0, Math.min(pdfDoc.numPages - 1, i));
+  if (i !== currentPage) cancelInProgressDrawing();
   currentPage = i; selectedAnnotationId = null;
   if (pageViewMode === 'continuous') {
     // Scroll to the page in continuous view
@@ -5069,7 +6027,7 @@ async function reorderPage(fromIdx, toIdx) {
     else if (fromIdx < currentPage && toIdx >= currentPage) currentPage--;
     else if (fromIdx > currentPage && toIdx <= currentPage) currentPage++;
     await rebuildPdf(newDoc);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error reordering: ' + err.message); }
 }
 
@@ -5091,7 +6049,7 @@ async function thumbCtxInsertBlank() {
     pageCalibrations = newCals;
     await rebuildPdf(doc);
     goToPage(thumbCtxPage + 1);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error inserting blank page: ' + err.message); }
 }
 
@@ -5124,7 +6082,7 @@ async function handleThumbInsert(event) {
     pageCalibrations = newCals;
     await rebuildPdf(baseDoc);
     goToPage(thumbCtxPage + 1);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error inserting pages: ' + err.message); }
 }
 
@@ -5132,12 +6090,13 @@ async function thumbCtxRotateCW() {
   hideThumbContextMenu();
   try {
     const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    await remapAnnotationsForRotation(thumbCtxPage, 90);
     const page = doc.getPage(thumbCtxPage);
     const cur = page.getRotation().angle;
     page.setRotation(PDFLib.degrees((cur + 90) % 360));
     await rebuildPdf(doc);
     if (thumbCtxPage === currentPage) renderPage(currentPage);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error rotating: ' + err.message); }
 }
 
@@ -5452,6 +6411,31 @@ async function rotateAllPagesCCW() { hideViewMenu(); await rotatePages(null, 270
 
 // Core rotation routine. pageIndices = array of 0-based page numbers, or null = all pages.
 // delta = degrees to add (90 = CW, 270 = CCW).
+// Annotation coords live in ROTATED-viewport space, so when a page's /Rotate
+// changes the coords must be remapped or every markup lands displaced.
+// delta: 90 = clockwise, 270 = counter-clockwise, 180 = upside down.
+async function remapAnnotationsForRotation(pageIdx, delta) {
+  try {
+    const page = await pdfDoc.getPage(pageIdx + 1);
+    const vp = page.getViewport({ scale: 1 });  // PRE-rotation viewport
+    const W = vp.width, H = vp.height;
+    const d = ((delta % 360) + 360) % 360;
+    const mapPt =
+      d === 90  ? (p) => ({ x: H - p.y, y: p.x }) :
+      d === 270 ? (p) => ({ x: p.y, y: W - p.x }) :
+      d === 180 ? (p) => ({ x: W - p.x, y: H - p.y }) :
+                  (p) => p;
+    annotations.forEach(a => {
+      if (a.page !== pageIdx) return;
+      if (a.points) a.points = a.points.map(mapPt);
+      if (a.anchor) a.anchor = mapPt(a.anchor);
+      if (a.knees) a.knees = a.knees.map(mapPt);
+      if (a.textPos) a.textPos = mapPt(a.textPos);
+      if (a.labelOffset) a.labelOffset = { dx: 0, dy: 0 }; // offsets don't survive rotation meaningfully
+    });
+  } catch (e) { console.warn('Annotation rotation remap failed:', e); }
+}
+
 async function rotatePages(pageIndices, delta) {
   if (!pdfDoc || !currentPdfBytes) { alert('No PDF loaded'); return; }
   try {
@@ -5460,13 +6444,14 @@ async function rotatePages(pageIndices, delta) {
     const targets = (pageIndices === null) ? Array.from({length: count}, (_, i) => i) : pageIndices;
     for (const i of targets) {
       if (i < 0 || i >= count) continue;
+      await remapAnnotationsForRotation(i, delta);
       const page = doc.getPage(i);
       const cur = page.getRotation().angle;
       page.setRotation(PDFLib.degrees((cur + delta) % 360));
     }
     await rebuildPdf(doc);
     renderPage(currentPage);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch (err) {
     console.error('Rotate failed:', err);
     alert('Error rotating: ' + err.message);
@@ -5486,12 +6471,13 @@ async function thumbCtxRotateCCW() {
   hideThumbContextMenu();
   try {
     const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    await remapAnnotationsForRotation(thumbCtxPage, 270);
     const page = doc.getPage(thumbCtxPage);
     const cur = page.getRotation().angle;
     page.setRotation(PDFLib.degrees((cur + 270) % 360));
     await rebuildPdf(doc);
     if (thumbCtxPage === currentPage) renderPage(currentPage);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error rotating: ' + err.message); }
 }
 
@@ -5522,7 +6508,7 @@ async function thumbCtxDuplicate() {
     });
     pageCalibrations = newCals;
     await rebuildPdf(doc);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error duplicating: ' + err.message); }
 }
 
@@ -5555,8 +6541,9 @@ async function thumbCtxDelete() {
     });
     pageCalibrations = newCals;
     if (currentPage >= doc.getPageCount()) currentPage = doc.getPageCount() - 1;
+    else if (thumbCtxPage < currentPage) currentPage--; // keep viewing the same sheet when an earlier page is removed
     await rebuildPdf(doc);
-    saveToHistory();
+    resetHistoryAfterPageOp();
   } catch(err) { alert('Error deleting: ' + err.message); }
 }
 
@@ -5646,12 +6633,15 @@ async function executeCompress() {
 
       // Bake annotations onto the same page
       const pageAnns = annotations.filter(a => a.page === i);
-      pageAnns.forEach(ann => {
-        tempCtx.save();
-        tempCtx.setTransform(preset.scale, 0, 0, preset.scale, 0, 0);
-        drawAnnotation(tempCtx, ann, false);
-        tempCtx.restore();
-      });
+      isBakingAnnotations = true;
+      try {
+        pageAnns.forEach(ann => {
+          tempCtx.save();
+          tempCtx.setTransform(preset.scale, 0, 0, preset.scale, 0, 0);
+          drawAnnotation(tempCtx, ann, false);
+          tempCtx.restore();
+        });
+      } finally { isBakingAnnotations = false; }
 
       // JPEG-encode at the chosen quality
       const dataUrl = tempCanvas.toDataURL('image/jpeg', preset.quality);
@@ -5708,12 +6698,15 @@ async function flattenAndDownload() {
 
       // Render annotations on top (annotations in page space, use transform to scale)
       const pageAnns = annotations.filter(a => a.page === i);
-      pageAnns.forEach(ann => {
-        tempCtx.save();
-        tempCtx.setTransform(2, 0, 0, 2, 0, 0);
-        drawAnnotation(tempCtx, ann, false);
-        tempCtx.restore();
-      });
+      isBakingAnnotations = true;
+      try {
+        pageAnns.forEach(ann => {
+          tempCtx.save();
+          tempCtx.setTransform(2, 0, 0, 2, 0, 0);
+          drawAnnotation(tempCtx, ann, false);
+          tempCtx.restore();
+        });
+      } finally { isBakingAnnotations = false; }
 
       // Embed as image page in pdf-lib
       const imgData = tempCanvas.toDataURL('image/jpeg', 0.92);
@@ -5829,6 +6822,10 @@ function showSaveToast(msg) {
   clearTimeout(toast._timer);
   toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2200);
 }
+
+// General-purpose toast — previously called behind typeof guards but never
+// defined, so snap/copy/calibration feedback silently vanished.
+function showToast(msg) { showSaveToast(msg); }
 
 // ============================================================
 // SAVE / LOAD PROJECT (Bluebeam-style: single PDF file, markups
@@ -5999,6 +6996,18 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
     if (cleanEntry) {
       cleanBytes = hexStringToBytes(cleanEntry);
       if (cleanBytes && cleanBytes.length === 0) cleanBytes = null;
+      // New saves deflate the clean source before embedding — inflate if flagged
+      if (cleanBytes) {
+        const compEntry = infoDict.lookup(PDFLib.PDFName.of('BDMCleanCompressed'));
+        let comp = '0';
+        if (compEntry && typeof compEntry.decodeText === 'function') {
+          try { comp = compEntry.decodeText(); } catch (e) {}
+        }
+        if (comp === 'deflate-raw') {
+          try { cleanBytes = await _decompressBytes(cleanBytes); }
+          catch (e) { console.warn('clean source decompress failed:', e); cleanBytes = null; }
+        }
+      }
     }
 
     // Legacy fallback: files saved by the previous build used an
@@ -6031,7 +7040,25 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
 // source — the file stays editable on reopen (via the project JSON) but
 // external viewers will not see the markups. Use "Flatten" to produce
 // a shareable marked-up copy of very large drawings.
-const BDM_MAX_CLEAN_EMBED_BYTES = 25 * 1024 * 1024; // 25 MB
+// Raised from 25MB: the clean source is now deflate-compressed before
+// embedding (where the browser supports CompressionStream), so the same
+// hex-encoding overhead buys a much larger original.
+const BDM_MAX_CLEAN_EMBED_BYTES = 60 * 1024 * 1024; // 60 MB
+
+// Compress / decompress the embedded clean source. Returns null when the
+// browser lacks CompressionStream (the save falls back to uncompressed,
+// and old uncompressed files always load fine — flag 'BDMCleanCompressed').
+async function _compressBytes(bytes) {
+  if (typeof CompressionStream === 'undefined') return null;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch (e) { console.warn('compress failed:', e); return null; }
+}
+async function _decompressBytes(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
 
 // Main save: writes ONE PDF that is both visible in any viewer AND
 // fully editable on reopen in this tool.
@@ -6088,17 +7115,33 @@ async function saveProject() {
         tempCanvas.height = vp.height;
         const tempCtx = tempCanvas.getContext('2d');
         // Transparent background — only draw annotations
-        tempCtx.save();
-        tempCtx.setTransform(2, 0, 0, 2, 0, 0);
-        pageAnns.forEach(ann => drawAnnotation(tempCtx, ann, false));
-        tempCtx.restore();
+        isBakingAnnotations = true;
+        try {
+          tempCtx.save();
+          tempCtx.setTransform(2, 0, 0, 2, 0, 0);
+          pageAnns.forEach(ann => drawAnnotation(tempCtx, ann, false));
+          tempCtx.restore();
+        } finally { isBakingAnnotations = false; }
 
         const pngDataUrl = tempCanvas.toDataURL('image/png');
         const pngBytes = Uint8Array.from(atob(pngDataUrl.split(',')[1]), c => c.charCodeAt(0));
         const pngImage = await outDoc.embedPng(pngBytes);
 
+        // The overlay was rendered from a pdf.js viewport with page rotation
+        // already applied, but pdf-lib draws into UNROTATED page space.
+        // Compensate for /Rotate so markups land correctly in external viewers.
         const sz = pages[i].getSize();
-        pages[i].drawImage(pngImage, { x: 0, y: 0, width: sz.width, height: sz.height });
+        let rot = 0;
+        try { rot = ((pages[i].getRotation().angle % 360) + 360) % 360; } catch (e) { rot = 0; }
+        if (rot === 90) {
+          pages[i].drawImage(pngImage, { x: sz.width, y: 0, width: sz.height, height: sz.width, rotate: PDFLib.degrees(90) });
+        } else if (rot === 180) {
+          pages[i].drawImage(pngImage, { x: sz.width, y: sz.height, width: sz.width, height: sz.height, rotate: PDFLib.degrees(180) });
+        } else if (rot === 270) {
+          pages[i].drawImage(pngImage, { x: 0, y: sz.height, width: sz.height, height: sz.width, rotate: PDFLib.degrees(270) });
+        } else {
+          pages[i].drawImage(pngImage, { x: 0, y: 0, width: sz.width, height: sz.height });
+        }
       }
     }
 
@@ -6106,10 +7149,12 @@ async function saveProject() {
     const project = {
       version: 4,
       filename: currentFilename,
-      annotations: annotations,
+      annotations: _annotationsForSnapshot(),
       pageCalibrations: pageCalibrations,
       countGroups: countGroups,
       measurements: measurements,
+      takeoffItems: takeoffItems,
+      viewports: viewports,
       toolPresets: toolPresets,
       savedAt: new Date().toISOString()
     };
@@ -6125,8 +7170,13 @@ async function saveProject() {
     infoDict.set(PDFLib.PDFName.of('BDMBakedOverlay'), PDFLib.PDFHexString.fromText(canEmbedClean ? '1' : '0'));
 
     if (canEmbedClean) {
-      const cleanHex = bytesToHex(cleanBytes);
-      infoDict.set(PDFLib.PDFName.of('BDMCleanSource'), PDFLib.PDFHexString.of(cleanHex));
+      // Deflate the clean source before hex-encoding — typically halves the
+      // saved file size compared to the old raw-hex embed.
+      let toEmbed = cleanBytes, compression = '0';
+      const comp = await _compressBytes(cleanBytes);
+      if (comp && comp.length < cleanBytes.length) { toEmbed = comp; compression = 'deflate-raw'; }
+      infoDict.set(PDFLib.PDFName.of('BDMCleanSource'), PDFLib.PDFHexString.of(bytesToHex(toEmbed)));
+      infoDict.set(PDFLib.PDFName.of('BDMCleanCompressed'), PDFLib.PDFHexString.fromText(compression));
     }
 
     const savedBytes = await outDoc.save();
@@ -6272,12 +7322,15 @@ async function updatePrintPreview() {
       cctx.fillRect(0, 0, vp.width, vp.height);
       await page.render({ canvasContext: cctx, viewport: vp }).promise;
       const pageAnns = annotations.filter(a => a.page === pageIdx);
-      pageAnns.forEach(ann => {
-        cctx.save();
-        cctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-        drawAnnotation(cctx, ann, false);
-        cctx.restore();
-      });
+      isBakingAnnotations = true;
+      try {
+        pageAnns.forEach(ann => {
+          cctx.save();
+          cctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+          drawAnnotation(cctx, ann, false);
+          cctx.restore();
+        });
+      } finally { isBakingAnnotations = false; }
       _printPreviewCache = { pageIdx, canvas: c };
     }
 
@@ -6380,12 +7433,15 @@ async function executePrint() {
     await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 0 }).promise;
 
     const pageAnns = annotations.filter(a => a.page === pi);
-    pageAnns.forEach(ann => {
-      ctx.save();
-      ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-      drawAnnotation(ctx, ann, false);
-      ctx.restore();
-    });
+    isBakingAnnotations = true;
+    try {
+      pageAnns.forEach(ann => {
+        ctx.save();
+        ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+        drawAnnotation(ctx, ann, false);
+        ctx.restore();
+      });
+    } finally { isBakingAnnotations = false; }
 
     // Greyscale at canvas-level (more reliable than CSS filter on print)
     if (greyscale) {
@@ -6530,8 +7586,9 @@ function gotoSearchResult(i) {
   searchCurrentIdx = i;
   const h = searchHighlights[i];
   if (h.page !== currentPage) {
-    currentPage = h.page;
-    renderPage(currentPage);
+    // Route through goToPage so continuous/side-by-side view modes survive
+    // (calling renderPage directly destroyed the continuous-view DOM).
+    goToPage(h.page);
     setTimeout(() => { redrawAnnotations(); scrollToSearchHit(h); }, 150);
   } else {
     redrawAnnotations();
@@ -6752,7 +7809,7 @@ async function insertPdfFilesAtIndex(files, insertAtIdx) {
     renderPage(currentPage);
     generateThumbnails();
     updatePageIndicator();
-    saveToHistory();
+    resetHistoryAfterPageOp();
     const indicator = document.getElementById('tool-indicator');
     if (indicator) {
       indicator.textContent = `Inserted ${totalInserted} page${totalInserted!==1?'s':''} from ${pdfFiles.length} PDF${pdfFiles.length>1?'s':''}`;
@@ -6977,9 +8034,9 @@ function rebuildMeasurements() {
         label: ann.measLabel || '', value: ann.label || ''
       });
     } else {
-      // Update value
+      // Update value AND page (page indices shift on page insert/delete/reorder)
       const m = measurements.find(m => m.id === ann.id);
-      if (m) { m.value = ann.label || m.value; m.label = ann.measLabel || m.label; }
+      if (m) { m.value = ann.label || m.value; m.label = ann.measLabel || m.label; m.page = ann.page; }
     }
   });
 
