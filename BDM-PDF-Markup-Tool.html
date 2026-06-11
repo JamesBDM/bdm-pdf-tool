@@ -128,6 +128,11 @@ input, select, textarea { font: inherit; color: inherit; }
   border-radius: 4px; cursor: pointer; transition: border-color .15s;
   background: var(--bg-tertiary); overflow: hidden; position: relative;
 }
+/* Dashed box on the current page's thumbnail showing the visible region */
+.thumb-viewbox {
+  position: absolute; border: 1.5px dashed var(--accent);
+  pointer-events: none; box-sizing: border-box; display: none;
+}
 .thumbnail-item:hover { border-color: var(--text-secondary); }
 .thumbnail-item.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .thumbnail-canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
@@ -567,9 +572,13 @@ canvas { display: block; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7L21 13"/></svg>
       Redo
     </button>
-    <button class="topbar-btn" id="btn-snap" onclick="toggleSnap()" title="Toggle snap-to-drawing">
+    <button class="topbar-btn" id="btn-snap" onclick="toggleSnap()" title="Snap to your markups' points (endpoints / midpoints / corners)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
       Snap
+    </button>
+    <button class="topbar-btn" id="btn-snap-lines" onclick="toggleContentSnap()" title="Snap to the drawing's lines (walls, gridlines) while measuring — on/off">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17L9 11L13 15L21 7"/><circle cx="9" cy="11" r="2.5"/></svg>
+      Snap Lines
     </button>
     <button class="topbar-btn" onclick="openSearchDialog()" title="Search text (Ctrl+F)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -906,6 +915,9 @@ let activeDocIndex = -1;
 let pageCalibrations = {};
 let calibrationPixels = 0;
 let calibrationMM = 100;
+// Most recent calibration — used as a fallback for uncalibrated pages so
+// labels never show raw px once the user has calibrated anywhere.
+let defaultCalibration = null;
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -957,7 +969,7 @@ const toolProperties = {
   fillColor: '#D97757',
   opacity: 100,
   fillOpacity: 50,
-  thickness: 2,
+  thickness: 1,    // was 2 — lines were too heavy over drawings
   lineStyle: 'solid',
   fontFamily: 'Arial',
   fontSize: 14,
@@ -1088,6 +1100,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (currentTool === 'pan') e.preventDefault();
   });
 
+  // Keep the thumbnail view-box (dashed "you are here" rectangle) in sync
+  // with scrolling / zooming, throttled to one update per frame.
+  let _vbRaf = null;
+  canvasWrapper.addEventListener('scroll', () => {
+    if (_vbRaf) return;
+    _vbRaf = requestAnimationFrame(() => { _vbRaf = null; updateThumbnailViewbox(); });
+  });
+
   // Keyboard
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
@@ -1201,6 +1221,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Set initial snap button state
   const snapBtn = document.getElementById('btn-snap');
   if (snapBtn && snapEnabled) snapBtn.style.color = 'var(--accent)';
+  const snapLinesBtn = document.getElementById('btn-snap-lines');
+  if (snapLinesBtn && snapContentEnabled) snapLinesBtn.style.color = 'var(--accent)';
 });
 
 // ============================================================
@@ -1224,6 +1246,7 @@ function captureActiveDocState() {
   d.countGroups = countGroups;
   d.currentCountGroup = currentCountGroup;
   d.pageCalibrations = pageCalibrations;
+  d.defaultCalibration = defaultCalibration;
   d.pdfMetadata = pdfMetadata;
   d.calBannerDismissed = calBannerDismissed;
   d.currentFilename = currentFilename;
@@ -1249,6 +1272,7 @@ function restoreDocState(idx) {
   countGroups = d.countGroups || {};
   currentCountGroup = d.currentCountGroup || 'Default';
   pageCalibrations = d.pageCalibrations || {};
+  defaultCalibration = d.defaultCalibration || null;
   pdfMetadata = d.pdfMetadata || {};
   calBannerDismissed = d.calBannerDismissed || {};
   currentFilename = d.currentFilename || 'document.pdf';
@@ -1310,6 +1334,7 @@ function closeDoc(idx) {
     measurements = [];
     countGroups = {};
     pageCalibrations = {};
+    defaultCalibration = null;
     pdfMetadata = {};
     calBannerDismissed = {};
     currentFilename = 'document.pdf';
@@ -1498,6 +1523,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     countGroups = {};
     currentCountGroup = 'Default';
     pageCalibrations = {};        // fresh per-document calibration (was leaking between tabs)
+    defaultCalibration = null;
     calBannerDismissed = {};
     takeoffItems = [];
     activeTakeoffItemId = null;
@@ -1511,6 +1537,8 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     if (restoredProject) {
       if (Array.isArray(restoredProject.annotations)) annotations = restoredProject.annotations;
       if (restoredProject.pageCalibrations) pageCalibrations = restoredProject.pageCalibrations;
+      if (restoredProject.defaultCalibration) defaultCalibration = restoredProject.defaultCalibration;
+      else { const k = Object.keys(pageCalibrations)[0]; if (k !== undefined) defaultCalibration = { ...pageCalibrations[k] }; }
       if (restoredProject.countGroups) countGroups = restoredProject.countGroups;
       if (Array.isArray(restoredProject.measurements)) measurements = restoredProject.measurements;
       if (Array.isArray(restoredProject.takeoffItems)) takeoffItems = restoredProject.takeoffItems;
@@ -1653,6 +1681,9 @@ function toScreen(pagePt) {
 
 // Snap-to-drawing: returns page point snapped to nearest annotation endpoint/edge on current page.
 let snapEnabled = true;
+// Snap to the underlying DRAWING lines (raster sampling) — separate toggle
+let snapContentEnabled = true;
+try { snapContentEnabled = localStorage.getItem('bdm-snap-content') !== '0'; } catch (e) {}
 let lastSnapHit = null; // for drawing a snap indicator
 // Tools that show a snap indicator while hovering (before the first click)
 const SNAP_HOVER_TOOLS = ['measure','polyline','area','dimension','calibrate','line','arrow','polygon'];
@@ -1685,7 +1716,13 @@ function updateSelectHoverCursor(screenPt) {
 }
 function snapPagePoint(pagePt) {
   lastSnapHit = null;
-  if (!snapEnabled) return pagePt;
+  if (!snapEnabled && !snapContentEnabled) return pagePt;
+  if (!snapEnabled) {
+    // Markup snap off but drawing-line snap on — go straight to raster snap
+    const c0 = snapPageToContent(pagePt);
+    if (c0) { lastSnapHit = { x: c0.x, y: c0.y, type: 'content' }; return { x: c0.x, y: c0.y }; }
+    return pagePt;
+  }
   const tolPage = 8 / currentScale; // 8 screen px
   let best = null, bestDist = tolPage;
   const cand = [];
@@ -1711,13 +1748,16 @@ function snapPagePoint(pagePt) {
     if (d < bestDist) { bestDist = d; best = c; }
   }
   if (best) { lastSnapHit = { x: best.x, y: best.y, type: best.type }; return { x: best.x, y: best.y }; }
+  // No markup point nearby — try the drawing's own lines (walls, gridlines)
+  const c = snapPageToContent(pagePt);
+  if (c) { lastSnapHit = { x: c.x, y: c.y, type: 'content' }; return { x: c.x, y: c.y }; }
   return pagePt;
 }
 
 // Apply snap by converting screen->page->snap->screen, so downstream code that still
 // calls toPage(currentMovePoint) naturally sees the snapped coordinate.
 function snapScreenPoint(screenPt) {
-  if (!snapEnabled) return screenPt;
+  if (!snapEnabled && !snapContentEnabled) return screenPt;
   const pagePt = toPage(screenPt);
   const snapped = snapPagePoint(pagePt);
   if (snapped === pagePt) return screenPt;
@@ -1823,6 +1863,11 @@ function redrawAnnotations() {
       ctx.lineTo(lastSnapHit.x + r, lastSnapHit.y);
       ctx.lineTo(lastSnapHit.x, lastSnapHit.y + r);
       ctx.closePath(); ctx.stroke();
+    } else if (lastSnapHit.type === 'content') {
+      // Drawing-line snap → circle indicator
+      ctx.beginPath();
+      ctx.arc(lastSnapHit.x, lastSnapHit.y, r * 0.8, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       ctx.strokeRect(lastSnapHit.x - r, lastSnapHit.y - r, r*2, r*2);
     }
@@ -1844,7 +1889,63 @@ function toggleSnap() {
   snapEnabled = !snapEnabled;
   const btn = document.getElementById('btn-snap');
   if (btn) btn.style.color = snapEnabled ? 'var(--accent)' : '';
-  if (typeof showToast === 'function') showToast('Snap: ' + (snapEnabled ? 'ON' : 'OFF'));
+  if (typeof showToast === 'function') showToast('Snap to markups: ' + (snapEnabled ? 'ON' : 'OFF'));
+}
+
+function toggleContentSnap() {
+  snapContentEnabled = !snapContentEnabled;
+  try { localStorage.setItem('bdm-snap-content', snapContentEnabled ? '1' : '0'); } catch (e) {}
+  const btn = document.getElementById('btn-snap-lines');
+  if (btn) btn.style.color = snapContentEnabled ? 'var(--accent)' : '';
+  showToast('Snap to drawing lines: ' + (snapContentEnabled ? 'ON' : 'OFF'));
+}
+
+// ============================================================
+// SNAP TO DRAWING CONTENT (raster-based)
+// Samples the rendered PDF canvas around the cursor and snaps to the
+// nearest dark "ink" pixel — lands measurements on walls/gridlines
+// without needing to parse PDF vector geometry.
+// ============================================================
+function snapPageToContent(pagePt) {
+  if (!snapContentEnabled || !pdfDoc) return null;
+  try {
+    let pdfCanvas, annCanvas;
+    if (pageViewMode === 'single') {
+      pdfCanvas = document.getElementById('pdf-canvas');
+      annCanvas = document.getElementById('annotation-canvas');
+    } else {
+      annCanvas = getActiveAnnotationCanvas();
+      const pageDiv = annCanvas && annCanvas.parentElement;
+      pdfCanvas = pageDiv && pageDiv.querySelector('canvas');
+    }
+    if (!pdfCanvas || !annCanvas || !pdfCanvas.width || pdfCanvas === annCanvas) return null;
+    // page units → pdf-canvas pixels (the pdf layer may be rendered at a
+    // higher resolution than the annotation layer)
+    const factor = pdfCanvas.width / (annCanvas.width / currentScale);
+    if (!isFinite(factor) || factor <= 0) return null;
+    const cx = pagePt.x * factor, cy = pagePt.y * factor;
+    const r = Math.max(3, Math.round((8 / currentScale) * factor)); // ~8 screen px
+    const x0 = Math.max(0, Math.round(cx - r));
+    const y0 = Math.max(0, Math.round(cy - r));
+    const w = Math.min(pdfCanvas.width - x0, 2 * r + 1);
+    const h = Math.min(pdfCanvas.height - y0, 2 * r + 1);
+    if (w <= 0 || h <= 0) return null;
+    const data = pdfCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x0, y0, w, h).data;
+    let bestD = Infinity, bx = -1, by = -1;
+    for (let yy = 0; yy < h; yy++) {
+      for (let xx = 0; xx < w; xx++) {
+        const i = (yy * w + xx) * 4;
+        if (data[i + 3] < 100) continue; // transparent
+        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        if (lum >= 120) continue;        // not drawing ink
+        const dx = (x0 + xx) - cx, dy = (y0 + yy) - cy;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; bx = x0 + xx; by = y0 + yy; }
+      }
+    }
+    if (bx >= 0 && Math.sqrt(bestD) <= r) return { x: bx / factor, y: by / factor };
+  } catch (e) { /* tainted canvas or transient state — skip silently */ }
+  return null;
 }
 
 // ============================================================
@@ -1951,7 +2052,10 @@ function _calFor(page, pt) {
           pt.y >= v.rect.y && pt.y <= v.rect.y + v.rect.h) return v;
     }
   }
-  return pageCalibrations[page];
+  // Fall back to the most recent calibration so measurements never show raw
+  // px once the document has been calibrated anywhere (per-page calibration
+  // still wins when set — important for mixed-scale sets).
+  return pageCalibrations[page] || defaultCalibration;
 }
 // Create a viewport from a dragged rectangle (page coords). Asks for the
 // region's scale, then all measurements inside it use that scale.
@@ -2061,7 +2165,7 @@ function drawMeasureLine(ctx, ann) {
   let drawPos = offsetPos(basePos, ann);
   const userDragged = ann.labelOffset && (ann.labelOffset.dx || ann.labelOffset.dy);
   if (!userDragged && !ann.hideLabel) {
-    const fontSize = ann.labelFontSize || 11;
+    const fontSize = ann.labelFontSize || 8;
     const approxLabelW = (label.length * fontSize * 0.6) + 8;
     if (dist < approxLabelW) {
       // Perpendicular unit vector to the line, pointing "up" in page space.
@@ -2119,7 +2223,12 @@ function drawAreaMeasure(ctx, ann) {
   const c = getCentroid(ann.points);
   const labelPos = offsetPos(c, ann);
   drawLabel(ctx, areaLabel, labelPos, { ann, recordKey: '_labelRect' });
-  drawLabel(ctx, 'P: '+perimLabel, { x: labelPos.x, y: labelPos.y + 14 }, { ann, recordKey: '_perimRect' });
+  // Perimeter is opt-in per annotation (Properties → Label → "Show perimeter")
+  if (ann.showPerimeter) {
+    drawLabel(ctx, 'P: '+perimLabel, { x: labelPos.x, y: labelPos.y + 14 }, { ann, recordKey: '_perimRect' });
+  } else {
+    ann._perimRect = null;
+  }
 }
 
 function drawRect(ctx, ann) {
@@ -2231,6 +2340,19 @@ function drawCalloutAnn(ctx, ann) {
   ctx.beginPath(); ctx.moveTo(ann.anchor.x, ann.anchor.y);
   if (ann.knees) ann.knees.forEach(k => ctx.lineTo(k.x, k.y));
   ctx.lineTo(ann.textPos.x, ann.textPos.y); ctx.stroke();
+  // Arrowhead at the anchor, pointing along the first leader segment
+  {
+    const next = (ann.knees && ann.knees.length) ? ann.knees[0] : ann.textPos;
+    const angle = Math.atan2(ann.anchor.y - next.y, ann.anchor.x - next.x);
+    const hl = 10;
+    ctx.beginPath();
+    ctx.moveTo(ann.anchor.x, ann.anchor.y);
+    ctx.lineTo(ann.anchor.x - hl*Math.cos(angle - Math.PI/7), ann.anchor.y - hl*Math.sin(angle - Math.PI/7));
+    ctx.lineTo(ann.anchor.x - hl*Math.cos(angle + Math.PI/7), ann.anchor.y - hl*Math.sin(angle + Math.PI/7));
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
 
   // Draw text box
   const ff = ann.fontFamily || 'Arial';
@@ -2430,7 +2552,7 @@ function drawLabel(ctx, text, pos, opts) {
     if (opts.recordKey) ann[opts.recordKey] = null;
     return;
   }
-  const fontSize = ann.labelFontSize || 11;
+  const fontSize = ann.labelFontSize || 8;   // was 11 — measurement labels were too big on drawings
   const bg = ann.labelBg || 'rgba(18,19,26,0.8)';
   const fg = ann.labelColor || '#D97757';
   ctx.save();
@@ -2615,7 +2737,9 @@ function drawInProgress(ctx) {
     const pagePts = polylinePoints.map(p => toPage(p));
     ctx.beginPath(); ctx.moveTo(pagePts[0].x, pagePts[0].y);
     pagePts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
-    pagePts.forEach(p => { ctx.fillStyle = toolProperties.color; ctx.fillRect(p.x-3, p.y-3, 6, 6); });
+    // Vertex markers at a constant ~4 screen px regardless of zoom (was 6 page units — huge when zoomed in)
+    const vs = 4 / currentScale;
+    pagePts.forEach(p => { ctx.fillStyle = toolProperties.color; ctx.fillRect(p.x - vs/2, p.y - vs/2, vs, vs); });
   }
   if ((currentTool === 'pen' || currentTool === 'cloud') && polylinePoints.length > 1) {
     const pagePts = polylinePoints.map(p => toPage(p));
@@ -2784,7 +2908,8 @@ function onCanvasMouseDown(e) {
   }
   if (currentTool === 'count') { addCountMarker(screenPt); isDrawing = false; return; }
   if (currentTool === 'stamp') { addStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
-  if (currentTool === 'tick') { addTickMark(screenPt); isDrawing = false; returnToNavTool(); return; }
+  // Tick stays armed so a whole checklist/QA pass can be ticked in one go (Esc/V to exit)
+  if (currentTool === 'tick') { addTickMark(screenPt); isDrawing = false; return; }
   if (currentTool === 'signature') { addSignatureStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
   if (currentTool === 'text') { showTextInput(screenPt); isDrawing = false; /* returnToNavTool called after text input blur */ return; }
   if (currentTool === 'callout') {
@@ -2864,7 +2989,7 @@ function onCanvasMouseMove(e) {
     const hoverPt = { x: e.clientX - rect2.left, y: e.clientY - rect2.top };
     // Hover snap indicator — lets the FIRST click of a measurement land on a
     // snapped point with visual feedback.
-    if (snapEnabled && SNAP_HOVER_TOOLS.includes(currentTool)) {
+    if ((snapEnabled || snapContentEnabled) && SNAP_HOVER_TOOLS.includes(currentTool)) {
       const prev = lastSnapHit;
       snapScreenPoint(hoverPt);
       const changed = (!!prev !== !!lastSnapHit) ||
@@ -3679,6 +3804,7 @@ function addMeasurement(points) {
       } else {
         pageCalibrations[currentPage] = cal;
       }
+      defaultCalibration = { ...cal };
       updateCalibrationIndicator();
       checkCalibrationBanner();
       rebuildMeasurements();
@@ -4016,8 +4142,10 @@ function showCalloutTextInput(anchor, knees, textPos) {
       color: toolProperties.color, thickness: toolProperties.thickness, opacity: toolProperties.opacity,
       fontSize: toolProperties.fontSize || 12, fontFamily: toolProperties.fontFamily || 'Arial',
       fontWeight: toolProperties.fontWeight, fontStyle: toolProperties.fontStyle,
-      textDecoration: toolProperties.textDecoration, textColor: toolProperties.color, textAlign: 'left',
-      fillColor: toolProperties.fillColor || '#ffffff' };
+      textDecoration: toolProperties.textDecoration,
+      // Callout default: black text in a solid white box (still editable in Properties)
+      textColor: '#000000', textAlign: 'left',
+      fillColor: '#ffffff', fillOpacity: 100 };
     annotations.push(ann); saveToHistory(); redrawAnnotations();
     overlay.remove();
     returnToNavTool();
@@ -4485,7 +4613,8 @@ function computeTakeoffQty(item) {
     default:         qty = raw;                                     // count
   }
   const rate = parseFloat(item.rate) || 0;
-  const amount = qty * rate;
+  const markup = parseFloat(item.markup) || 0;   // % on top of rate (Cubit-style Markup column)
+  const amount = qty * rate * (1 + markup / 100);
   // Missing factor on a factored type — flag like uncalibrated
   const needsFactor = (item.resultType === 'vertical' || item.resultType === 'volume') && !(factor > 0);
   return { qty, shapes, uncal: uncal || needsFactor, amount, needsFactor };
@@ -4526,7 +4655,7 @@ function addTakeoffItem() {
 function updateTakeoffItemField(id, field, value) {
   const item = getTakeoffItem(id);
   if (!item) return;
-  if (field === 'rate' || field === 'factor') value = parseFloat(value) || 0;
+  if (field === 'rate' || field === 'factor' || field === 'markup') value = parseFloat(value) || 0;
   item[field] = value;
   saveToHistory();
   redrawAnnotations(); // factored labels don't change, but totals do
@@ -4639,7 +4768,7 @@ function getTakeoffPanelHTML() {
       <select id="takeoff-new-type" class="select-input" style="flex:1"
               onchange="document.getElementById('takeoff-new-factor-row').style.display=(this.value==='vertical'||this.value==='volume')?'flex':'none'">
         <option value="length">${TAKEOFF_TYPE_LABELS.length}</option>
-        <option value="area">${TAKEOFF_TYPE_LABELS.area}</option>
+        <option value="area" selected>${TAKEOFF_TYPE_LABELS.area}</option>
         <option value="vertical">${TAKEOFF_TYPE_LABELS.vertical}</option>
         <option value="volume">${TAKEOFF_TYPE_LABELS.volume}</option>
         <option value="count">${TAKEOFF_TYPE_LABELS.count}</option>
@@ -4730,6 +4859,11 @@ function getTakeoffPanelHTML() {
             <input type="number" step="0.01" class="property-input" style="flex:1;font-size:11px" value="${item.rate || ''}" placeholder="0.00"
                    onchange="updateTakeoffItemField('${item.id}','rate',this.value)">
           </div>
+          <div style="display:flex;gap:4px;align-items:center">
+            <label style="font-size:10px;color:var(--text-muted);width:62px">Markup %</label>
+            <input type="number" step="0.5" class="property-input" style="flex:1;font-size:11px" value="${item.markup || ''}" placeholder="0"
+                   onchange="updateTakeoffItemField('${item.id}','markup',this.value)">
+          </div>
           ${needsFactor ? `<div style="display:flex;gap:4px;align-items:center">
             <label style="font-size:10px;color:var(--text-muted);width:62px">${item.resultType === 'vertical' ? 'Height' : 'Depth'} mm</label>
             <input type="number" class="property-input" style="flex:1;font-size:11px" value="${item.factor || ''}" placeholder="e.g. 2700"
@@ -4762,14 +4896,14 @@ function getTakeoffPanelHTML() {
 
 function exportTakeoffCSV() {
   if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
-  let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Amount,Shapes,Deductions\n';
+  let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Markup %,Amount,Shapes,Deductions\n';
   takeoffItems.forEach(item => {
     const { qty, shapes, amount } = computeTakeoffQty(item);
     const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
     const unit = TAKEOFF_TYPE_UNITS[item.resultType];
     const qv = item.resultType === 'count' ? qty : qty.toFixed(3);
     const rate = parseFloat(item.rate) || 0;
-    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${item.resultType},${item.factor||''},${unit},${qv},${rate||''},${rate>0?amount.toFixed(2):''},${shapes},${deds}\n`;
+    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${item.resultType},${item.factor||''},${unit},${qv},${rate||''},${item.markup||''},${rate>0?amount.toFixed(2):''},${shapes},${deds}\n`;
   });
   downloadBlob(csv, 'text/csv', currentFilename.replace(/\.pdf$/i, '') + '_takeoff.csv');
   showToast('Takeoff CSV exported');
@@ -4881,7 +5015,7 @@ function _xlsxFromSheets(sheets) {
 function exportTakeoffXLSX() {
   if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
   // Sheet 1 — Takeoff summary, grouped by trade with subtotals
-  const sum = [['Trade','Item','Result type','Height/Depth (mm)','Unit','Quantity','Rate ($/unit)','Amount ($)','Shapes','Deductions']];
+  const sum = [['Trade','Item','Result type','Height/Depth (mm)','Unit','Quantity','Rate ($/unit)','Markup (%)','Amount ($)','Shapes','Deductions']];
   const trades = {};
   takeoffItems.forEach(item => {
     const t = (item.trade || '').trim() || 'General';
@@ -4897,13 +5031,14 @@ function exportTakeoffXLSX() {
       sub += rate > 0 ? amount : 0;
       sum.push([trade, item.name, TAKEOFF_TYPE_LABELS[item.resultType] || item.resultType,
         item.factor ? Number(item.factor) : '', TAKEOFF_TYPE_UNITS[item.resultType],
-        Number(qty.toFixed(3)), rate || '', rate > 0 ? Number(amount.toFixed(2)) : '', shapes, deds]);
+        Number(qty.toFixed(3)), rate || '', item.markup ? Number(item.markup) : '',
+        rate > 0 ? Number(amount.toFixed(2)) : '', shapes, deds]);
     });
     grand += sub;
-    sum.push(['', trade + ' subtotal', '', '', '', '', '', sub ? Number(sub.toFixed(2)) : '', '', '']);
+    sum.push(['', trade + ' subtotal', '', '', '', '', '', '', sub ? Number(sub.toFixed(2)) : '', '', '']);
     sum.push([]);
   });
-  sum.push(['', 'ESTIMATE TOTAL', '', '', '', '', '', grand ? Number(grand.toFixed(2)) : '', '', '']);
+  sum.push(['', 'ESTIMATE TOTAL', '', '', '', '', '', '', grand ? Number(grand.toFixed(2)) : '', '', '']);
 
   // Sheet 2 — per-shape breakdown
   const shapes = [['Trade','Item','Page','Shape type','Deduction','Measured value','Scale used']];
@@ -5079,7 +5214,10 @@ function getAnnotationPropertiesHTML(ann) {
       <div class="color-swatches" data-target="prop-labelcolor"></div>
       <div class="property-row"><div class="property-label">Background:</div><input type="color" id="prop-labelbg" class="color-picker" value="${lbg}"></div>
       <div class="color-swatches" data-target="prop-labelbg"></div>
-      <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-labelfontsize" class="property-input" min="4" max="48" step="1" value="${ann.labelFontSize||11}"></div>
+      <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-labelfontsize" class="property-input" min="4" max="48" step="1" value="${ann.labelFontSize||8}"></div>
+      ${ann.type === 'area' ? `<div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="prop-showperim" class="checkbox-input" ${ann.showPerimeter?'checked':''}>
+        Show perimeter (P:)</label></div>` : ''}
       <div class="property-row"><button id="prop-labelreset" style="flex:1;padding:6px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer">Reset Label Position</button></div>
     </div></div>`;
   }
@@ -5186,7 +5324,8 @@ function attachAnnotationListeners(ann) {
   // Measurement label styling
   bind('prop-labelcolor', 'labelColor');
   bind('prop-labelbg', 'labelBg');
-  bind('prop-labelfontsize', 'labelFontSize', t => Math.max(4, parseInt(t.value) || 11));
+  bind('prop-labelfontsize', 'labelFontSize', t => Math.max(4, parseInt(t.value) || 8));
+  bind('prop-showperim', 'showPerimeter', t => t.checked);
   const hideLabelEl = document.getElementById('prop-labelhide');
   if (hideLabelEl) hideLabelEl.addEventListener('change', e => {
     ann.hideLabel = e.target.checked;
@@ -5281,6 +5420,9 @@ function getToolPropertiesHTML(tool) {
         <button class="stamp-btn stamp-preliminary" onclick="selectStamp('PRELIMINARY')">PRELIM.</button>
         <button class="stamp-btn stamp-superseded" onclick="selectStamp('SUPERSEDED')">SUPERSEDED</button>
         <button class="stamp-btn stamp-approved" style="background:#10b981" onclick="selectStamp('PAID')">PAID</button>
+        ${getCustomStamps().map((s, i) => `
+        <button class="stamp-btn" style="background:var(--bg-tertiary);border-color:var(--accent);color:var(--accent);position:relative" onclick="selectStamp('${s.replace(/'/g,"\\'")}')" title="${escapeHtml(s)}">${escapeHtml(s.length > 14 ? s.slice(0,12)+'…' : s)}<span onclick="event.stopPropagation();removeCustomStamp(${i})" title="Remove custom stamp" style="position:absolute;top:-1px;right:2px;font-size:10px;color:var(--text-muted)">×</span></button>`).join('')}
+        <button class="stamp-btn" style="border-style:dashed;color:var(--text-muted)" onclick="addCustomStamp()" title="Create your own stamp text">+ CUSTOM</button>
       </div>
       <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">Selected: <strong id="sel-stamp">${selectedStamp}</strong></div>
       <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
@@ -5427,6 +5569,31 @@ function attachToolListeners() {
   if (tt) tt.addEventListener('change', e => { toolProperties.tickThickness = parseFloat(e.target.value) || 4; });
 
   populateSwatches();
+}
+
+// Custom stamps — user-defined stamp texts, kept in localStorage
+function getCustomStamps() {
+  try { return JSON.parse(localStorage.getItem('bdm-custom-stamps') || '[]'); } catch (e) { return []; }
+}
+function addCustomStamp() {
+  const text = prompt('Custom stamp text (e.g. "BDM REVIEWED", "ISSUED FOR TENDER"):');
+  if (!text || !text.trim()) return;
+  const list = getCustomStamps();
+  const t = text.trim().toUpperCase();
+  if (!list.includes(t)) {
+    list.push(t);
+    try { localStorage.setItem('bdm-custom-stamps', JSON.stringify(list)); } catch (e) {}
+  }
+  selectedStamp = t;
+  openPropertiesPanel(); // refresh the stamp grid
+  showToast('Custom stamp added: ' + t);
+}
+function removeCustomStamp(idx) {
+  const list = getCustomStamps();
+  const removed = list.splice(idx, 1);
+  try { localStorage.setItem('bdm-custom-stamps', JSON.stringify(list)); } catch (e) {}
+  if (removed[0] === selectedStamp) selectedStamp = 'APPROVED';
+  openPropertiesPanel();
 }
 
 function selectStamp(s) {
@@ -5659,7 +5826,10 @@ async function renderSideBySideView() {
   }
   renderedScale = renderScale;
 }
-function updateZoomIndicator() { document.getElementById('zoom-indicator').textContent = `${Math.round(currentScale*100)}%`; }
+function updateZoomIndicator() {
+  document.getElementById('zoom-indicator').textContent = `${Math.round(currentScale*100)}%`;
+  if (typeof updateThumbnailViewbox === 'function') updateThumbnailViewbox();
+}
 
 function zoomIn() {
   if (!pdfDoc) return;
@@ -5713,6 +5883,7 @@ function applyScalePreset(scale, allPages) {
   } else {
     pageCalibrations[currentPage] = { pixelsPerMm: pxPerMm, scale: '1:' + scale };
   }
+  defaultCalibration = { pixelsPerMm: pxPerMm, scale: '1:' + scale };
   calibrationMM = scale;
   const el = document.getElementById('calibrate-distance');
   if (el) el.value = scale;
@@ -5899,6 +6070,45 @@ function updateThumbnailHighlight() {
   const scrollArea = document.getElementById('thumb-scroll-area');
   if (!scrollArea) return;
   scrollArea.querySelectorAll('.thumbnail-item').forEach((item, i) => item.classList.toggle('current', i === currentPage));
+  updateThumbnailViewbox();
+}
+
+// Dashed box on the current page's thumbnail showing which part of the
+// sheet is actually on screen (updates on scroll / zoom / page change)
+function updateThumbnailViewbox() {
+  const scrollArea = document.getElementById('thumb-scroll-area');
+  if (!scrollArea || !showThumbnails) return;
+  // Lazily attach one viewbox div per thumbnail
+  scrollArea.querySelectorAll('.thumbnail-item').forEach((item, i) => {
+    let vb = item.querySelector('.thumb-viewbox');
+    if (!vb) {
+      vb = document.createElement('div');
+      vb.className = 'thumb-viewbox';
+      item.appendChild(vb);
+    }
+    if (i !== currentPage) { vb.style.display = 'none'; return; }
+    const wrapper = document.getElementById('canvas-wrapper');
+    const canvas = getActiveAnnotationCanvas();
+    if (!wrapper || !canvas || !canvas.clientWidth) { vb.style.display = 'none'; return; }
+    const wr = wrapper.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    // Visible slice of the page as fractions of the full page
+    const fx = Math.max(0, (wr.left - cr.left)) / cr.width;
+    const fy = Math.max(0, (wr.top - cr.top)) / cr.height;
+    const fw = (Math.min(cr.right, wr.right) - Math.max(cr.left, wr.left)) / cr.width;
+    const fh = (Math.min(cr.bottom, wr.bottom) - Math.max(cr.top, wr.top)) / cr.height;
+    if (fw <= 0 || fh <= 0 || (fw > 0.96 && fh > 0.96)) { vb.style.display = 'none'; return; }
+    // Map onto the thumbnail canvas (it may not fill the whole item box)
+    const tc = item.querySelector('.thumbnail-canvas');
+    const ir = item.getBoundingClientRect();
+    const tr = tc ? tc.getBoundingClientRect() : ir;
+    const ox = tr.left - ir.left, oy = tr.top - ir.top;
+    vb.style.left = (ox + fx * tr.width) + 'px';
+    vb.style.top = (oy + fy * tr.height) + 'px';
+    vb.style.width = (Math.min(1, fw) * tr.width) + 'px';
+    vb.style.height = (Math.min(1, fh) * tr.height) + 'px';
+    vb.style.display = 'block';
+  });
 }
 
 function toggleThumbnails() {
@@ -7151,6 +7361,7 @@ async function saveProject() {
       filename: currentFilename,
       annotations: _annotationsForSnapshot(),
       pageCalibrations: pageCalibrations,
+      defaultCalibration: defaultCalibration,
       countGroups: countGroups,
       measurements: measurements,
       takeoffItems: takeoffItems,
