@@ -298,7 +298,7 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.calibrate, #canvas-area.measure, #canvas-area.polyline, #canvas-area.area,
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
-#canvas-area.snipregion, #canvas-area.viewport { cursor: crosshair; }
+#canvas-area.snipregion, #canvas-area.viewport, #canvas-area.magicarea { cursor: crosshair; }
 #canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
 #canvas-area.cutcontent { cursor: crosshair; }
@@ -665,6 +665,7 @@ canvas { display: block; }
       <button class="tool-btn" data-tool="measure" onclick="setTool('measure')" title="Measure Length (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20L20 2"/><path d="M6.5 15.5l2-2m2.5-2.5l2-2m2.5-2.5l2-2"/></svg><span class="shortcut">M</span></button>
       <button class="tool-btn" data-tool="polyline" onclick="setTool('polyline')" title="Polyline Measure (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 9 14 13 20 5"/></svg><span class="shortcut">L</span></button>
       <button class="tool-btn" data-tool="area" onclick="setTool('area')" title="Measure Area (A)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="4 2"/></svg><span class="shortcut">A</span></button>
+      <button class="tool-btn" data-tool="magicarea" onclick="setTool('magicarea')" title="Room Fill — click inside a room to measure its area automatically (F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V4a1 1 0 011-1h3M17 3h3a1 1 0 011 1v3M21 17v3a1 1 0 01-1 1h-3M7 21H4a1 1 0 01-1-1v-3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg><span class="shortcut">F</span></button>
       <button class="tool-btn" data-tool="dimension" onclick="setTool('dimension')" title="Dimension Line (I)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="8" x2="3" y2="16"/><line x1="21" y1="8" x2="21" y2="16"/></svg><span class="shortcut">I</span></button>
       <button class="tool-btn" data-tool="count" onclick="setTool('count')" title="Count (C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="8" cy="16" r="3"/><circle cx="16" cy="16" r="3"/></svg><span class="shortcut">C</span></button>
       <div class="tool-divider"></div>
@@ -947,9 +948,69 @@ let panelUserCollapsed = false;
 // Cut Content dashed border.
 let isBakingAnnotations = false;
 
+// Typed-distance entry: after the first click of a line/measure (or while
+// tracing a polyline/area), type a length in mm and press Enter to place
+// the next point exactly that far away, in the direction of the cursor.
+let typedDistanceBuffer = '';
+function updateTypedDistanceHint() {
+  let el = document.getElementById('typed-dist-hint');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'typed-dist-hint';
+    el.style.cssText = 'position:fixed;bottom:56px;left:50%;transform:translateX(-50%);' +
+      'background:#1a1b2e;color:#e8e9f0;border:1px solid #14b8a6;padding:6px 14px;' +
+      'border-radius:6px;font:600 13px "Segoe UI",sans-serif;z-index:9999;display:none;' +
+      'box-shadow:0 4px 12px rgba(0,0,0,0.4)';
+    document.body.appendChild(el);
+  }
+  if (!typedDistanceBuffer) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.textContent = typedDistanceBuffer + ' mm — Enter places the point (Shift locks 45°), Esc cancels';
+}
+function commitTypedDistance() {
+  const mm = parseFloat(typedDistanceBuffer);
+  typedDistanceBuffer = '';
+  updateTypedDistanceHint();
+  if (!(mm > 0)) return;
+  const anchorScreen = twoClickStart || (polylinePoints.length ? polylinePoints[polylinePoints.length - 1] : null);
+  if (!anchorScreen) return;
+  const cal = _calFor(currentPage, toPage(anchorScreen));
+  if (!cal) { showToast('Calibrate the page first to type distances'); return; }
+  // Direction: from the last point toward the cursor (default: to the right)
+  let dir = { x: 1, y: 0 };
+  if (currentMovePoint) {
+    const dx = currentMovePoint.x - anchorScreen.x, dy = currentMovePoint.y - anchorScreen.y;
+    const len = Math.hypot(dx, dy);
+    if (len > 2) dir = { x: dx / len, y: dy / len };
+  }
+  if (isShiftHeld) { // lock to the nearest 45°
+    const ang = Math.round(Math.atan2(dir.y, dir.x) / (Math.PI / 4)) * (Math.PI / 4);
+    dir = { x: Math.cos(ang), y: Math.sin(ang) };
+  }
+  const distScreen = mm * cal.pixelsPerMm * currentScale;
+  const endScreen = { x: anchorScreen.x + dir.x * distScreen, y: anchorScreen.y + dir.y * distScreen };
+  if (twoClickStart) {
+    const sp = toPage(twoClickStart), ep = toPage(endScreen);
+    switch (currentTool) {
+      case 'measure': addMeasurement([sp, ep]); break;
+      case 'line': addAnnotation('line', [sp, ep]); break;
+      case 'arrow': addAnnotation('arrow', [sp, ep]); break;
+      case 'dimension': addDimension([sp, ep]); break;
+      default: return; // calibrate etc. — typed distance not applicable
+    }
+    twoClickStart = null; isDrawing = false; startPoint = null; currentMovePoint = null;
+    redrawAnnotations();
+  } else if (polylinePoints.length) {
+    polylinePoints.push(endScreen);
+    redrawAnnotations();
+  }
+}
+
 // Cancel any half-finished drawing (click-click first point, polyline in
 // progress, callout, drag-draw). Called on Escape, page change, tab switch.
 function cancelInProgressDrawing() {
+  typedDistanceBuffer = '';
+  if (typeof updateTypedDistanceHint === 'function') { try { updateTypedDistanceHint(); } catch (e) {} }
   twoClickStart = null;
   isDrawing = false;
   startPoint = null;
@@ -989,7 +1050,7 @@ const toolNames = {
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
   snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature',
-  viewport:'Viewport (region scale)'
+  viewport:'Viewport (region scale)', magicarea:'Room Fill (auto area)'
 };
 
 // ============================================================
@@ -1566,6 +1627,9 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     setTool('select');
     saveToHistory();
 
+    // Try to read the drawing scale from each sheet's title block (background)
+    setTimeout(() => { autoDetectScalesFromText().catch(e => console.warn('auto-scale scan failed:', e)); }, 400);
+
     // Register the freshly-loaded document in the tab list. The captured
     // state object holds live references to the globals so mutations
     // through the globals automatically flow into the doc entry.
@@ -2005,6 +2069,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     case 'count': drawCountAnn(ctx, ann); break;
     case 'dimension': drawDimensionAnn(ctx, ann); break;
     case 'cutcontent': drawCutContentAnn(ctx, ann); break;
+    case 'legend': drawLegendAnn(ctx, ann); break;
   }
   ctx.setLineDash([]);
 
@@ -2917,6 +2982,8 @@ function onCanvasMouseDown(e) {
     else { calloutKnees.push(screenPt); }
     redrawAnnotations(); isDrawing = false; return;
   }
+  // Room Fill — click inside a room, get its area; stays armed for the next room
+  if (currentTool === 'magicarea') { magicAreaAt(screenPt); isDrawing = false; return; }
   // Eraser stays armed so multiple markups can be deleted in a row (Escape or V to exit)
   if (currentTool === 'eraser') { eraseAnnotationAtPoint(x, y); isDrawing = false; return; }
 }
@@ -3648,6 +3715,29 @@ function onKeyDown(e) {
     return;
   }
 
+  // Typed-distance entry — while a line/measure first point is placed (or a
+  // polyline is being traced), digits build a mm value; Enter places the point.
+  const hasDraft = twoClickStart || (polylinePoints.length > 0 && ['polyline','area','polygon'].includes(currentTool));
+  if (hasDraft && !mod && !e.altKey) {
+    if (/^[0-9.]$/.test(e.key)) {
+      e.preventDefault();
+      typedDistanceBuffer += e.key;
+      updateTypedDistanceHint();
+      return;
+    }
+    if (key === 'backspace' && typedDistanceBuffer) {
+      e.preventDefault();
+      typedDistanceBuffer = typedDistanceBuffer.slice(0, -1);
+      updateTypedDistanceHint();
+      return;
+    }
+    if (key === 'enter' && typedDistanceBuffer) {
+      e.preventDefault();
+      commitTypedDistance();
+      return;
+    }
+  }
+
   // Backspace while drawing a polyline / area / polygon — remove the last
   // placed vertex instead of forcing a full restart.
   if (key === 'backspace' && polylinePoints.length > 0) {
@@ -3697,6 +3787,7 @@ function onKeyDown(e) {
   else if (key === 'e') setTool('cutcontent');
   else if (key === 'x') setTool('eraser');
   else if (key === 'i') setTool('dimension');
+  else if (key === 'f') setTool('magicarea');
 
   if ((key === 'delete' || key === 'backspace') && selectedAnnotationId) { e.preventDefault(); deleteSelectedAnnotation(); }
   else if ((e.ctrlKey||e.metaKey) && (key === '=' || key === '+')) { e.preventDefault(); zoomIn(); }
@@ -4292,6 +4383,11 @@ function hitTest(x, y, ann, tol) {
   }
   if (!ann.points || ann.points.length === 0) return false;
   switch(ann.type) {
+    case 'legend': {
+      const p = ann.points[0];
+      const w = ann._legendW || 140, h = ann._legendH || 60;
+      return x >= p.x - tol && x <= p.x + w + tol && y >= p.y - tol && y <= p.y + h + tol;
+    }
     case 'measure': case 'line': case 'arrow': case 'dimension':
       return ptNearLine(x,y, ann.points[0], ann.points[1], tol);
     case 'rectangle': case 'highlight': case 'cutcontent': case 'image': {
@@ -4662,6 +4758,56 @@ function updateTakeoffItemField(id, field, value) {
   refreshTakeoffPanel();
 }
 
+// ---- Per-shape management (Cubit-style shape list) ----
+function locateTakeoffShape(annId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  if (a.page !== currentPage) goToPage(a.page);
+  selectedAnnotationId = annId;
+  redrawAnnotations();
+}
+function toggleShapeDeduction(annId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  a.isDeduction = !a.isDeduction;
+  saveToHistory(); redrawAnnotations(); refreshTakeoffPanel(); refreshMeasurementsPanel();
+}
+function unassignTakeoffShape(annId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  delete a.takeoffItemId; delete a.isDeduction;
+  saveToHistory(); redrawAnnotations(); refreshTakeoffPanel();
+}
+function deleteTakeoffShape(annId) {
+  selectedAnnotationId = annId;
+  deleteSelectedAnnotation(); // handles history, redraw, panel refreshes
+}
+// Assign/unassign any existing measurement to a takeoff item (Properties panel dropdown)
+function assignAnnotationToItem(annId, itemId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  if (!itemId) {
+    delete a.takeoffItemId; delete a.isDeduction;
+  } else {
+    const item = getTakeoffItem(itemId);
+    if (!item) return;
+    a.takeoffItemId = itemId;
+    a.color = item.color;
+    if (a.type === 'area') a.fillColor = item.color;
+  }
+  saveToHistory(); redrawAnnotations(); refreshTakeoffPanel(); openPropertiesPanel();
+}
+// Items whose result type can accept this annotation's shape
+function compatibleTakeoffItems(ann) {
+  return takeoffItems.filter(item => {
+    const lengthLike = item.resultType === 'length' || item.resultType === 'vertical';
+    const areaLike   = item.resultType === 'area'   || item.resultType === 'volume';
+    return (lengthLike && ['measure','polyline','dimension'].includes(ann.type)) ||
+           (areaLike   && ann.type === 'area') ||
+           (item.resultType === 'count' && ann.type === 'count');
+  });
+}
+
 // Toggle the on-canvas glow for an item's shapes
 function toggleTakeoffHighlight(id) {
   highlightTakeoffItemId = (highlightTakeoffItemId === id) ? null : id;
@@ -4870,6 +5016,21 @@ function getTakeoffPanelHTML() {
                    onchange="updateTakeoffItemField('${item.id}','factor',this.value)">
           </div>` : ''}
           <button onclick="renameTakeoffItem('${item.id}')" style="font-size:10px;background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;padding:3px">Rename item</button>
+          ${(() => {
+            const itemShapes = annotations.filter(a => a.takeoffItemId === item.id);
+            if (!itemShapes.length) return '<div style="font-size:10px;color:var(--text-muted)">No shapes measured yet — draw on the plan.</div>';
+            let sh = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Shapes (${itemShapes.length}) — click to locate · ± flips deduction</div>`;
+            itemShapes.forEach(a => {
+              sh += `<div style="display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:3px;background:var(--bg-secondary, rgba(0,0,0,0.15))">
+                <span onclick="locateTakeoffShape('${a.id}')" title="Go to this shape" style="flex:1;min-width:0;font-size:10px;cursor:pointer;color:${a.isDeduction ? '#e74c3c' : 'var(--text-secondary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                  p${a.page+1} · ${escapeHtml(a.label || a.type)}</span>
+                <button onclick="toggleShapeDeduction('${a.id}')" title="${a.isDeduction ? 'Make this shape ADD again' : 'Make this shape a DEDUCTION'}" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:${a.isDeduction ? '#e74c3c' : 'var(--text-muted)'};cursor:pointer;font-size:10px;padding:0 4px">±</button>
+                <button onclick="unassignTakeoffShape('${a.id}')" title="Unlink from this item (shape stays on drawing)" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:10px;padding:0 2px">⤴</button>
+                <button onclick="deleteTakeoffShape('${a.id}')" title="Delete this shape" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px">×</button>
+              </div>`;
+            });
+            return sh;
+          })()}
         </div>`;
       }
     });
@@ -4889,9 +5050,74 @@ function getTakeoffPanelHTML() {
       <span style="color:var(--success, #4ade80);font-weight:700">${formatMoney(grandTotal)}</span></div>` : ''}
     <button onclick="exportTakeoffXLSX()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">Export to Excel (.xlsx)</button>
     <button onclick="exportTakeoffCSV()" style="width:100%;padding:7px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer">Export CSV</button>
+    <button onclick="placeTakeoffLegend()" style="width:100%;padding:7px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer" title="Stamp a live legend of items + totals onto the current page — included when you save/print/flatten">Place Legend on Page</button>
     <div style="font-size:10px;color:var(--text-muted);text-align:center">Esc stops measuring · ◎ highlights an item's shapes</div>
   </div>`;
   return html;
+}
+
+// ============================================================
+// ON-SHEET TAKEOFF LEGEND — a live annotation that draws the item
+// table (colour, name, qty) wherever it's placed. Recomputed every
+// redraw, so it stays current; bakes into saves/prints/flattens.
+// ============================================================
+function placeTakeoffLegend() {
+  if (!pdfDoc) { showToast('Open a PDF first'); return; }
+  if (!takeoffItems.length) { showToast('No takeoff items to show yet'); return; }
+  // Place near the top-left of the current view
+  const wrapper = document.getElementById('canvas-wrapper');
+  const x = (wrapper.scrollLeft + 40) / currentScale;
+  const y = (wrapper.scrollTop + 40) / currentScale;
+  const ann = { id: generateId(), type: 'legend', page: currentPage, points: [{ x, y }] };
+  annotations.push(ann);
+  selectedAnnotationId = ann.id;
+  saveToHistory(); redrawAnnotations();
+  showToast('Legend placed — drag to position; it updates live as you measure');
+}
+
+function drawLegendAnn(ctx, ann) {
+  const pad = 6, rowH = 14, fs = 9, headFs = 10;
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.font = '600 ' + headFs + 'px "Segoe UI", Arial, sans-serif';
+  // Build rows (live totals)
+  const rows = takeoffItems.map(item => {
+    const { qty } = computeTakeoffQty(item);
+    return { color: item.color, name: item.name, qty: formatTakeoffQty(item, qty) };
+  });
+  ctx.font = fs + 'px "Segoe UI", Arial, sans-serif';
+  let nameW = 60, qtyW = 30;
+  rows.forEach(r => {
+    nameW = Math.max(nameW, ctx.measureText(r.name).width);
+    qtyW = Math.max(qtyW, ctx.measureText(r.qty).width);
+  });
+  const w = pad + 12 + 4 + nameW + 10 + qtyW + pad;
+  const h = pad + rowH + rows.length * rowH + pad;
+  const x = ann.points[0].x, y = ann.points[0].y;
+  // Box
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#333333'; ctx.lineWidth = 0.75;
+  ctx.strokeRect(x, y, w, h);
+  // Title
+  ctx.fillStyle = '#111111';
+  ctx.font = '600 ' + headFs + 'px "Segoe UI", Arial, sans-serif';
+  ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.fillText('TAKEOFF LEGEND', x + pad, y + pad + rowH / 2 - 2);
+  ctx.font = fs + 'px "Segoe UI", Arial, sans-serif';
+  rows.forEach((r, i) => {
+    const ry = y + pad + rowH + i * rowH + rowH / 2 - 2;
+    ctx.fillStyle = r.color;
+    ctx.fillRect(x + pad, ry - 4, 12, 8);
+    ctx.fillStyle = '#111111';
+    ctx.fillText(r.name, x + pad + 16, ry);
+    ctx.textAlign = 'right';
+    ctx.fillText(r.qty, x + w - pad, ry);
+    ctx.textAlign = 'left';
+  });
+  // Cache rendered size for hit-testing / selection box
+  ann._legendW = w; ann._legendH = h;
+  ctx.restore();
 }
 
 function exportTakeoffCSV() {
@@ -5149,7 +5375,7 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
-  if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature') {
+  if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature' && ann.type !== 'legend') {
     html += `<div class="properties-section"><div class="properties-section-title">Appearance</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Colour:</div><input type="color" id="prop-color" class="color-picker" value="${ann.color||'#D97757'}"></div>
       <div class="color-swatches" data-target="prop-color"></div>`;
@@ -5189,6 +5415,24 @@ function getAnnotationPropertiesHTML(ann) {
       </select></div>`;
     }
     html += `</div></div>`;
+  }
+
+  // Takeoff assignment — link/unlink this shape to a takeoff item after the fact
+  if (['measure','polyline','dimension','area','count'].includes(ann.type) && takeoffItems.length) {
+    const compat = compatibleTakeoffItems(ann);
+    if (compat.length) {
+      const safeId = (ann.id || '').replace(/'/g, "\\'");
+      html += `<div class="properties-section"><div class="properties-section-title">Takeoff</div><div class="properties-section-content">
+        <div class="property-row"><div class="property-label">Item:</div>
+          <select class="select-input" onchange="assignAnnotationToItem('${safeId}', this.value)">
+            <option value="">(not assigned)</option>
+            ${compat.map(it => `<option value="${it.id}" ${ann.takeoffItemId === it.id ? 'selected' : ''}>${escapeHtml(it.name)}</option>`).join('')}
+          </select></div>
+        ${ann.takeoffItemId ? `<div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+          <input type="checkbox" onchange="toggleShapeDeduction('${safeId}')" ${ann.isDeduction ? 'checked' : ''}>
+          Deduction (subtracts from item)</label></div>` : ''}
+      </div></div>`;
+    }
   }
 
   // Measurement info
@@ -5610,7 +5854,7 @@ function selectStamp(s) {
 function _annotationsForSnapshot() {
   return annotations.map(a => {
     const c = Object.assign({}, a);
-    delete c._labelRect; delete c._perimRect;
+    delete c._labelRect; delete c._perimRect; delete c._legendW; delete c._legendH;
     return c;
   });
 }
@@ -5857,6 +6101,204 @@ async function zoomFit() {
 // ============================================================
 // CALIBRATION
 // ============================================================
+// ============================================================
+// ROOM FILL (Dynamic-Fill style) — click inside a room, flood-fill the
+// light pixels of the rendered drawing out to the dark linework, trace
+// the boundary, simplify it, and create a normal area measurement.
+// ============================================================
+const MAGIC_AREA_MAX_PIXELS = 6000000;   // bail-out for unenclosed regions
+const MAGIC_AREA_DARK_LUM = 120;         // pixels darker than this are walls/lines
+
+function magicAreaAt(screenPt) {
+  try {
+    // Locate the rendered PDF canvas + page→canvas-pixel factor (same as line snap)
+    let pdfCanvas, annCanvas;
+    if (pageViewMode === 'single') {
+      pdfCanvas = document.getElementById('pdf-canvas');
+      annCanvas = document.getElementById('annotation-canvas');
+    } else {
+      annCanvas = getActiveAnnotationCanvas();
+      const pageDiv = annCanvas && annCanvas.parentElement;
+      pdfCanvas = pageDiv && pageDiv.querySelector('canvas');
+    }
+    if (!pdfCanvas || !annCanvas || !pdfCanvas.width || pdfCanvas === annCanvas) { showToast('Page not ready — try again'); return; }
+    const factor = pdfCanvas.width / (annCanvas.width / currentScale);
+    if (!isFinite(factor) || factor <= 0) return;
+    const pagePt = toPage(screenPt);
+    const W = pdfCanvas.width, H = pdfCanvas.height;
+    const sx = Math.round(pagePt.x * factor), sy = Math.round(pagePt.y * factor);
+    if (sx < 1 || sy < 1 || sx >= W - 1 || sy >= H - 1) return;
+
+    const data = pdfCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
+    const isOpen = (idx) => {
+      const o = idx * 4;
+      if (data[o + 3] < 100) return true; // transparent = open
+      return (0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]) >= MAGIC_AREA_DARK_LUM;
+    };
+    const startIdx = sy * W + sx;
+    if (!isOpen(startIdx)) { showToast('That\'s on a line — click in the open space inside the room'); return; }
+
+    // Flood fill (4-connected, explicit stack)
+    const filled = new Uint8Array(W * H);
+    let stack = [startIdx];
+    filled[startIdx] = 1;
+    let count = 0;
+    let topIdx = startIdx; // topmost-then-leftmost filled pixel (boundary trace start)
+    while (stack.length) {
+      const idx = stack.pop();
+      count++;
+      if (count > MAGIC_AREA_MAX_PIXELS) {
+        showToast('Room isn\'t fully enclosed (or is huge) — close the gap or trace it with the Area tool');
+        return;
+      }
+      if (idx < topIdx) topIdx = idx;
+      const x = idx % W;
+      // 4-neighbours
+      if (x > 0)      { const n = idx - 1; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
+      if (x < W - 1)  { const n = idx + 1; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
+      if (idx >= W)         { const n = idx - W; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
+      if (idx < W * (H - 1)) { const n = idx + W; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
+    }
+    if (count < 50) { showToast('Region too small — zoom in and try again'); return; }
+
+    // Trace the outer boundary (Moore neighbourhood, clockwise)
+    const contour = _traceBoundary(filled, W, H, topIdx % W, (topIdx / W) | 0);
+    if (!contour || contour.length < 8) { showToast('Couldn\'t trace the room outline — try the Area tool'); return; }
+
+    // Simplify, convert to page coords, create a standard area measurement
+    const eps = Math.max(1.25, factor * 0.75); // ~0.75 page-pt tolerance
+    const simple = _simplifyPath(contour, eps);
+    if (simple.length < 3) return;
+    const pagePts = simple.map(p => ({ x: p.x / factor, y: p.y / factor }));
+    const ann = {
+      id: generateId(), type: 'area', page: currentPage, points: pagePts,
+      label: '', perimLabel: '', measLabel: '',
+      color: toolProperties.color, fillColor: toolProperties.fillColor,
+      fillOpacity: toolProperties.fillOpacity, thickness: toolProperties.thickness,
+      opacity: toolProperties.opacity, hatch: 'none'
+    };
+    annotations.push(ann);
+    takeoffTagAnnotation(ann);
+    const aPx = getPolygonArea(pagePts);
+    const aLabel = getCalibratedArea(aPx, currentPage, getCentroid(pagePts));
+    measurements.push({ id: ann.id, page: currentPage, type: 'area', label: '', value: aLabel });
+    selectedAnnotationId = ann.id;
+    saveToHistory();
+    redrawAnnotations();
+    refreshMeasurementsPanel();
+    showToast('Room measured: ' + aLabel);
+  } catch (e) {
+    console.warn('Room fill failed:', e);
+    showToast('Room fill failed here — trace it with the Area tool instead');
+  }
+}
+
+// Moore-neighbour boundary tracing (clockwise) over a filled mask.
+function _traceBoundary(filled, W, H, startX, startY) {
+  const at = (x, y) => (x >= 0 && y >= 0 && x < W && y < H && filled[y * W + x] === 1);
+  // 8 directions clockwise starting East
+  const DX = [1, 1, 0, -1, -1, -1, 0, 1];
+  const DY = [0, 1, 1, 1, 0, -1, -1, -1];
+  const pts = [];
+  let cx = startX, cy = startY;
+  let dir = 6; // came from above (start pixel is topmost) — begin searching up-ish
+  const maxSteps = 4 * (W + H) + 200000;
+  for (let step = 0; step < maxSteps; step++) {
+    pts.push({ x: cx, y: cy });
+    // Search clockwise from (dir+6)%8 — the cell to the "left rear" of travel
+    let found = -1;
+    for (let k = 0; k < 8; k++) {
+      const d = (dir + 6 + k) % 8;
+      if (at(cx + DX[d], cy + DY[d])) { found = d; break; }
+    }
+    if (found < 0) break; // isolated pixel
+    cx += DX[found]; cy += DY[found]; dir = found;
+    if (cx === startX && cy === startY && pts.length > 2) break; // closed the loop
+  }
+  return pts;
+}
+
+// Douglas-Peucker simplification (iterative, stack-based)
+function _simplifyPath(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    if (b <= a + 1) continue;
+    const A = pts[a], B = pts[b];
+    const dx = B.x - A.x, dy = B.y - A.y;
+    const len = Math.hypot(dx, dy) || 1;
+    let maxD = -1, maxI = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs(dy * pts[i].x - dx * pts[i].y + B.x * A.y - B.y * A.x) / len;
+      if (d > maxD) { maxD = d; maxI = i; }
+    }
+    if (maxD > eps) { keep[maxI] = 1; stack.push([a, maxI], [maxI, b]); }
+  }
+  const out = [];
+  for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
+  return out;
+}
+
+// ============================================================
+// AUTO-CALIBRATION FROM TITLE BLOCK
+// Scans each page's text for a scale note ("SCALE 1:100", "1:100 @ A1")
+// and calibrates uncalibrated pages automatically on open.
+// ============================================================
+async function autoDetectScalesFromText() {
+  if (!pdfDoc) return;
+  // Don't fight the user or a restored project — only run on a totally
+  // uncalibrated document.
+  if (Object.keys(pageCalibrations).length > 0) return;
+  const myDoc = pdfDoc;
+  const calObj = pageCalibrations;   // capture refs so a tab switch mid-scan can't cross-write
+  const common = new Set([1,2,5,10,20,25,50,75,100,125,150,200,250,400,500,750,1000,1250]);
+  let applied = 0;
+  const counts = {};
+  for (let p = 0; p < myDoc.numPages; p++) {
+    if (pdfDoc !== myDoc && p > 0) { /* doc switched — keep scanning quietly into calObj */ }
+    try {
+      const page = await myDoc.getPage(p + 1);
+      const tc = await page.getTextContent();
+      const text = tc.items.map(it => it.str).join(' ');
+      let n = null;
+      // Prefer an explicit "SCALE 1:N"
+      const mScale = text.match(/scale[^0-9a-z]{0,24}1\s*[:=]\s*(\d{1,4})/i);
+      if (mScale) n = parseInt(mScale[1]);
+      if (!n) {
+        // Otherwise the most frequent common "1:N" on the page
+        const all = [...text.matchAll(/\b1\s*:\s*(\d{1,4})\b/g)]
+          .map(m => parseInt(m[1])).filter(v => common.has(v));
+        if (all.length) {
+          const freq = {};
+          all.forEach(v => freq[v] = (freq[v] || 0) + 1);
+          n = parseInt(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]);
+        }
+      }
+      if (n && n > 0 && n <= 2000 && !calObj[p]) {
+        calObj[p] = { pixelsPerMm: (72 / 25.4) / n, scale: '1:' + n, auto: true };
+        counts['1:' + n] = (counts['1:' + n] || 0) + 1;
+        applied++;
+      }
+    } catch (e) { /* page without text or parse issue — skip */ }
+    if (p % 8 === 7) await new Promise(r => setTimeout(r, 0)); // yield to UI
+  }
+  if (applied > 0 && pdfDoc === myDoc) {
+    if (!defaultCalibration) {
+      const k = Object.keys(calObj)[0];
+      if (k !== undefined) defaultCalibration = { pixelsPerMm: calObj[k].pixelsPerMm, scale: calObj[k].scale };
+    }
+    updateCalibrationIndicator();
+    rebuildMeasurements();
+    redrawAnnotations();
+    if (panelMode !== 'properties') openPropertiesPanel();
+    const summary = Object.entries(counts).map(([s, c]) => s + ' ×' + c).join(', ');
+    showToast('Auto-calibrated ' + applied + ' page' + (applied > 1 ? 's' : '') + ' from the title block (' + summary + ') — spot-check with the Calibrate tool');
+  }
+}
+
 function guessScale(pixelDist, mmDist) {
   // Page space is PDF points: 72 pt/inch = 72/25.4 ≈ 2.835 px per paper-mm.
   // At scale 1:S, 1 paper-mm represents S real-mm, so S = mmDist / (pixelDist / (72/25.4)).

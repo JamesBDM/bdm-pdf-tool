@@ -326,5 +326,23 @@ while ((m = re.exec(h))) {
 - **Compressed saves:** clean source is deflate-compressed (CompressionStream) before hex-embedding — flag `BDMCleanCompressed`; loader inflates when flagged, old uncompressed files unaffected. Embed cap raised 25MB → 60MB.
 - **Viewports:** calibrate panel → "Draw Viewport" — drag a region, give it its own scale (e.g. 1:20 detail on a 1:100 sheet). All measurement labels and takeoff quantities are viewport-aware via `_calFor(page, point)` (anchor point: midpoint for lines, first vertex for polylines, centroid for areas). Teal dashed outline + scale tag; manage/delete in calibrate panel; persisted in saves/tabs/history.
 
+### v2.2 — James's feedback round (10 Jun 2026)
+- **Snap to drawing lines** — new "Snap Lines" topbar toggle (separate from markup snap, persisted in localStorage). Raster-based: samples the rendered PDF canvas around the cursor and snaps to the nearest dark ink pixel within ~8 screen px (`snapPageToContent`). Circle indicator = content snap; square/diamond = markup snap.
+- Defaults: line thickness 2→1; measurement label font 11→8; takeoff new-item type defaults to Area (m²); polyline vertex dots now constant ~4 screen px (were zoom-scaled).
+- Callout: default black text in solid white box + filled arrowhead at the anchor.
+- Area measurements: perimeter label now opt-in per annotation (Properties → Label → "Show perimeter").
+- Tick tool stays armed after each placement (like eraser).
+- Custom stamps: "+ CUSTOM" tile in the stamp grid (prompt for text, stored in localStorage `bdm-custom-stamps`, × to remove).
+- Thumbnails: dashed view-box on the current page's thumbnail showing the visible region; updates on scroll/zoom/page change (`updateThumbnailViewbox`).
+- No more px labels once calibrated: `defaultCalibration` (most recent calibration) is the fallback for uncalibrated pages; per-page calibration and viewports still win.
+- Takeoff: Markup % per item (amount = qty × rate × (1+markup%)), shown in panel amounts and both exports.
+
+### v2.3 — measurement & takeoff upgrades (10 Jun 2026)
+- **Room Fill (Dynamic-Fill style)** — new toolbar tool (F): click inside a room → flood-fills the rendered raster to the dark linework, Moore-traces the boundary, Douglas-Peucker simplifies, creates a normal editable area annotation (auto-tags to the active takeoff item). Bails politely if the room isn't enclosed (`MAGIC_AREA_MAX_PIXELS`). Functions: `magicAreaAt`, `_traceBoundary`, `_simplifyPath`.
+- **Auto-calibration from title block** — on opening an uncalibrated PDF, scans each page's text for "SCALE 1:N" (or most frequent common "1:N"), calibrates those pages (`auto: true` flag), toasts a summary. `autoDetectScalesFromText`, runs 400ms after load.
+- **Type-a-distance** — after the first click of measure/line/arrow/dimension (or mid-polyline/area), type a length in mm + Enter: places the point exactly that far along the cursor direction (Shift = nearest 45°). Floating hint shows the buffer; Backspace edits; Esc cancels. `typedDistanceBuffer`, `commitTypedDistance`.
+- **Takeoff shape lists** — the active item's editor lists every measured shape (page + value): click to locate, ± flips deduction, ⤴ unlinks, × deletes. Any existing measurement can also be assigned to an item from its Properties panel ("Takeoff" section dropdown + deduction checkbox). `assignAnnotationToItem`, `compatibleTakeoffItems`.
+- **On-sheet legend** — "Place Legend on Page" (takeoff panel) drops a live white table annotation (item colour / name / qty) that recomputes on every redraw and bakes into saves/prints/flattens. Draggable; new annotation type 'legend' (`drawLegendAnn`, hit-test via cached `_legendW/_legendH`).
+
 ### Lesson learned (tooling)
 - The OneDrive-synced project folder can serve a **stale/truncated copy to the sandbox shell** while the real file (via Read/Write tools) is fine — verify against the real file, and beware `sed -i` on the mount. A mid-edit OneDrive lock once truncated the file tail (EBUSY); if a file ever ends mid-line, the missing tail can be restored from v1 since the last ~400 lines are unchanged between versions.
