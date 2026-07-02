@@ -52,10 +52,17 @@ input, select, textarea { font: inherit; color: inherit; }
 
 /* TOP BAR */
 #topbar {
-  display: flex; align-items: center; height: 40px; min-height: 40px;
+  display: flex; align-items: center; min-height: 40px;
+  /* Wraps onto a second row instead of hiding buttons behind a sideways
+     scroll when the window is narrow or many tools are shown. */
+  flex-wrap: wrap; height: auto; row-gap: 0;
   background: var(--bg-secondary); border-bottom: 1px solid var(--border-color);
-  padding: 0 12px; gap: 6px; z-index: 100; overflow-x: auto;
+  padding: 2px 12px; gap: 6px; z-index: 100;
 }
+/* Compact mode — icon-only buttons (labels collapse via font-size:0; the
+   SVG keeps its own size). Tooltips still name every button on hover. */
+#topbar.compact .topbar-btn { font-size: 0; gap: 0; padding: 5px 7px; }
+#topbar.compact .logo span { display: none; }
 #topbar .logo { font-weight: 700; font-size: 14px; color: var(--accent); letter-spacing: 0.5px; white-space: nowrap; }
 #topbar .logo span { color: var(--text-secondary); font-weight: 400; font-size: 12px; margin-left: 6px; }
 #topbar .separator { width: 1px; height: 20px; background: var(--border-color); margin: 0 2px; flex-shrink:0; }
@@ -89,6 +96,29 @@ input, select, textarea { font: inherit; color: inherit; }
   color: var(--text-muted); font-weight: 600;
 }
 .tool-divider { width: 28px; height: 1px; background: var(--border-color); margin: 3px 0; }
+
+/* Tool groups — Measure / Shapes / Markup / Edit. Each group has a coloured
+   stripe + tinted background so they read as distinct blocks, and the label
+   is clickable to collapse the group (state remembered per machine). */
+.tool-group { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 1px 0 4px; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
+.tool-group-label {
+  width: 100%; text-align: center; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
+  color: var(--text-muted); cursor: pointer; user-select: none; padding: 4px 0 2px;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+}
+.tool-group-label:hover { filter: brightness(1.35); }
+.tool-group-label .tg-chevron { font-size: 8px; transition: transform .15s; }
+.tool-group.collapsed .tool-group-body { display: none; }
+.tool-group.collapsed .tg-chevron { transform: rotate(-90deg); }
+.tool-group-body { display: flex; flex-direction: column; gap: 2px; align-items: center; width: 100%; }
+.tool-group[data-group="measure"] { border-left-color: #2dd4bf; background: rgba(45,212,191,0.08); }
+.tool-group[data-group="measure"] .tool-group-label { color: #5eead4; }
+.tool-group[data-group="shapes"] { border-left-color: #e8875f; background: rgba(232,135,95,0.08); }
+.tool-group[data-group="shapes"] .tool-group-label { color: #f4a988; }
+.tool-group[data-group="markup"] { border-left-color: #a78bfa; background: rgba(167,139,250,0.08); }
+.tool-group[data-group="markup"] .tool-group-label { color: #c4b5fd; }
+.tool-group[data-group="edit"] { border-left-color: #f87171; background: rgba(248,113,113,0.08); }
+.tool-group[data-group="edit"] .tool-group-label { color: #fca5a5; }
 
 /* THUMBNAIL STRIP */
 .thumbnail-strip {
@@ -295,7 +325,7 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.pan.active { cursor: grabbing; }
 /* Cut Content / eraser get a crosshair+pointer rather than the hostile not-allowed */
 #canvas-area.eraser { cursor: pointer; }
-#canvas-area.calibrate, #canvas-area.measure, #canvas-area.polyline, #canvas-area.area,
+#canvas-area.calibrate, #canvas-area.measure, #canvas-area.polyline, #canvas-area.polyshape, #canvas-area.area,
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
 #canvas-area.snipregion, #canvas-area.viewport, #canvas-area.magicarea { cursor: crosshair; }
@@ -330,12 +360,31 @@ input, select, textarea { font: inherit; color: inherit; }
 
 #canvas-wrapper { flex: 1; overflow: auto; position: relative; scrollbar-width: auto; text-align: center; }
 #canvas-container { position: relative; display: inline-block; text-align: left; }
+
+/* Split view — second pane showing another open document (or another page
+   of the same one) side by side with the editor. View/pan/zoom only; all
+   markup editing happens in the main pane. */
+#canvas-split-row { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+#split-divider { display: none; flex: 0 0 5px; cursor: col-resize; background: var(--border-color); }
+#split-divider.visible { display: block; }
+#split-divider:hover { background: var(--accent); }
+#split-pane { display: none; flex: 0 0 45%; flex-direction: column; min-width: 0; overflow: hidden; background: var(--bg-tertiary); border-left: 1px solid var(--border-color); }
+#split-pane.visible { display: flex; }
+#split-header { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); flex-shrink: 0; }
+#split-header .topbar-btn { padding: 3px 7px; }
+#split-wrapper { flex: 1; overflow: auto; text-align: center; }
+#split-wrapper.panning { cursor: grabbing; }
+#split-container { position: relative; display: inline-block; }
+#split-ann-canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
 canvas { display: block; }
 #pdf-canvas { position: relative; z-index: 1; background: white; }
 #annotation-canvas { position: absolute; top: 0; left: 0; z-index: 2; background: transparent; pointer-events: auto; }
 
 #drop-zone {
-  height: 100%; display: flex; flex-direction: column;
+  /* Overlays the whole canvas area (including the split-view row added
+     behind it) so the empty state always fills and centres correctly. */
+  position: absolute; inset: 0; z-index: 5; background: var(--bg-tertiary);
+  display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 20px; color: var(--text-secondary); cursor: pointer;
 }
 .drop-icon { color: var(--accent); opacity: 0.5; }
@@ -433,10 +482,11 @@ canvas { display: block; }
 
 /* Print styles */
 @media print {
-  #topbar, #toolbar, #panel, #statusbar, .thumbnail-strip, #calibration-banner, #merge-drop-overlay, #drop-zone { display: none !important; }
+  #topbar, #toolbar, #panel, #statusbar, .thumbnail-strip, #calibration-banner, #merge-drop-overlay, #drop-zone, #split-pane, #split-divider { display: none !important; }
   #main { display: block !important; }
   #canvas-area { overflow: visible !important; }
   #canvas-wrapper { overflow: visible !important; }
+  #canvas-split-row { display: block !important; overflow: visible !important; }
   body { background: white !important; }
 }
 
@@ -619,8 +669,22 @@ canvas { display: block; }
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
           100% (Ctrl+0)
         </div>
+        <div class="thumb-ctx-sep"></div>
+        <div class="thumb-ctx-label">Two documents</div>
+        <div class="thumb-ctx-item" onclick="hideViewMenu(); toggleSplitView()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          Split View (side by side)
+        </div>
+        <div class="thumb-ctx-item" onclick="hideViewMenu(); openPopoutWindow()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          New Window (second screen)
+        </div>
       </div>
     </div>
+    <button class="topbar-btn" onclick="toggleSplitView()" title="Split view — show a second document (or another page of this one) beside the editor">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      Split
+    </button>
     <div class="separator"></div>
     <button class="topbar-btn" onclick="setTool('snipregion')" title="Snip a region — drag a rectangle on the page to capture it as an image. (You can also press Ctrl+V to paste a screenshot from the clipboard.)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l3-3 3 3"/><path d="M8 1v8"/><rect x="3" y="9" width="18" height="13" rx="2"/><line x1="3" y1="14" x2="21" y2="14"/></svg>
@@ -648,6 +712,13 @@ canvas { display: block; }
       Presets
     </button>
     <div class="topbar-spacer"></div>
+    <button class="topbar-btn" id="btn-panel" onclick="togglePanelVisible()" title="Show / hide the right panel (Properties · Takeoff · Measurements) — F4">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>
+      Panel
+    </button>
+    <button class="topbar-btn" id="btn-compact" onclick="toggleTopbarCompact()" title="Compact toolbar — icons only (hover any button for its name)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+    </button>
     <div id="filename"></div>
   </div>
 
@@ -661,32 +732,49 @@ canvas { display: block; }
       <button class="tool-btn" data-tool="select" onclick="setTool('select')" title="Select (V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg><span class="shortcut">V</span></button>
       <button class="tool-btn" data-tool="pan" onclick="setTool('pan')" title="Pan (hold Space)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 00-4 0v5m0 0V4a2 2 0 00-4 0v7m0 0V6a2 2 0 00-4 0v7m12-1v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3"/></svg><span class="shortcut">Spc</span></button>
       <div class="tool-divider"></div>
-      <button class="tool-btn" data-tool="calibrate" onclick="setTool('calibrate')" title="Calibrate (K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 12h18"/><path d="M12 3v18"/></svg><span class="shortcut">K</span></button>
-      <button class="tool-btn" data-tool="measure" onclick="setTool('measure')" title="Measure Length (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20L20 2"/><path d="M6.5 15.5l2-2m2.5-2.5l2-2m2.5-2.5l2-2"/></svg><span class="shortcut">M</span></button>
-      <button class="tool-btn" data-tool="polyline" onclick="setTool('polyline')" title="Polyline Measure (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 9 14 13 20 5"/></svg><span class="shortcut">L</span></button>
-      <button class="tool-btn" data-tool="area" onclick="setTool('area')" title="Measure Area (A)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="4 2"/></svg><span class="shortcut">A</span></button>
-      <button class="tool-btn" data-tool="magicarea" onclick="setTool('magicarea')" title="Room Fill — click inside a room to measure its area automatically (F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V4a1 1 0 011-1h3M17 3h3a1 1 0 011 1v3M21 17v3a1 1 0 01-1 1h-3M7 21H4a1 1 0 01-1-1v-3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg><span class="shortcut">F</span></button>
-      <button class="tool-btn" data-tool="dimension" onclick="setTool('dimension')" title="Dimension Line (I)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="8" x2="3" y2="16"/><line x1="21" y1="8" x2="21" y2="16"/></svg><span class="shortcut">I</span></button>
-      <button class="tool-btn" data-tool="count" onclick="setTool('count')" title="Count (C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="8" cy="16" r="3"/><circle cx="16" cy="16" r="3"/></svg><span class="shortcut">C</span></button>
-      <div class="tool-divider"></div>
-      <button class="tool-btn" data-tool="line" onclick="setTool('line')" title="Line (N)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/></svg><span class="shortcut">N</span></button>
-      <button class="tool-btn" data-tool="arrow" onclick="setTool('arrow')" title="Arrow (W)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="10,5 19,5 19,14"/></svg><span class="shortcut">W</span></button>
-      <button class="tool-btn" data-tool="rectangle" onclick="setTool('rectangle')" title="Rectangle (R)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/></svg><span class="shortcut">R</span></button>
-      <button class="tool-btn" data-tool="ellipse" onclick="setTool('ellipse')" title="Ellipse (O)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg><span class="shortcut">O</span></button>
-      <button class="tool-btn" data-tool="polygon" onclick="setTool('polygon')" title="Polygon (Q)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 22,7 20,17 4,17 2,7"/></svg><span class="shortcut">Q</span></button>
-      <button class="tool-btn" data-tool="cloud" onclick="setTool('cloud')" title="Revision Cloud (D)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg><span class="shortcut">D</span></button>
-      <div class="tool-divider"></div>
-      <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
-      <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
-      <button class="tool-btn" data-tool="stamp" onclick="setTool('stamp')" title="Stamp (S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 10h8M8 14h8"/></svg><span class="shortcut">S</span></button>
-      <button class="tool-btn" data-tool="tick" onclick="setTool('tick')" title="Tick / Check Mark (J)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,13 10,18 20,6"/></svg><span class="shortcut">J</span></button>
-      <button class="tool-btn" data-tool="signature" onclick="setTool('signature')" title="Signature Stamp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-1 3-3 6-3s4 4 7 2 4-5 5-7"/><path d="M3 21h18"/></svg></button>
-      <div class="tool-divider"></div>
-      <button class="tool-btn" data-tool="pen" onclick="setTool('pen')" title="Pen (P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="shortcut">P</span></button>
-      <button class="tool-btn" data-tool="highlight" onclick="setTool('highlight')" title="Highlight (G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="1" fill="rgba(251,191,36,0.3)"/></svg><span class="shortcut">G</span></button>
-      <div class="tool-divider"></div>
-      <button class="tool-btn" data-tool="cutcontent" onclick="setTool('cutcontent')" title="Cut Content (E)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg><span class="shortcut">E</span></button>
-      <button class="tool-btn" data-tool="eraser" onclick="setTool('eraser')" title="Delete Annotation (X)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 5H9l-7 7 7 7h11a2 2 0 002-2V7a2 2 0 00-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg><span class="shortcut">X</span></button>
+      <div class="tool-group" data-group="measure">
+        <div class="tool-group-label" onclick="toggleToolGroup('measure')" title="Measuring tools — click to collapse/expand">MEASURE <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-body">
+          <button class="tool-btn" data-tool="calibrate" onclick="setTool('calibrate')" title="Calibrate (K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 12h18"/><path d="M12 3v18"/></svg><span class="shortcut">K</span></button>
+          <button class="tool-btn" data-tool="measure" onclick="setTool('measure')" title="Measure Length (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20L20 2"/><path d="M6.5 15.5l2-2m2.5-2.5l2-2m2.5-2.5l2-2"/></svg><span class="shortcut">M</span></button>
+          <button class="tool-btn" data-tool="polyline" onclick="setTool('polyline')" title="Polyline Measure (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 9 14 13 20 5"/></svg><span class="shortcut">L</span></button>
+          <button class="tool-btn" data-tool="area" onclick="setTool('area')" title="Measure Area (A)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="4 2"/></svg><span class="shortcut">A</span></button>
+          <button class="tool-btn" data-tool="magicarea" onclick="setTool('magicarea')" title="Room Fill — click inside a room to measure its area automatically (F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V4a1 1 0 011-1h3M17 3h3a1 1 0 011 1v3M21 17v3a1 1 0 01-1 1h-3M7 21H4a1 1 0 01-1-1v-3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg><span class="shortcut">F</span></button>
+          <button class="tool-btn" data-tool="dimension" onclick="setTool('dimension')" title="Dimension Line (I)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="8" x2="3" y2="16"/><line x1="21" y1="8" x2="21" y2="16"/></svg><span class="shortcut">I</span></button>
+          <button class="tool-btn" data-tool="count" onclick="setTool('count')" title="Count (C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="8" cy="16" r="3"/><circle cx="16" cy="16" r="3"/></svg><span class="shortcut">C</span></button>
+        </div>
+      </div>
+      <div class="tool-group" data-group="shapes">
+        <div class="tool-group-label" onclick="toggleToolGroup('shapes')" title="Shape tools — click to collapse/expand">SHAPES <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-body">
+          <button class="tool-btn" data-tool="line" onclick="setTool('line')" title="Line (N)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/></svg><span class="shortcut">N</span></button>
+          <button class="tool-btn" data-tool="arrow" onclick="setTool('arrow')" title="Arrow (W)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="10,5 19,5 19,14"/></svg><span class="shortcut">W</span></button>
+          <button class="tool-btn" data-tool="polyshape" onclick="setTool('polyshape')" title="Polyline shape — connected lines, no measurement label. Click points, double-click / Enter to finish (Y)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 9 14 13 20 5"/><circle cx="4" cy="17" r="1.6" fill="currentColor" stroke="none"/><circle cx="8" cy="9" r="1.6" fill="currentColor" stroke="none"/><circle cx="14" cy="13" r="1.6" fill="currentColor" stroke="none"/><circle cx="20" cy="5" r="1.6" fill="currentColor" stroke="none"/></svg><span class="shortcut">Y</span></button>
+          <button class="tool-btn" data-tool="rectangle" onclick="setTool('rectangle')" title="Rectangle (R)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/></svg><span class="shortcut">R</span></button>
+          <button class="tool-btn" data-tool="ellipse" onclick="setTool('ellipse')" title="Ellipse (O)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg><span class="shortcut">O</span></button>
+          <button class="tool-btn" data-tool="polygon" onclick="setTool('polygon')" title="Polygon (Q)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 22,7 20,17 4,17 2,7"/></svg><span class="shortcut">Q</span></button>
+          <button class="tool-btn" data-tool="cloud" onclick="setTool('cloud')" title="Revision Cloud (D)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg><span class="shortcut">D</span></button>
+        </div>
+      </div>
+      <div class="tool-group" data-group="markup">
+        <div class="tool-group-label" onclick="toggleToolGroup('markup')" title="Markup tools — click to collapse/expand">MARKUP <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-body">
+          <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
+          <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
+          <button class="tool-btn" data-tool="stamp" onclick="setTool('stamp')" title="Stamp (S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 10h8M8 14h8"/></svg><span class="shortcut">S</span></button>
+          <button class="tool-btn" data-tool="tick" onclick="setTool('tick')" title="Tick / Check Mark (J)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,13 10,18 20,6"/></svg><span class="shortcut">J</span></button>
+          <button class="tool-btn" data-tool="signature" onclick="setTool('signature')" title="Signature Stamp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-1 3-3 6-3s4 4 7 2 4-5 5-7"/><path d="M3 21h18"/></svg></button>
+          <button class="tool-btn" data-tool="pen" onclick="setTool('pen')" title="Pen (P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="shortcut">P</span></button>
+          <button class="tool-btn" data-tool="highlight" onclick="setTool('highlight')" title="Highlight (G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="1" fill="rgba(251,191,36,0.3)"/></svg><span class="shortcut">G</span></button>
+        </div>
+      </div>
+      <div class="tool-group" data-group="edit">
+        <div class="tool-group-label" onclick="toggleToolGroup('edit')" title="Editing tools — click to collapse/expand">EDIT <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-body">
+          <button class="tool-btn" data-tool="cutcontent" onclick="setTool('cutcontent')" title="Cut Content (E)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg><span class="shortcut">E</span></button>
+          <button class="tool-btn" data-tool="eraser" onclick="setTool('eraser')" title="Delete Annotation (X)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 5H9l-7 7 7 7h11a2 2 0 002-2V7a2 2 0 00-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg><span class="shortcut">X</span></button>
+        </div>
+      </div>
       <div style="flex:1"></div>
       <button class="tool-btn" onclick="toggleThumbnails()" title="Toggle Thumbnails"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
     </div>
@@ -714,10 +802,32 @@ canvas { display: block; }
         <div class="drop-sub">Drag and drop a PDF file here, or click to browse</div>
         <button class="drop-btn" onclick="openFile()">Browse Files</button>
       </div>
-      <div id="canvas-wrapper" style="display:none;">
-        <div id="canvas-container">
-          <canvas id="pdf-canvas"></canvas>
-          <canvas id="annotation-canvas"></canvas>
+      <div id="canvas-split-row">
+        <div id="canvas-wrapper" style="display:none;">
+          <div id="canvas-container">
+            <canvas id="pdf-canvas"></canvas>
+            <canvas id="annotation-canvas"></canvas>
+          </div>
+        </div>
+        <div id="split-divider"></div>
+        <div id="split-pane">
+          <div id="split-header">
+            <select id="split-doc-select" class="select-input" style="flex:1;min-width:60px" onchange="splitSelectDoc(this.value)" title="Which open document this pane shows"></select>
+            <button class="topbar-btn" onclick="splitPrevPage()" title="Previous page">&#8249;</button>
+            <span id="split-page-indicator" style="font-size:11px;color:var(--text-secondary);white-space:nowrap">&ndash;</span>
+            <button class="topbar-btn" onclick="splitNextPage()" title="Next page">&#8250;</button>
+            <button class="topbar-btn" onclick="splitZoom(0.8)" title="Zoom out">&minus;</button>
+            <button class="topbar-btn" onclick="splitZoom(1.25)" title="Zoom in">+</button>
+            <button class="topbar-btn" onclick="splitFitWidth()" title="Fit page width">Fit</button>
+            <button class="topbar-btn" onclick="splitSwapDocs()" title="Swap sides — edit this document, view the other">&#8646;</button>
+            <button class="modal-close" onclick="toggleSplitView(false)" title="Close split view">&times;</button>
+          </div>
+          <div id="split-wrapper">
+            <div id="split-container">
+              <canvas id="split-pdf-canvas"></canvas>
+              <canvas id="split-ann-canvas"></canvas>
+            </div>
+          </div>
         </div>
       </div>
       <div id="merge-drop-overlay">
@@ -854,6 +964,12 @@ let areaDragShiftHeld = false; // updated on mousemove so the preview can lock t
 const AREA_DRAG_THRESHOLD = 5; // screen-px distance that counts as a drag
 let resizeAnnotation = null;
 let resizeHandleIndex = -1;
+// Rotation-handle drag state (see SHAPE ROTATION section)
+let rotateAnnotation = null;
+let rotateCenter = null;
+let rotateStartAngle = 0;   // cursor angle at grab time (degrees)
+let rotateOrigRotation = 0; // ann.rotation at grab time (ROT_PROP_TYPES)
+let rotateOrigPoints = null; // deep copy of points at grab time (ROT_POINT_TYPES)
 let measurements = [];
 // Which view the right-hand panel is showing: 'properties' (default — tool /
 // annotation / file properties) or 'measurements' (running tally of every
@@ -927,7 +1043,9 @@ let defaultCalibration = null;
 // Cubit estimate line. resultType: 'length' | 'area' | 'count'.
 // Shapes link back via annotation.takeoffItemId; annotation.isDeduction
 // subtracts from the total (openings/voids).
-let takeoffItems = [];           // [{id, name, resultType, color, trade, rate, factor}]
+let takeoffItems = [];           // [{id, name, resultType, color, trade, rate, factor, rateComponents?, subItems?}]
+let takeoffZones = [];           // [{id, name}] — Level 1 / Unit A / Stage 2 subtotal groupings
+let activeTakeoffZoneId = null;  // zone tagged onto newly measured shapes (ann.zoneId)
 let activeTakeoffItemId = null;  // item currently being measured against
 let takeoffDeductMode = false;   // when true, new shapes are deductions
 let highlightTakeoffItemId = null; // item whose shapes are glowing on the canvas
@@ -960,7 +1078,7 @@ function updateTypedDistanceHint() {
     el.style.cssText = 'position:fixed;bottom:56px;left:50%;transform:translateX(-50%);' +
       'background:#1a1b2e;color:#e8e9f0;border:1px solid #14b8a6;padding:6px 14px;' +
       'border-radius:6px;font:600 13px "Segoe UI",sans-serif;z-index:9999;display:none;' +
-      'box-shadow:0 4px 12px rgba(0,0,0,0.4)';
+      'pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,0.4)';
     document.body.appendChild(el);
   }
   if (!typedDistanceBuffer) { el.style.display = 'none'; return; }
@@ -1045,7 +1163,7 @@ let toolPresets = [];
 // Tool names
 const toolNames = {
   select:'Select', pan:'Pan', calibrate:'Calibrate', measure:'Measure Length',
-  polyline:'Polyline Measure', area:'Measure Area', dimension:'Dimension Line',
+  polyline:'Polyline Measure', polyshape:'Polyline Shape', area:'Measure Area', dimension:'Dimension Line',
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
@@ -1279,6 +1397,8 @@ document.addEventListener('DOMContentLoaded', () => {
   updateToolIndicator();
   saveToHistory();
   initThumbResize();
+  // Restore collapsed tool groups + compact topbar preference
+  restoreToolbarLayout();
   // Set initial snap button state
   const snapBtn = document.getElementById('btn-snap');
   if (snapBtn && snapEnabled) snapBtn.style.color = 'var(--accent)';
@@ -1313,6 +1433,8 @@ function captureActiveDocState() {
   d.currentFilename = currentFilename;
   d.currentFileHandle = currentFileHandle;
   d.takeoffItems = takeoffItems;
+  d.takeoffZones = takeoffZones;
+  d.activeTakeoffZoneId = activeTakeoffZoneId;
   d.activeTakeoffItemId = activeTakeoffItemId;
   d.pageViewMode = pageViewMode;
   d.viewports = viewports;
@@ -1339,6 +1461,8 @@ function restoreDocState(idx) {
   currentFilename = d.currentFilename || 'document.pdf';
   currentFileHandle = d.currentFileHandle || null;
   takeoffItems = d.takeoffItems || [];
+  takeoffZones = d.takeoffZones || [];
+  activeTakeoffZoneId = d.activeTakeoffZoneId || null;
   activeTakeoffItemId = d.activeTakeoffItemId || null;
   takeoffDeductMode = false;
   highlightTakeoffItemId = null;
@@ -1407,7 +1531,11 @@ function closeDoc(idx) {
     takeoffDeductMode = false;
     highlightTakeoffItemId = null;
     viewports = [];
+    takeoffZones = [];
+    activeTakeoffZoneId = null;
     cancelInProgressDrawing();
+
+    if (splitViewOn) toggleSplitView(false); // no documents left
 
     const canvasWrap = document.getElementById('canvas-wrapper');
     const dropZone = document.getElementById('drop-zone');
@@ -1420,6 +1548,15 @@ function closeDoc(idx) {
     if (thumbList) thumbList.innerHTML = '';
     renderDocTabs();
     return;
+  }
+
+  // Keep the split pane pointing at the right document after a close.
+  // (Deferred a tick so activeDocIndex is fixed up first — renderSplitPane
+  // calls captureActiveDocState and must not write into the wrong doc.)
+  if (splitViewOn) {
+    if (idx === splitDocIndex) { splitDocIndex = Math.min(splitDocIndex, openDocs.length - 1); splitPage = 0; }
+    else if (idx < splitDocIndex) splitDocIndex--;
+    setTimeout(() => { if (splitViewOn) { updateSplitDocSelect(); renderSplitPane(); } }, 0);
   }
 
   if (wasActive) {
@@ -1436,6 +1573,256 @@ function closeDoc(idx) {
 
 function closeActiveDoc() {
   if (activeDocIndex >= 0) closeDoc(activeDocIndex);
+}
+
+// ============================================================
+// SPLIT VIEW — second pane showing another open document (or another
+// page of the same one) beside the editor. The pane is view-only:
+// pan / zoom / page navigation, no markup editing. Use ⇄ to swap which
+// document is in the editor, or the pop-out window for two full editors.
+// ============================================================
+let splitViewOn = false;
+let splitDocIndex = -1;  // index into openDocs
+let splitPage = 0;       // 0-based
+let splitScale = 1;
+let splitRenderTask = null;
+let _splitRenderSeq = 0;
+let _splitRefreshQueued = false;
+let _splitListenersWired = false;
+
+function toggleSplitView(force) {
+  const turnOn = (force === undefined) ? !splitViewOn : !!force;
+  const pane = document.getElementById('split-pane');
+  const divider = document.getElementById('split-divider');
+  if (!turnOn) {
+    splitViewOn = false;
+    _splitRenderSeq++;
+    if (splitRenderTask) { try { splitRenderTask.cancel(); } catch (e) {} splitRenderTask = null; }
+    pane.classList.remove('visible');
+    divider.classList.remove('visible');
+    return;
+  }
+  if (!openDocs.length || !pdfDoc) { showToast('Open a PDF first'); return; }
+  captureActiveDocState(); // make sure openDocs[activeDocIndex] is current
+  splitViewOn = true;
+  // Default to the first OTHER open document; fall back to this one
+  // (same document twice = compare two pages of one drawing set).
+  if (splitDocIndex < 0 || splitDocIndex >= openDocs.length) {
+    splitDocIndex = openDocs.findIndex((d, i) => i !== activeDocIndex);
+    if (splitDocIndex === -1) splitDocIndex = activeDocIndex;
+  }
+  splitPage = openDocs[splitDocIndex].currentPage || 0;
+  pane.classList.add('visible');
+  divider.classList.add('visible');
+  wireSplitListeners();
+  updateSplitDocSelect();
+  splitFitWidth();
+  if (splitDocIndex === activeDocIndex) showToast('Split view — showing the same document; use the dropdown to pick another');
+}
+
+function updateSplitDocSelect() {
+  const sel = document.getElementById('split-doc-select');
+  if (!sel || !splitViewOn) return;
+  sel.innerHTML = openDocs.map((d, i) =>
+    `<option value="${i}" ${i === splitDocIndex ? 'selected' : ''}>${escapeHtml(d.currentFilename || ('Document ' + (i + 1)))}${i === activeDocIndex ? ' (editing)' : ''}</option>`
+  ).join('');
+}
+
+function splitSelectDoc(v) {
+  const i = parseInt(v, 10);
+  if (isNaN(i) || !openDocs[i]) return;
+  captureActiveDocState();
+  splitDocIndex = i;
+  splitPage = openDocs[i].currentPage || 0;
+  splitFitWidth();
+}
+
+function splitPrevPage() { if (splitPage > 0) { splitPage--; renderSplitPane(); } }
+function splitNextPage() {
+  const d = openDocs[splitDocIndex];
+  if (d && d.pdfDoc && splitPage < d.pdfDoc.numPages - 1) { splitPage++; renderSplitPane(); }
+}
+function splitZoom(f) {
+  splitScale = Math.max(0.1, Math.min(10, splitScale * f));
+  renderSplitPane();
+}
+async function splitFitWidth() {
+  const d = openDocs[splitDocIndex];
+  if (!d || !d.pdfDoc) return;
+  try {
+    const page = await d.pdfDoc.getPage(Math.min(splitPage, d.pdfDoc.numPages - 1) + 1);
+    const vw = page.getViewport({ scale: 1 });
+    const w = document.getElementById('split-wrapper').clientWidth - 16;
+    if (w > 50) splitScale = Math.max(0.1, Math.min(10, w / vw.width));
+  } catch (e) {}
+  renderSplitPane();
+}
+
+// Swap sides: the pane's document becomes the active editor document and
+// the previously edited one moves into the pane.
+function splitSwapDocs() {
+  if (!splitViewOn) return;
+  if (splitDocIndex === activeDocIndex) { showToast('Both sides are already showing this document'); return; }
+  const prevActive = activeDocIndex;
+  switchToDoc(splitDocIndex);
+  splitDocIndex = prevActive;
+  splitPage = openDocs[prevActive].currentPage || 0;
+  updateSplitDocSelect();
+  splitFitWidth();
+}
+
+async function renderSplitPane() {
+  if (!splitViewOn) return;
+  captureActiveDocState(); // keep openDocs fresh (pane may show the active doc)
+  const d = openDocs[splitDocIndex];
+  if (!d || !d.pdfDoc) return;
+  const seq = ++_splitRenderSeq;
+  if (splitRenderTask) { try { splitRenderTask.cancel(); } catch (e) {} splitRenderTask = null; }
+  const total = d.pdfDoc.numPages;
+  splitPage = Math.max(0, Math.min(splitPage, total - 1));
+  const ind = document.getElementById('split-page-indicator');
+  if (ind) ind.textContent = (splitPage + 1) + ' / ' + total;
+  let page;
+  try { page = await d.pdfDoc.getPage(splitPage + 1); } catch (e) { return; }
+  if (seq !== _splitRenderSeq) return;
+  const viewport = page.getViewport({ scale: splitScale });
+  const pc = document.getElementById('split-pdf-canvas');
+  const ac = document.getElementById('split-ann-canvas');
+  pc.width = ac.width = Math.floor(viewport.width);
+  pc.height = ac.height = Math.floor(viewport.height);
+  const task = page.render({ canvasContext: pc.getContext('2d'), viewport });
+  splitRenderTask = task;
+  try { await task.promise; } catch (e) { return; } // cancelled by a newer render
+  if (seq !== _splitRenderSeq) return;
+  splitRenderTask = null;
+  drawSplitPaneAnnotations(d, ac);
+}
+
+// Draw a document's annotations on the split pane's overlay canvas.
+// drawAnnotation() and _calFor() read module globals, so we swap the
+// relevant doc-state globals in, draw synchronously, and restore.
+function drawSplitPaneAnnotations(d, canvas) {
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const sv = { annotations, measurements, countGroups, pageCalibrations, defaultCalibration,
+               viewports, takeoffItems, takeoffZones, currentScale, currentPage, selectedAnnotationId, highlightTakeoffItemId };
+  try {
+    annotations = d.annotations || [];
+    measurements = d.measurements || [];
+    countGroups = d.countGroups || {};
+    pageCalibrations = d.pageCalibrations || {};
+    defaultCalibration = d.defaultCalibration || null;
+    viewports = d.viewports || [];
+    takeoffItems = d.takeoffItems || [];
+    takeoffZones = d.takeoffZones || [];
+    currentScale = splitScale;
+    currentPage = splitPage;
+    selectedAnnotationId = null;
+    highlightTakeoffItemId = null;
+    ctx.setTransform(splitScale, 0, 0, splitScale, 0, 0);
+    for (const ann of annotations) {
+      if (ann.page !== splitPage) continue;
+      try { drawAnnotation(ctx, ann, false); } catch (e) {}
+    }
+  } finally {
+    ({ annotations, measurements, countGroups, pageCalibrations, defaultCalibration,
+       viewports, takeoffItems, takeoffZones, currentScale, currentPage, selectedAnnotationId, highlightTakeoffItemId } = sv);
+  }
+}
+
+// Live refresh: when the pane shows the SAME document being edited, mirror
+// markup changes as they happen (called from redrawAnnotations, coalesced
+// to one overlay redraw per frame — the PDF underneath doesn't re-render).
+function scheduleSplitRefresh() {
+  if (!splitViewOn || splitDocIndex !== activeDocIndex || _splitRefreshQueued) return;
+  _splitRefreshQueued = true;
+  requestAnimationFrame(() => {
+    _splitRefreshQueued = false;
+    if (!splitViewOn || splitDocIndex !== activeDocIndex) return;
+    const ac = document.getElementById('split-ann-canvas');
+    if (!ac || !ac.width) return;
+    drawSplitPaneAnnotations({
+      annotations, measurements, countGroups, pageCalibrations, defaultCalibration, viewports, takeoffItems, takeoffZones
+    }, ac);
+  });
+}
+
+// One-time listeners: drag-to-pan, Ctrl+wheel zoom, and the resizable divider.
+function wireSplitListeners() {
+  if (_splitListenersWired) return;
+  _splitListenersWired = true;
+  const wrapper = document.getElementById('split-wrapper');
+  let panFrom = null;
+  wrapper.addEventListener('mousedown', e => {
+    if (e.button !== 0 && e.button !== 1) return;
+    panFrom = { x: e.clientX, y: e.clientY };
+    wrapper.classList.add('panning');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!panFrom) return;
+    wrapper.scrollLeft -= (e.clientX - panFrom.x);
+    wrapper.scrollTop -= (e.clientY - panFrom.y);
+    panFrom = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('mouseup', () => { panFrom = null; wrapper.classList.remove('panning'); });
+  wrapper.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      splitZoom(e.deltaY > 0 ? 0.9 : 1.1);
+    }
+  }, { passive: false });
+  // Divider drag — resizes the pane via flex-basis
+  const divider = document.getElementById('split-divider');
+  const pane = document.getElementById('split-pane');
+  let dividerDrag = false;
+  divider.addEventListener('mousedown', e => { dividerDrag = true; e.preventDefault(); });
+  window.addEventListener('mousemove', e => {
+    if (!dividerDrag) return;
+    const row = document.getElementById('canvas-split-row').getBoundingClientRect();
+    const w = Math.max(180, Math.min(row.right - e.clientX, row.width - 240));
+    pane.style.flexBasis = w + 'px';
+  });
+  window.addEventListener('mouseup', () => { dividerDrag = false; });
+}
+
+// ============================================================
+// TOOLBAR LAYOUT — collapsible tool groups + compact topbar.
+// Both remembered per machine in localStorage.
+// ============================================================
+function toggleToolGroup(name) {
+  const g = document.querySelector('.tool-group[data-group="' + name + '"]');
+  if (!g) return;
+  const collapsed = g.classList.toggle('collapsed');
+  try { localStorage.setItem('bdm-toolgroup-' + name, collapsed ? '1' : '0'); } catch (e) {}
+}
+function toggleTopbarCompact() {
+  const tb = document.getElementById('topbar');
+  const on = tb.classList.toggle('compact');
+  const btn = document.getElementById('btn-compact');
+  if (btn) btn.style.color = on ? 'var(--accent)' : '';
+  try { localStorage.setItem('bdm-topbar-compact', on ? '1' : '0'); } catch (e) {}
+}
+function restoreToolbarLayout() {
+  try {
+    document.querySelectorAll('.tool-group').forEach(g => {
+      if (localStorage.getItem('bdm-toolgroup-' + g.dataset.group) === '1') g.classList.add('collapsed');
+    });
+    if (localStorage.getItem('bdm-topbar-compact') === '1') {
+      document.getElementById('topbar').classList.add('compact');
+      const btn = document.getElementById('btn-compact');
+      if (btn) btn.style.color = 'var(--accent)';
+    }
+  } catch (e) {}
+}
+
+// Second, fully independent copy of the tool in a new browser window —
+// drag it to the other monitor and open a different PDF there.
+function openPopoutWindow() {
+  const w = window.open(location.href, 'bdm-popout-' + Date.now(), 'width=1400,height=900');
+  if (!w) { alert('Pop-up blocked — allow pop-ups for this page, then try again.'); return; }
+  showToast('Second window opened — open a PDF there and drag it to your other screen');
 }
 
 function renderDocTabs() {
@@ -1457,6 +1844,9 @@ function renderDocTabs() {
       + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
       + `</button></div>`;
   }).join('');
+  // Tabs changed (open/close/rename/switch) — keep the split pane's document
+  // dropdown in sync so it always lists the current tabs.
+  if (typeof updateSplitDocSelect === 'function' && splitViewOn) updateSplitDocSelect();
 }
 
 async function openFile() {
@@ -1591,6 +1981,8 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     takeoffDeductMode = false;
     highlightTakeoffItemId = null;
     viewports = [];
+    takeoffZones = [];
+    activeTakeoffZoneId = null;
     cancelInProgressDrawing();
     currentFilename = filename || 'document.pdf';
 
@@ -1603,6 +1995,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       if (restoredProject.countGroups) countGroups = restoredProject.countGroups;
       if (Array.isArray(restoredProject.measurements)) measurements = restoredProject.measurements;
       if (Array.isArray(restoredProject.takeoffItems)) takeoffItems = restoredProject.takeoffItems;
+      if (Array.isArray(restoredProject.takeoffZones)) takeoffZones = restoredProject.takeoffZones;
       if (Array.isArray(restoredProject.viewports)) viewports = restoredProject.viewports;
       // Intentionally NOT restoring toolPresets — user's local presets take priority
     }
@@ -1639,7 +2032,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       measurements, countGroups, currentCountGroup,
       pageCalibrations, pdfMetadata, calBannerDismissed,
       currentFilename, currentFileHandle,
-      takeoffItems, activeTakeoffItemId, pageViewMode, viewports
+      takeoffItems, takeoffZones, activeTakeoffZoneId, activeTakeoffItemId, pageViewMode, viewports
     };
     openDocs.push(newDocEntry);
     activeDocIndex = openDocs.length - 1;
@@ -1750,7 +2143,7 @@ let snapContentEnabled = true;
 try { snapContentEnabled = localStorage.getItem('bdm-snap-content') !== '0'; } catch (e) {}
 let lastSnapHit = null; // for drawing a snap indicator
 // Tools that show a snap indicator while hovering (before the first click)
-const SNAP_HOVER_TOOLS = ['measure','polyline','area','dimension','calibrate','line','arrow','polygon'];
+const SNAP_HOVER_TOOLS = ['measure','polyline','polyshape','area','dimension','calibrate','line','arrow','polygon'];
 
 // Select-mode hover cursor: resize arrows over handles, move cursor over bodies.
 function updateSelectHoverCursor(screenPt) {
@@ -1762,6 +2155,12 @@ function updateSelectHoverCursor(screenPt) {
   // Check the selected annotation's handles first
   if (selectedAnnotationId) {
     const sel = annotations.find(a => a.id === selectedAnnotationId && a.page === currentPage);
+    if (sel && annCanRotate(sel)) {
+      const rh = getRotationHandlePagePoint(sel);
+      if (rh && Math.hypot(pagePt.x - rh.x, pagePt.y - rh.y) <= tol * 1.5) {
+        canvas.style.cursor = 'grab'; return;
+      }
+    }
     if (sel) {
       const hi = getResizeHandleAtPoint(sel, pagePt.x, pagePt.y, tol);
       if (hi >= 0) {
@@ -1791,6 +2190,7 @@ function snapPagePoint(pagePt) {
   let best = null, bestDist = tolPage;
   const cand = [];
   annotations.filter(a => a.page === currentPage && a.points && a.points.length).forEach(a => {
+    const from = cand.length;
     // Endpoints
     a.points.forEach(p => cand.push({ x: p.x, y: p.y, type: 'end' }));
     // Rect corners
@@ -1805,6 +2205,17 @@ function snapPagePoint(pagePt) {
     if (['line','arrow','measure','dimension'].includes(a.type) && a.points.length === 2) {
       const [p1,p2] = a.points;
       cand.push({ x: (p1.x+p2.x)/2, y: (p1.y+p2.y)/2, type: 'mid' });
+    }
+    // Rotated shapes store unrotated points — rotate this shape's candidates
+    // into their on-screen positions so snap lands where the ink actually is.
+    if (a.rotation && ROT_PROP_TYPES.includes(a.type)) {
+      const rc = annRotationCenter(a);
+      if (rc) {
+        for (let i = from; i < cand.length; i++) {
+          const rp = rotatePointAround(cand[i], rc, a.rotation);
+          cand[i].x = rp.x; cand[i].y = rp.y;
+        }
+      }
     }
   });
   for (const c of cand) {
@@ -1947,6 +2358,8 @@ function redrawAnnotations() {
     });
     ctx.restore();
   }
+  // Mirror live edits into the split pane when it shows this same document
+  if (typeof scheduleSplitRefresh === 'function') scheduleSplitRefresh();
 }
 
 function toggleSnap() {
@@ -2048,6 +2461,19 @@ function drawAnnotation(ctx, ann, isSelected) {
   else if (ann.lineStyle === 'dotted') ctx.setLineDash([2,3]);
   else if (ann.lineStyle === 'dash-dot') ctx.setLineDash([6,3,2,3]);
 
+  // Shape rotation (ROT_PROP_TYPES store an angle; points stay unrotated).
+  // Applied here so every consumer — screen, bake, flatten, compress, print —
+  // renders the rotation identically. Selection handles drawn below inherit
+  // the same transform, so they appear rotated with the shape.
+  if (ann.rotation && typeof ROT_PROP_TYPES !== 'undefined' && ROT_PROP_TYPES.includes(ann.type)) {
+    const rc = annRotationCenter(ann);
+    if (rc) {
+      ctx.translate(rc.x, rc.y);
+      ctx.rotate(ann.rotation * Math.PI / 180);
+      ctx.translate(-rc.x, -rc.y);
+    }
+  }
+
   switch(ann.type) {
     case 'measure': drawMeasureLine(ctx, ann); break;
     case 'polyline': drawPolylineMeasure(ctx, ann); break;
@@ -2085,6 +2511,23 @@ function drawAnnotation(ctx, ann, isSelected) {
       const [a,b] = ann.points;
       ctx.strokeRect(Math.min(a.x,b.x), Math.min(a.y,b.y), Math.abs(b.x-a.x), Math.abs(b.y-a.y));
       ctx.setLineDash([]);
+    }
+    // Rotation handle — a circle floating above the shape's top-centre,
+    // connected by a thin stalk. Drawn in the (possibly rotated) local frame
+    // so it turns with the shape. Mouse hit-testing uses the page-space twin
+    // in getRotationHandlePagePoint().
+    if (annCanRotate(ann) && pts.length) {
+      const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+      const topX = (Math.min(...xs) + Math.max(...xs)) / 2, topY = Math.min(...ys);
+      const hy = topY - 28 / currentScale;
+      const r = 6 / currentScale;
+      ctx.strokeStyle = '#D97757'; ctx.lineWidth = 1.5 / currentScale; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(topX, topY); ctx.lineTo(topX, hy + r); ctx.stroke();
+      ctx.beginPath(); ctx.arc(topX, hy, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#1a1b2e'; ctx.fill(); ctx.stroke();
+      // little curved-arrow glyph inside the circle
+      ctx.beginPath(); ctx.arc(topX, hy, r * 0.5, -Math.PI * 0.25, Math.PI);
+      ctx.stroke();
     }
     // Draw bounding box for text annotations
     if (ann.type === 'text' && ann.points && ann.points.length > 0) {
@@ -2251,6 +2694,7 @@ function drawPolylineMeasure(ctx, ann) {
   ctx.beginPath(); ctx.moveTo(ann.points[0].x, ann.points[0].y);
   ann.points.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
   if (ann.isDeduction) ctx.setLineDash([]);
+  if (ann.isShape) return; // polyline SHAPE — no measurement label at all
   let totalDist = 0;
   for (let i = 1; i < ann.points.length; i++) totalDist += Math.hypot(ann.points[i].x-ann.points[i-1].x, ann.points[i].y-ann.points[i-1].y);
   let label = getCalibratedLabel(totalDist, ann.page, ann.points[0]);
@@ -2646,6 +3090,87 @@ function offsetPos(p, ann) {
 }
 
 // ============================================================
+// SHAPE ROTATION
+// Two families:
+//  - ROT_PROP_TYPES  — geometry can't express rotation (boxes / anchored
+//    text & stamps), so they carry an ann.rotation (degrees, clockwise)
+//    applied as a canvas transform around the shape centre. Persists in
+//    saves/history automatically (plain property on the annotation).
+//  - ROT_POINT_TYPES — rotation is baked permanently into the points
+//    around the centroid; no stored angle, and measurements are unaffected
+//    (lengths/areas are rotation-invariant).
+// cutcontent is deliberately excluded — redaction boxes stay axis-aligned.
+// ============================================================
+const ROT_PROP_TYPES = ['rectangle','ellipse','highlight','image','signature','stamp','text'];
+const ROT_POINT_TYPES = ['line','arrow','measure','dimension','polygon','polyline','area','cloud','pen'];
+
+function annCanRotate(ann) {
+  return ROT_PROP_TYPES.includes(ann.type) || ROT_POINT_TYPES.includes(ann.type);
+}
+
+// Centre of rotation in page space. Stored points are ALWAYS unrotated for
+// ROT_PROP_TYPES, so this centre is identical in local and rotated frames.
+function annRotationCenter(ann) {
+  if (!ann.points || !ann.points.length) return null;
+  // Text rotates about its anchor (same point the hit-test box hangs off);
+  // stamps are already centred on their single point.
+  if (ann.type === 'text' || ann.type === 'stamp') return { x: ann.points[0].x, y: ann.points[0].y };
+  const xs = ann.points.map(p => p.x), ys = ann.points.map(p => p.y);
+  return { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
+}
+
+function rotatePointAround(p, c, deg) {
+  const r = deg * Math.PI / 180, cos = Math.cos(r), sin = Math.sin(r);
+  const dx = p.x - c.x, dy = p.y - c.y;
+  return { x: c.x + dx * cos - dy * sin, y: c.y + dx * sin + dy * cos };
+}
+
+// Map a page-space point into an annotation's unrotated local frame so all
+// existing hit-test / handle maths keeps working on rotated shapes.
+function annLocalPoint(ann, x, y) {
+  if (!ann.rotation || !ROT_PROP_TYPES.includes(ann.type)) return { x, y };
+  const c = annRotationCenter(ann);
+  return c ? rotatePointAround({ x, y }, c, -ann.rotation) : { x, y };
+}
+
+// Where the round rotation handle sits, in PAGE space (for mouse hit-testing).
+// It floats above the shape's top-centre; for rotated shapes the handle
+// rotates with the shape so it always sits "above" in the shape's own frame.
+function getRotationHandlePagePoint(ann) {
+  if (!annCanRotate(ann)) return null;
+  const pts = getAnnotationHandlePoints(ann);
+  if (!pts || !pts.length) return null;
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const local = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: Math.min(...ys) - 28 / currentScale };
+  if (ann.rotation && ROT_PROP_TYPES.includes(ann.type)) {
+    const c = annRotationCenter(ann);
+    if (c) return rotatePointAround(local, c, ann.rotation);
+  }
+  return local;
+}
+
+// Rotate the selected annotation by a relative number of degrees (Properties
+// panel ↺/↻ buttons and the "rotate by" input).
+function rotateSelectedAnnotation(deg) {
+  if (!selectedAnnotationId || !deg) return;
+  const ann = annotations.find(a => a.id === selectedAnnotationId);
+  if (!ann || !annCanRotate(ann)) return;
+  if (ROT_POINT_TYPES.includes(ann.type)) {
+    const c = annRotationCenter(ann);
+    if (!c) return;
+    ann.points = ann.points.map(p => rotatePointAround(p, c, deg));
+  } else {
+    let a = ((ann.rotation || 0) + deg) % 360;
+    if (a < 0) a += 360;
+    ann.rotation = a;
+  }
+  saveToHistory();
+  redrawAnnotations();
+  if (['measure','polyline','area','dimension'].includes(ann.type)) rebuildMeasurements();
+  openPropertiesPanel(); // refresh the angle readout
+}
+
+// ============================================================
 // ANNOTATION HANDLE POINTS (for selection + resize)
 // ============================================================
 function getAnnotationHandlePoints(ann) {
@@ -2678,6 +3203,10 @@ function getAnnotationHandlePoints(ann) {
 
 // Which resize handle is near a page-space point? Returns handle index or -1
 function getResizeHandleAtPoint(ann, px, py, tol) {
+  // Handle points are stored (and drawn) in the shape's unrotated frame —
+  // bring the probe point into that frame first for rotated shapes.
+  const lp = annLocalPoint(ann, px, py);
+  px = lp.x; py = lp.y;
   const handles = getAnnotationHandlePoints(ann);
   for (let i = 0; i < handles.length; i++) {
     if (Math.hypot(px - handles[i].x, py - handles[i].y) <= tol) return i;
@@ -2687,6 +3216,10 @@ function getResizeHandleAtPoint(ann, px, py, tol) {
 
 // Apply resize: move the handle point to a new position
 function applyResize(ann, handleIdx, newPagePt) {
+  // Rotated shapes are resized in their unrotated local frame. (The pivot is
+  // recomputed from the resized box, so the shape can walk a hair during a
+  // rotated resize — acceptable for markup work.)
+  newPagePt = annLocalPoint(ann, newPagePt.x, newPagePt.y);
   if (ann.type === 'callout') {
     const allPts = [ann.anchor, ...(ann.knees||[]), ann.textPos].filter(Boolean);
     if (handleIdx >= 0 && handleIdx < allPts.length) {
@@ -2798,7 +3331,7 @@ function drawInProgress(ctx) {
       ctx.strokeRect(Math.min(p1.x, p2.x), Math.min(p1.y, p2.y),
                      Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y));
     }
-  } else if ((currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') && polylinePoints.length > 0) {
+  } else if ((currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon') && polylinePoints.length > 0) {
     const pagePts = polylinePoints.map(p => toPage(p));
     ctx.beginPath(); ctx.moveTo(pagePts[0].x, pagePts[0].y);
     pagePts.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
@@ -2859,6 +3392,27 @@ function onCanvasMouseDown(e) {
         openPropertiesPanel();
         redrawAnnotations();
         return;
+      }
+    }
+
+    // 1b) Rotation handle of the selected annotation — checked before body
+    //     hit-testing because the handle floats OUTSIDE the shape.
+    if (selectedAnnotationId) {
+      const selAnn = annotations.find(a => a.id === selectedAnnotationId && a.page === currentPage);
+      if (selAnn && annCanRotate(selAnn)) {
+        const rh = getRotationHandlePagePoint(selAnn);
+        if (rh && Math.hypot(pagePt.x - rh.x, pagePt.y - rh.y) <= handleTol * 1.5) {
+          const c = annRotationCenter(selAnn);
+          if (c) {
+            rotateAnnotation = selAnn;
+            rotateCenter = c;
+            rotateStartAngle = Math.atan2(pagePt.y - c.y, pagePt.x - c.x) * 180 / Math.PI;
+            rotateOrigRotation = selAnn.rotation || 0;
+            rotateOrigPoints = ROT_POINT_TYPES.includes(selAnn.type)
+              ? selAnn.points.map(p => ({ x: p.x, y: p.y })) : null;
+            redrawAnnotations(); return;
+          }
+        }
       }
     }
 
@@ -2954,7 +3508,7 @@ function onCanvasMouseDown(e) {
   }
   isDrawing = true; startPoint = startSnap; currentMovePoint = startSnap;
 
-  if (currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') {
+  if (currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon') {
     // Shift + click after the first vertex → snap the new vertex to a 45-deg
     // axis from the previous vertex (works in screen space, same maths).
     let vertex = startSnap;
@@ -2999,6 +3553,32 @@ function onCanvasMouseMove(e) {
     wrapper.scrollLeft -= (e.clientX - panStart.x);
     wrapper.scrollTop -= (e.clientY - panStart.y);
     panStart = { x: e.clientX, y: e.clientY }; return;
+  }
+
+  // Handle live rotation via the rotation handle
+  if (rotateAnnotation) {
+    const rect = e.target.getBoundingClientRect();
+    const pagePt = toPage({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const angNow = Math.atan2(pagePt.y - rotateCenter.y, pagePt.x - rotateCenter.x) * 180 / Math.PI;
+    let delta = angNow - rotateStartAngle;
+    if (e.shiftKey) delta = Math.round(delta / 15) * 15; // Shift = 15° steps
+    if (ROT_POINT_TYPES.includes(rotateAnnotation.type)) {
+      rotateAnnotation.points = rotateOrigPoints.map(p => rotatePointAround(p, rotateCenter, delta));
+    } else {
+      let a = (rotateOrigRotation + delta) % 360;
+      if (a < 0) a += 360;
+      // Gentle magnet on the cardinal angles when Shift isn't held
+      if (!e.shiftKey) {
+        for (const s of [0, 90, 180, 270, 360]) {
+          if (Math.abs(a - s) < 2) { a = s % 360; break; }
+        }
+      }
+      rotateAnnotation.rotation = a;
+      const inp = document.getElementById('prop-rotation');
+      if (inp) inp.value = Math.round(a);
+    }
+    redrawAnnotations();
+    return;
   }
 
   // Handle resize of annotation handle
@@ -3088,6 +3668,18 @@ function onCanvasMouseMove(e) {
 function onCanvasMouseUp(e) {
   if (panStart) { panStart = null; document.getElementById('canvas-area').classList.remove('active'); return; }
   
+  // Handle rotation completion
+  if (rotateAnnotation) {
+    const wasMeasurement = ['measure','polyline','area','dimension'].includes(rotateAnnotation.type);
+    rotateAnnotation = null;
+    rotateCenter = null;
+    rotateOrigPoints = null;
+    saveToHistory();
+    redrawAnnotations();
+    if (wasMeasurement) { rebuildMeasurements(); openPropertiesPanel(); refreshMeasurementsPanel(); if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel(); }
+    return;
+  }
+
   // Handle resize completion
   if (resizeAnnotation) {
     const wasMeasurement = ['measure','polyline','area','dimension'].includes(resizeAnnotation.type);
@@ -3240,7 +3832,7 @@ function onCanvasMouseUp(e) {
 }
 
 function onCanvasDoubleClick(e) {
-  if (currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') finishPolyShape();
+  if (currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon') finishPolyShape();
   else if (currentTool === 'callout' && calloutMode) {
     // Double-click finishes the callout - place text here
     const rect = e.target.getBoundingClientRect();
@@ -3259,7 +3851,7 @@ function onCanvasDoubleClick(e) {
 
 function onCanvasRightClick(e) {
   e.preventDefault();
-  if (currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon') finishPolyShape();
+  if (currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon') finishPolyShape();
   if (currentTool === 'callout' && calloutMode && calloutKnees.length > 0) {
     // Right-click finishes leader path
     const rect = e.target.getBoundingClientRect();
@@ -3717,7 +4309,7 @@ function onKeyDown(e) {
 
   // Typed-distance entry — while a line/measure first point is placed (or a
   // polyline is being traced), digits build a mm value; Enter places the point.
-  const hasDraft = twoClickStart || (polylinePoints.length > 0 && ['polyline','area','polygon'].includes(currentTool));
+  const hasDraft = twoClickStart || (polylinePoints.length > 0 && ['polyline','polyshape','area','polygon'].includes(currentTool));
   if (hasDraft && !mod && !e.altKey) {
     if (/^[0-9.]$/.test(e.key)) {
       e.preventDefault();
@@ -3777,6 +4369,7 @@ function onKeyDown(e) {
   else if (key === 'r') setTool('rectangle');
   else if (key === 'o') setTool('ellipse');
   else if (key === 'q') setTool('polygon');
+  else if (key === 'y') setTool('polyshape');
   else if (key === 'd') setTool('cloud');
   else if (key === 't') setTool('text');
   else if (key === 'b') setTool('callout');
@@ -3789,7 +4382,8 @@ function onKeyDown(e) {
   else if (key === 'i') setTool('dimension');
   else if (key === 'f') setTool('magicarea');
 
-  if ((key === 'delete' || key === 'backspace') && selectedAnnotationId) { e.preventDefault(); deleteSelectedAnnotation(); }
+  if (key === 'f4') { e.preventDefault(); togglePanelVisible(); }
+  else if ((key === 'delete' || key === 'backspace') && selectedAnnotationId) { e.preventDefault(); deleteSelectedAnnotation(); }
   else if ((e.ctrlKey||e.metaKey) && (key === '=' || key === '+')) { e.preventDefault(); zoomIn(); }
   else if ((e.ctrlKey||e.metaKey) && key === '-') { e.preventDefault(); zoomOut(); }
   else if ((e.ctrlKey||e.metaKey) && key === '0') { e.preventDefault(); resetZoom(); }
@@ -3799,7 +4393,7 @@ function onKeyDown(e) {
   else if ((e.ctrlKey||e.metaKey) && key === 's' && e.shiftKey) { e.preventDefault(); saveProjectAs(); }
   else if ((e.ctrlKey||e.metaKey) && key === 'o') { e.preventDefault(); openFile(); }
   else if ((e.ctrlKey||e.metaKey) && key === 'f') { e.preventDefault(); openSearchDialog(); }
-  else if (key === 'enter' && (currentTool === 'polyline' || currentTool === 'area' || currentTool === 'polygon')) finishPolyShape();
+  else if (key === 'enter' && (currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon')) finishPolyShape();
   else if (key === 'pagedown' || key === 'arrowright') { e.preventDefault(); nextPage(); }
   else if (key === 'pageup' || key === 'arrowleft') { e.preventDefault(); previousPage(); }
 }
@@ -4156,6 +4750,15 @@ function finishPolyShape() {
     annotations.push(ann);
     takeoffTagAnnotation(ann);
     measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
+  } else if (currentTool === 'polyshape') {
+    // Plain polyline SHAPE — same geometry as a polyline measure but no
+    // measurement label and no entry in the measurements tally.
+    // (isShape keeps rebuildMeasurements from re-registering it later.)
+    const ann = { id: generateId(), type: 'polyline', page: currentPage, points: [...pagePts],
+      label: '', measLabel: '', isShape: true, hideLabel: true,
+      color: toolProperties.color, thickness: toolProperties.thickness,
+      opacity: toolProperties.opacity, lineStyle: toolProperties.lineStyle };
+    annotations.push(ann);
   } else if (currentTool === 'area') {
     if (pagePts.length < 3) { polylinePoints = []; return; }
     const ann = { id: generateId(), type: 'area', page: currentPage, points: [...pagePts], label: '', perimLabel: '', measLabel: '', color: toolProperties.color, fillColor: toolProperties.fillColor, fillOpacity: toolProperties.fillOpacity, thickness: toolProperties.thickness, opacity: toolProperties.opacity, hatch: 'none' };
@@ -4382,6 +4985,12 @@ function hitTest(x, y, ann, tol) {
     });
   }
   if (!ann.points || ann.points.length === 0) return false;
+  // Rotated shapes: map the probe point into the shape's unrotated local
+  // frame, then run the ordinary axis-aligned tests below.
+  if (ann.rotation && ROT_PROP_TYPES.includes(ann.type)) {
+    const lp = annLocalPoint(ann, x, y);
+    x = lp.x; y = lp.y;
+  }
   switch(ann.type) {
     case 'legend': {
       const p = ann.points[0];
@@ -4677,26 +5286,54 @@ const TAKEOFF_TYPE_TOOLS = { length: 'polyline', area: 'area', vertical: 'polyli
 const TAKEOFF_TYPE_UNITS = { length: 'm', area: 'm²', vertical: 'm²', volume: 'm³', count: 'no.' };
 const TAKEOFF_TYPE_LABELS = { length: 'Length (m)', area: 'Area (m²)', vertical: 'Vertical: length × height (m²)', volume: 'Volume: area × depth (m³)', count: 'Count (no.)' };
 
+// Effective rate: a built-up rate (labour + material + plant components)
+// wins over the flat rate whenever components exist.
+function effectiveTakeoffRate(item) {
+  if (Array.isArray(item.rateComponents) && item.rateComponents.length) {
+    return item.rateComponents.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+  }
+  return parseFloat(item.rate) || 0;
+}
+
+// Perimeter of a shape's point list in page pixels (closed adds last→first).
+function _polyPerimeterPx(points, closed) {
+  let d = 0;
+  for (let i = 1; i < points.length; i++)
+    d += Math.hypot(points[i].x - points[i-1].x, points[i].y - points[i-1].y);
+  if (closed && points.length > 2)
+    d += Math.hypot(points[0].x - points[points.length-1].x, points[0].y - points[points.length-1].y);
+  return d;
+}
+
 // Compute an item's quantity NUMERICALLY from its shapes + calibration
 // (display strings like "1.25m" are never parsed). Viewport-aware.
-function computeTakeoffQty(item) {
+// Optional shapeFilter narrows the shapes (zone / page subtotals).
+// Also aggregates ALL geometry bases (length, area, perimeter, count) so
+// assemblies can derive sub-item quantities from the same measurements.
+// Perimeters are summed as absolutes — deduction openings still need
+// edge treatment (formwork, trims), matching normal estimating practice.
+function computeTakeoffQty(item, shapeFilter) {
   let raw = 0, shapes = 0, uncal = false;
+  let lenPx = 0, areaPx = 0, perimPx = 0, countN = 0;
   const lengthLike = item.resultType === 'length' || item.resultType === 'vertical';
   const areaLike   = item.resultType === 'area'   || item.resultType === 'volume';
   annotations.forEach(a => {
     if (a.takeoffItemId !== item.id || !a.points || !a.points.length) return;
+    if (shapeFilter && !shapeFilter(a)) return;
     shapes++;
     const sign = a.isDeduction ? -1 : 1;
+    countN += sign;
     if (item.resultType === 'count') { raw += sign; return; }
     const cal = _calFor(a.page, a.points[0]);
     if (!cal) { uncal = true; return; }
     if (lengthLike) {
-      let d = 0;
-      for (let i = 1; i < a.points.length; i++)
-        d += Math.hypot(a.points[i].x - a.points[i-1].x, a.points[i].y - a.points[i-1].y);
+      const d = _polyPerimeterPx(a.points, false);
       raw += sign * (d / cal.pixelsPerMm);            // mm
+      lenPx += sign * (d / cal.pixelsPerMm);
     } else if (areaLike && a.points.length >= 3) {
       raw += sign * (getPolygonArea(a.points) / (cal.pixelsPerMm * cal.pixelsPerMm)); // mm²
+      areaPx += sign * (getPolygonArea(a.points) / (cal.pixelsPerMm * cal.pixelsPerMm));
+      perimPx += _polyPerimeterPx(a.points, true) / cal.pixelsPerMm; // absolute — openings still get edges
     }
   });
   const factor = parseFloat(item.factor) || 0;        // height / depth in mm
@@ -4708,12 +5345,35 @@ function computeTakeoffQty(item) {
     case 'volume':   qty = (raw * factor) / 1e9; break;             // mm² × mm → m³
     default:         qty = raw;                                     // count
   }
-  const rate = parseFloat(item.rate) || 0;
+  const lenM = lenPx / 1000, areaM2 = areaPx / 1e6, perimM = perimPx / 1000;
+  const rate = effectiveTakeoffRate(item);
   const markup = parseFloat(item.markup) || 0;   // % on top of rate (Cubit-style Markup column)
-  const amount = qty * rate * (1 + markup / 100);
   // Missing factor on a factored type — flag like uncalibrated
   const needsFactor = (item.resultType === 'vertical' || item.resultType === 'volume') && !(factor > 0);
-  return { qty, shapes, uncal: uncal || needsFactor, amount, needsFactor };
+
+  // Assembly: sub-items derive their quantities from this item's geometry.
+  let subRows = null, amount;
+  if (Array.isArray(item.subItems) && item.subItems.length) {
+    subRows = item.subItems.map(s => {
+      let base;
+      switch (s.basis) {
+        case 'area':      base = areaM2; break;
+        case 'perimeter': base = perimM; break;
+        case 'length':    base = lenM; break;
+        case 'count':     base = countN; break;
+        case 'fixed':     base = 1; break;
+        default:          base = qty;      // 'qty' — the item's own quantity
+      }
+      const f = (s.factor === undefined || s.factor === null || s.factor === '') ? 1 : (parseFloat(s.factor) || 0);
+      const sq = base * f;
+      const sr = parseFloat(s.rate) || 0;
+      return { id: s.id, name: s.name || '(sub-item)', unit: s.unit || '', basis: s.basis || 'qty', factor: f, qty: sq, rate: sr, amount: sq * sr };
+    });
+    amount = subRows.reduce((t, r) => t + r.amount, 0) * (1 + markup / 100);
+  } else {
+    amount = qty * rate * (1 + markup / 100);
+  }
+  return { qty, shapes, uncal: uncal || needsFactor, amount, needsFactor, rate, lenM, areaM2, perimM, count: countN, subRows };
 }
 
 function formatTakeoffQty(item, qty) {
@@ -4850,6 +5510,99 @@ function toggleTakeoffDeduct() {
   if (takeoffDeductMode) showToast('Deduction mode ON — shapes now subtract');
 }
 
+// ---- Zones (Level 1 / Unit A / Stage 2 subtotals) ----
+function getTakeoffZone(id) { return takeoffZones.find(z => z.id === id); }
+function addTakeoffZone() {
+  const name = prompt('Zone name (e.g. "Level 1", "Unit A", "Stage 2"):');
+  if (!name || !name.trim()) { refreshTakeoffPanel(); return; }
+  const z = { id: generateId(), name: name.trim() };
+  takeoffZones.push(z);
+  activeTakeoffZoneId = z.id;
+  saveToHistory(); refreshTakeoffPanel();
+  showToast('Zone "' + z.name + '" active — new shapes are tagged to it');
+}
+function setActiveTakeoffZone(v) {
+  if (v === '__add') { addTakeoffZone(); return; }
+  activeTakeoffZoneId = v || null;
+  refreshTakeoffPanel();
+}
+function renameActiveTakeoffZone() {
+  const z = getTakeoffZone(activeTakeoffZoneId);
+  if (!z) { showToast('Pick a zone first'); return; }
+  const name = prompt('Rename zone:', z.name);
+  if (name && name.trim()) { z.name = name.trim(); saveToHistory(); refreshTakeoffPanel(); }
+}
+function deleteActiveTakeoffZone() {
+  const z = getTakeoffZone(activeTakeoffZoneId);
+  if (!z) { showToast('Pick a zone first'); return; }
+  const n = annotations.filter(a => a.zoneId === z.id).length;
+  if (!confirm('Delete zone "' + z.name + '"?\n\n' + n + ' shape(s) keep their measurements — they just lose the zone tag.')) return;
+  annotations.forEach(a => { if (a.zoneId === z.id) delete a.zoneId; });
+  takeoffZones = takeoffZones.filter(x => x.id !== z.id);
+  activeTakeoffZoneId = null;
+  saveToHistory(); refreshTakeoffPanel(); openPropertiesPanel();
+}
+// Re-tag an individual shape from its Properties panel
+function setShapeZone(annId, zoneId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  if (zoneId) a.zoneId = zoneId; else delete a.zoneId;
+  saveToHistory(); refreshTakeoffPanel(); openPropertiesPanel();
+}
+
+// ---- Rate build-up (labour + material + plant components per item) ----
+function addRateComponent(itemId) {
+  const item = getTakeoffItem(itemId);
+  if (!item) return;
+  const label = document.getElementById('rc-new-label-' + itemId);
+  const amt = document.getElementById('rc-new-amount-' + itemId);
+  const name = label && label.value.trim();
+  const amount = parseFloat(amt && amt.value);
+  if (!name || !(amount > 0 || amount < 0)) { showToast('Enter a component name and $ amount'); return; }
+  if (!Array.isArray(item.rateComponents)) item.rateComponents = [];
+  item.rateComponents.push({ label: name, amount });
+  saveToHistory(); refreshTakeoffPanel();
+}
+function updateRateComponent(itemId, idx, field, value) {
+  const item = getTakeoffItem(itemId);
+  if (!item || !item.rateComponents || !item.rateComponents[idx]) return;
+  item.rateComponents[idx][field] = field === 'amount' ? (parseFloat(value) || 0) : value;
+  saveToHistory(); refreshTakeoffPanel();
+}
+function deleteRateComponent(itemId, idx) {
+  const item = getTakeoffItem(itemId);
+  if (!item || !item.rateComponents) return;
+  item.rateComponents.splice(idx, 1);
+  saveToHistory(); refreshTakeoffPanel();
+}
+
+// ---- Assemblies (composite items: one shape feeds several bill lines) ----
+const SUBITEM_BASIS_LABELS = {
+  qty: 'Item quantity', area: 'Area (m²)', perimeter: 'Perimeter (m)',
+  length: 'Length (m)', count: 'Count (no.)', fixed: 'Fixed (once)'
+};
+function addTakeoffSubItem(itemId) {
+  const item = getTakeoffItem(itemId);
+  if (!item) return;
+  if (!Array.isArray(item.subItems)) item.subItems = [];
+  item.subItems.push({ id: generateId(), name: '', basis: 'qty', factor: 1, unit: '', rate: 0 });
+  saveToHistory(); refreshTakeoffPanel();
+}
+function updateTakeoffSubItem(itemId, subId, field, value) {
+  const item = getTakeoffItem(itemId);
+  const s = item && (item.subItems || []).find(x => x.id === subId);
+  if (!s) return;
+  s[field] = (field === 'factor' || field === 'rate') ? (parseFloat(value) || 0) : value;
+  saveToHistory(); refreshTakeoffPanel();
+}
+function deleteTakeoffSubItem(itemId, subId) {
+  const item = getTakeoffItem(itemId);
+  if (!item || !item.subItems) return;
+  item.subItems = item.subItems.filter(x => x.id !== subId);
+  if (!item.subItems.length) delete item.subItems;
+  saveToHistory(); refreshTakeoffPanel();
+}
+
 function renameTakeoffItem(id) {
   const item = getTakeoffItem(id);
   if (!item) return;
@@ -4894,6 +5647,7 @@ function takeoffTagAnnotation(ann) {
   if (!ok) return;
   ann.takeoffItemId = item.id;
   if (item.resultType !== 'count') ann.isDeduction = !!takeoffDeductMode;
+  if (activeTakeoffZoneId && getTakeoffZone(activeTakeoffZoneId)) ann.zoneId = activeTakeoffZoneId;
   ann.color = item.color;
   if (ann.type === 'area') ann.fillColor = item.color;
   refreshTakeoffPanel();
@@ -4953,6 +5707,16 @@ function getTakeoffPanelHTML() {
         style="padding:4px 10px;font-size:10px;font-weight:700;border-radius:4px;cursor:pointer;border:1px solid ${takeoffDeductMode ? '#e74c3c' : 'var(--border-color)'};background:${takeoffDeductMode ? 'rgba(231,76,60,0.25)' : 'var(--bg-tertiary)'};color:${takeoffDeductMode ? '#e74c3c' : 'var(--text-secondary)'}">
         ${takeoffDeductMode ? 'DEDUCT ON' : 'Deduct'}</button>
     </div>
+    <div style="display:flex;gap:4px;align-items:center;margin-top:6px">
+      <label style="font-size:10px;color:var(--text-muted);white-space:nowrap" title="New shapes are tagged with the active zone — subtotals per zone appear below and in exports">Zone</label>
+      <select class="select-input" style="flex:1;font-size:11px" onchange="setActiveTakeoffZone(this.value)">
+        <option value="">(no zone)</option>
+        ${takeoffZones.map(z => `<option value="${z.id}" ${z.id === activeTakeoffZoneId ? 'selected' : ''}>${escapeHtml(z.name)}</option>`).join('')}
+        <option value="__add">+ Add zone…</option>
+      </select>
+      ${activeTakeoffZoneId ? `<button onclick="renameActiveTakeoffZone()" title="Rename zone" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;font-size:10px;padding:2px 5px">✎</button>
+      <button onclick="deleteActiveTakeoffZone()" title="Delete zone (shapes keep their measurements)" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-muted);cursor:pointer;font-size:11px;padding:2px 5px">×</button>` : ''}
+    </div>
   </div></div>`;
 
   // Items grouped by trade
@@ -4967,12 +5731,13 @@ function getTakeoffPanelHTML() {
     let tradeTotal = 0, tradeHasRate = false;
     let rows = '';
     trades[trade].forEach(item => {
-      const { qty, shapes, uncal, amount } = computeTakeoffQty(item);
+      const { qty, shapes, uncal, amount, subRows } = computeTakeoffQty(item);
       const isActive = item.id === activeTakeoffItemId;
       const isLit = item.id === highlightTakeoffItemId;
-      const rate = parseFloat(item.rate) || 0;
-      if (rate > 0) { tradeTotal += amount; grandTotal += amount; tradeHasRate = true; anyRate = true; }
-      const typeTag = { length:'L', area:'A', vertical:'V', volume:'V³', count:'C' }[item.resultType] || '?';
+      const rate = effectiveTakeoffRate(item);
+      const priced = amount > 0 || (subRows && subRows.some(r => r.rate > 0));
+      if (priced) { tradeTotal += amount; grandTotal += amount; tradeHasRate = true; anyRate = true; }
+      const typeTag = subRows ? 'AS' : ({ length:'L', area:'A', vertical:'V', volume:'V³', count:'C' }[item.resultType] || '?');
       rows += `<div onclick="setActiveTakeoffItem('${item.id}')"
         style="display:flex;align-items:center;gap:5px;padding:6px 7px;border-radius:6px;cursor:pointer;
                border:1px solid ${isActive ? item.color : 'var(--border-color)'};
@@ -4985,7 +5750,7 @@ function getTakeoffPanelHTML() {
         <span style="flex:1;min-width:0;font-size:12px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(item.name)} — ${shapes} shape(s)">${escapeHtml(item.name)}</span>
         <span style="flex:none;text-align:right">
           <span style="display:block;font-size:11px;font-weight:700;color:${item.color}" title="${shapes} shape(s)${uncal ? ' — check calibration / height-depth!' : ''}">${formatTakeoffQty(item, qty)}${uncal ? ' ⚠' : ''}</span>
-          ${rate > 0 ? `<span style="display:block;font-size:10px;color:var(--success, #4ade80)">${formatMoney(amount)}</span>` : ''}
+          ${priced ? `<span style="display:block;font-size:10px;color:var(--success, #4ade80)">${formatMoney(amount)}</span>` : ''}
         </span>
         <button onclick="event.stopPropagation();toggleTakeoffHighlight('${item.id}')" title="Highlight this item's shapes on the drawing"
           style="flex:none;background:none;border:none;cursor:pointer;font-size:12px;padding:2px;color:${isLit ? item.color : 'var(--text-muted)'}">${isLit ? '◉' : '◎'}</button>
@@ -5000,15 +5765,74 @@ function getTakeoffPanelHTML() {
             <input type="text" class="property-input" style="flex:1;font-size:11px" value="${escapeHtml(item.trade || '')}" placeholder="e.g. Concrete"
                    onchange="updateTakeoffItemField('${item.id}','trade',this.value)">
           </div>
+          ${subRows ? `<div style="font-size:10px;color:var(--text-muted);padding:2px 0">Assembly — priced from its parts below; the flat rate is ignored.</div>` : (() => {
+            const comps = Array.isArray(item.rateComponents) ? item.rateComponents : [];
+            let rHtml = '';
+            if (comps.length) {
+              rHtml += `<div style="display:flex;gap:4px;align-items:center">
+                <label style="font-size:10px;color:var(--text-muted);width:62px">Rate $/${TAKEOFF_TYPE_UNITS[item.resultType]}</label>
+                <span style="flex:1;font-size:11px;font-weight:700;color:var(--success, #4ade80)" title="Built up from the components below">${formatMoney(effectiveTakeoffRate(item))} <span style="font-weight:400;color:var(--text-muted)">(built up)</span></span>
+              </div>`;
+            } else {
+              rHtml += `<div style="display:flex;gap:4px;align-items:center">
+                <label style="font-size:10px;color:var(--text-muted);width:62px">Rate $/${TAKEOFF_TYPE_UNITS[item.resultType]}</label>
+                <input type="number" step="0.01" class="property-input" style="flex:1;font-size:11px" value="${item.rate || ''}" placeholder="0.00"
+                       onchange="updateTakeoffItemField('${item.id}','rate',this.value)">
+              </div>`;
+            }
+            // Rate build-up editor — labour / material / plant components per unit
+            rHtml += `<div style="border:1px dashed var(--border-color);border-radius:4px;padding:4px 5px;display:flex;flex-direction:column;gap:3px">
+              <div style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase" title="Build the unit rate up from parts — e.g. Labour $45 + Material $38 + Plant $12. The item rate becomes their sum.">Rate build-up ($/${TAKEOFF_TYPE_UNITS[item.resultType]})</div>
+              ${comps.map((c, ci) => `<div style="display:flex;gap:3px;align-items:center">
+                <input type="text" class="property-input" style="flex:1;font-size:10px" value="${escapeHtml(c.label || '')}" placeholder="e.g. Labour"
+                       onchange="updateRateComponent('${item.id}',${ci},'label',this.value)">
+                <input type="number" step="0.01" class="property-input" style="width:64px;font-size:10px" value="${c.amount || ''}"
+                       onchange="updateRateComponent('${item.id}',${ci},'amount',this.value)">
+                <button onclick="deleteRateComponent('${item.id}',${ci})" title="Remove component" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px">×</button>
+              </div>`).join('')}
+              <div style="display:flex;gap:3px;align-items:center">
+                <input type="text" id="rc-new-label-${item.id}" class="property-input" style="flex:1;font-size:10px" placeholder="e.g. Labour"
+                       onkeydown="if(event.key==='Enter')addRateComponent('${item.id}')">
+                <input type="number" step="0.01" id="rc-new-amount-${item.id}" class="property-input" style="width:64px;font-size:10px" placeholder="$"
+                       onkeydown="if(event.key==='Enter')addRateComponent('${item.id}')">
+                <button onclick="addRateComponent('${item.id}')" title="Add rate component" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;font-size:10px;padding:1px 6px">+</button>
+              </div>
+            </div>`;
+            return rHtml;
+          })()}
           <div style="display:flex;gap:4px;align-items:center">
-            <label style="font-size:10px;color:var(--text-muted);width:62px">Rate $/${TAKEOFF_TYPE_UNITS[item.resultType]}</label>
-            <input type="number" step="0.01" class="property-input" style="flex:1;font-size:11px" value="${item.rate || ''}" placeholder="0.00"
-                   onchange="updateTakeoffItemField('${item.id}','rate',this.value)">
-          </div>
-          <div style="display:flex;gap:4px;align-items:center">
-            <label style="font-size:10px;color:var(--text-muted);width:62px">Markup %</label>
+            <label style="font-size:10px;color:var(--text-muted);width:62px" title="${subRows ? 'Applied on top of the assembly total' : 'Applied on top of qty × rate'}">Markup %</label>
             <input type="number" step="0.5" class="property-input" style="flex:1;font-size:11px" value="${item.markup || ''}" placeholder="0"
                    onchange="updateTakeoffItemField('${item.id}','markup',this.value)">
+          </div>
+          <div style="border:1px dashed var(--border-color);border-radius:4px;padding:4px 5px;display:flex;flex-direction:column;gap:3px">
+            <div style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase" title="One drawn shape feeds several bill lines — e.g. a Slab area drives Concrete m³ (area × depth), Mesh m² (area × laps), Edge formwork m (perimeter), Pump (fixed).">Assembly parts${subRows ? ' (' + subRows.length + ')' : ''}</div>
+            ${(item.subItems || []).map(s => {
+              const row = (subRows || []).find(r => r.id === s.id);
+              return `<div style="display:flex;flex-direction:column;gap:2px;padding:3px;border:1px solid var(--border-color);border-radius:3px;background:var(--bg-secondary, rgba(0,0,0,0.15))">
+                <div style="display:flex;gap:3px;align-items:center">
+                  <input type="text" class="property-input" style="flex:1;font-size:10px" value="${escapeHtml(s.name || '')}" placeholder="e.g. Concrete N32"
+                         onchange="updateTakeoffSubItem('${item.id}','${s.id}','name',this.value)">
+                  <button onclick="deleteTakeoffSubItem('${item.id}','${s.id}')" title="Remove part" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px">×</button>
+                </div>
+                <div style="display:flex;gap:3px;align-items:center">
+                  <select class="select-input" style="flex:1.4;font-size:10px" onchange="updateTakeoffSubItem('${item.id}','${s.id}','basis',this.value)" title="What drives this part's quantity">
+                    ${Object.keys(SUBITEM_BASIS_LABELS).map(b => `<option value="${b}" ${(s.basis || 'qty') === b ? 'selected' : ''}>${SUBITEM_BASIS_LABELS[b]}</option>`).join('')}
+                  </select>
+                  <input type="number" step="0.001" class="property-input" style="width:52px;font-size:10px" value="${s.factor === undefined ? 1 : s.factor}" title="Multiplier — e.g. 0.1 for a 100mm depth, 1.05 for 5% laps"
+                         onchange="updateTakeoffSubItem('${item.id}','${s.id}','factor',this.value)">
+                  <input type="text" class="property-input" style="width:34px;font-size:10px" value="${escapeHtml(s.unit || '')}" placeholder="m³"
+                         onchange="updateTakeoffSubItem('${item.id}','${s.id}','unit',this.value)">
+                  <input type="number" step="0.01" class="property-input" style="width:56px;font-size:10px" value="${s.rate || ''}" placeholder="$/unit"
+                         onchange="updateTakeoffSubItem('${item.id}','${s.id}','rate',this.value)">
+                </div>
+                ${row ? `<div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-muted)">
+                  <span>= ${row.qty.toFixed(2)} ${escapeHtml(row.unit)}</span>
+                  <span style="color:var(--success, #4ade80)">${row.rate > 0 ? formatMoney(row.amount) : ''}</span>
+                </div>` : ''}
+              </div>`;
+            }).join('')}
+            <button onclick="addTakeoffSubItem('${item.id}')" style="font-size:10px;background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;padding:2px">${(item.subItems || []).length ? '+ Add part' : '+ Make this an assembly'}</button>
           </div>
           ${needsFactor ? `<div style="display:flex;gap:4px;align-items:center">
             <label style="font-size:10px;color:var(--text-muted);width:62px">${item.resultType === 'vertical' ? 'Height' : 'Depth'} mm</label>
@@ -5043,6 +5867,36 @@ function getTakeoffPanelHTML() {
     </div>`;
   });
 
+  // Per-zone subtotals — only zones (or the untagged bucket) with shapes show
+  if (takeoffZones.length) {
+    let zHtml = '';
+    const zoneList = [...takeoffZones.map(z => ({ id: z.id, name: z.name })), { id: null, name: '(no zone)' }];
+    zoneList.forEach(z => {
+      let rows = '', zoneTotal = 0, zoneHasRate = false;
+      takeoffItems.forEach(item => {
+        const r = computeTakeoffQty(item, a => (a.zoneId || null) === z.id);
+        if (!r.shapes) return;
+        if (r.amount > 0) { zoneTotal += r.amount; zoneHasRate = true; }
+        rows += `<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;padding:2px 4px">
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${item.color};margin-right:4px"></span>${escapeHtml(item.name)}</span>
+          <span style="white-space:nowrap;font-weight:600;color:${item.color}">${formatTakeoffQty(item, r.qty)}${r.uncal ? ' ⚠' : ''}</span>
+        </div>`;
+      });
+      if (!rows) return;
+      zHtml += `<div style="border:1px solid var(--border-color);border-radius:4px;padding:4px;margin-bottom:4px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;color:var(--text-secondary);padding:1px 4px 3px">
+          <span>${escapeHtml(z.name)}</span>
+          ${zoneHasRate ? `<span style="color:var(--success, #4ade80)">${formatMoney(zoneTotal)}</span>` : ''}
+        </div>${rows}</div>`;
+    });
+    if (zHtml) {
+      html += `<div class="properties-section">
+        <div class="properties-section-title">By Zone</div>
+        <div class="properties-section-content">${zHtml}</div>
+      </div>`;
+    }
+  }
+
   // Grand total + footer actions
   html += `<div class="properties-section" style="display:flex;flex-direction:column;gap:6px">
     ${anyRate ? `<div style="display:flex;justify-content:space-between;padding:6px 8px;background:var(--bg-tertiary);border-radius:4px;font-size:12px">
@@ -5051,6 +5905,7 @@ function getTakeoffPanelHTML() {
     <button onclick="exportTakeoffXLSX()" style="width:100%;padding:8px;background:var(--accent);color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">Export to Excel (.xlsx)</button>
     <button onclick="exportTakeoffCSV()" style="width:100%;padding:7px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer">Export CSV</button>
     <button onclick="placeTakeoffLegend()" style="width:100%;padding:7px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer" title="Stamp a live legend of items + totals onto the current page — included when you save/print/flatten">Place Legend on Page</button>
+    <button onclick="placeTakeoffSummary()" style="width:100%;padding:7px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer" title="Stamp a full summary table (quantities, rates, amounts, trade subtotals) onto the current page — updates live and bakes into saves/prints. Switch it to per-page or per-shape detail from its Properties panel.">Place Summary Table</button>
     <div style="font-size:10px;color:var(--text-muted);text-align:center">Esc stops measuring · ◎ highlights an item's shapes</div>
   </div>`;
   return html;
@@ -5075,44 +5930,127 @@ function placeTakeoffLegend() {
   showToast('Legend placed — drag to position; it updates live as you measure');
 }
 
+// Full summary table on the sheet — quantities, rates, amounts, trade
+// subtotals and the estimate total. Same live legend annotation type,
+// just richer options; style/scope switchable in its Properties panel.
+function placeTakeoffSummary() {
+  if (!pdfDoc) { showToast('Open a PDF first'); return; }
+  if (!takeoffItems.length) { showToast('No takeoff items to show yet'); return; }
+  const wrapper = document.getElementById('canvas-wrapper');
+  const x = (wrapper.scrollLeft + 40) / currentScale;
+  const y = (wrapper.scrollTop + 40) / currentScale;
+  const ann = { id: generateId(), type: 'legend', page: currentPage, points: [{ x, y }],
+                legendMode: 'summary', legendScope: 'doc', showRates: true };
+  annotations.push(ann);
+  selectedAnnotationId = ann.id;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+  showToast('Summary table placed — drag to position; style options in Properties');
+}
+
 function drawLegendAnn(ctx, ann) {
-  const pad = 6, rowH = 14, fs = 9, headFs = 10;
+  const mode = ann.legendMode || 'simple';     // simple | summary | detailed
+  const scope = ann.legendScope || 'doc';      // doc | page
+  const filter = scope === 'page' ? (a => a.page === ann.page) : null;
+  const showRates = mode !== 'simple' && ann.showRates !== false;
+  const pad = 6, fs = 9, headFs = 10;
+  const rowH = mode === 'simple' ? 14 : 13;
+
+  // ---- Row model: {swatch, indent, name, qty, rate, amount, bold, rule} ----
+  const rows = [];
+  let grand = 0, anyPriced = false;
+  if (mode === 'simple') {
+    takeoffItems.forEach(item => {
+      const r = computeTakeoffQty(item, filter);
+      rows.push({ swatch: item.color, name: item.name, qty: formatTakeoffQty(item, r.qty) });
+    });
+  } else {
+    const trades = {};
+    takeoffItems.forEach(item => {
+      const t = (item.trade || '').trim() || 'General';
+      (trades[t] = trades[t] || []).push(item);
+    });
+    Object.keys(trades).sort((a,b) => a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b)).forEach(trade => {
+      let sub = 0, priced = false;
+      const tRows = [];
+      trades[trade].forEach(item => {
+        const r = computeTakeoffQty(item, filter);
+        if (filter && !r.shapes) return; // page scope: only items measured on this page
+        tRows.push({ swatch: item.color, name: item.name, qty: formatTakeoffQty(item, r.qty) + (r.uncal ? ' ⚠' : ''),
+          rate: (!r.subRows && r.rate > 0) ? formatMoney(r.rate) : '',
+          amount: r.amount > 0 ? formatMoney(r.amount) : '' });
+        if (r.subRows) r.subRows.forEach(s => {
+          tRows.push({ indent: 1, name: s.name, qty: s.qty.toFixed(2) + (s.unit ? ' ' + s.unit : ''),
+            rate: s.rate > 0 ? formatMoney(s.rate) : '', amount: s.rate > 0 ? formatMoney(s.amount) : '' });
+        });
+        if (mode === 'detailed') {
+          annotations.forEach(a => {
+            if (a.takeoffItemId !== item.id || (filter && !filter(a))) return;
+            const zone = a.zoneId && getTakeoffZone(a.zoneId);
+            tRows.push({ indent: 1,
+              name: 'p' + (a.page + 1) + (zone ? ' · ' + zone.name : '') + (a.isDeduction ? ' · deduct' : ''),
+              qty: (a.label || a.type) });
+          });
+        }
+        if (r.amount > 0) { sub += r.amount; priced = true; }
+      });
+      if (!tRows.length) return;
+      rows.push({ name: trade.toUpperCase(), bold: true, rule: true });
+      rows.push(...tRows);
+      if (priced && showRates) { rows.push({ name: trade + ' subtotal', amount: formatMoney(sub), bold: true }); anyPriced = true; grand += sub; }
+    });
+    if (anyPriced && showRates) rows.push({ name: 'ESTIMATE TOTAL', amount: formatMoney(grand), bold: true, rule: true });
+  }
+  const title = mode === 'simple' ? 'TAKEOFF LEGEND'
+    : 'TAKEOFF SUMMARY — ' + (scope === 'page' ? 'PAGE ' + (ann.page + 1) : 'ALL PAGES');
+
+  // ---- Measure columns ----
   ctx.save();
   ctx.globalAlpha = 1;
-  ctx.font = '600 ' + headFs + 'px "Segoe UI", Arial, sans-serif';
-  // Build rows (live totals)
-  const rows = takeoffItems.map(item => {
-    const { qty } = computeTakeoffQty(item);
-    return { color: item.color, name: item.name, qty: formatTakeoffQty(item, qty) };
-  });
   ctx.font = fs + 'px "Segoe UI", Arial, sans-serif';
-  let nameW = 60, qtyW = 30;
+  let nameW = 70, qtyW = 30, rateW = 0, amtW = 0;
   rows.forEach(r => {
-    nameW = Math.max(nameW, ctx.measureText(r.name).width);
-    qtyW = Math.max(qtyW, ctx.measureText(r.qty).width);
+    const ind = (r.indent ? 10 : 0) + (r.swatch ? 16 : 0);
+    nameW = Math.max(nameW, ctx.measureText(r.name || '').width + ind);
+    qtyW  = Math.max(qtyW, ctx.measureText(r.qty || '').width);
+    if (showRates) {
+      rateW = Math.max(rateW, ctx.measureText(r.rate || '').width);
+      amtW  = Math.max(amtW, ctx.measureText(r.amount || '').width);
+    }
   });
-  const w = pad + 12 + 4 + nameW + 10 + qtyW + pad;
+  ctx.font = '600 ' + headFs + 'px "Segoe UI", Arial, sans-serif';
+  const gap = 10;
+  let w = pad + nameW + gap + qtyW + (showRates ? gap + rateW + gap + amtW : 0) + pad;
+  w = Math.max(w, pad + ctx.measureText(title).width + pad);
   const h = pad + rowH + rows.length * rowH + pad;
   const x = ann.points[0].x, y = ann.points[0].y;
-  // Box
+
+  // ---- Draw ----
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = '#333333'; ctx.lineWidth = 0.75;
   ctx.strokeRect(x, y, w, h);
-  // Title
   ctx.fillStyle = '#111111';
-  ctx.font = '600 ' + headFs + 'px "Segoe UI", Arial, sans-serif';
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-  ctx.fillText('TAKEOFF LEGEND', x + pad, y + pad + rowH / 2 - 2);
-  ctx.font = fs + 'px "Segoe UI", Arial, sans-serif';
+  ctx.fillText(title, x + pad, y + pad + rowH / 2 - 2);
+  const qtyR = x + pad + nameW + gap + qtyW;
+  const rateR = qtyR + gap + rateW;
+  const amtR = rateR + gap + amtW;
   rows.forEach((r, i) => {
     const ry = y + pad + rowH + i * rowH + rowH / 2 - 2;
-    ctx.fillStyle = r.color;
-    ctx.fillRect(x + pad, ry - 4, 12, 8);
-    ctx.fillStyle = '#111111';
-    ctx.fillText(r.name, x + pad + 16, ry);
+    ctx.font = (r.bold ? '700 ' : '') + fs + 'px "Segoe UI", Arial, sans-serif';
+    if (r.rule) {
+      ctx.strokeStyle = '#999999'; ctx.lineWidth = 0.5;
+      ctx.beginPath(); ctx.moveTo(x + pad / 2, ry - rowH / 2 + 1); ctx.lineTo(x + w - pad / 2, ry - rowH / 2 + 1); ctx.stroke();
+    }
+    let nx = x + pad + (r.indent ? 10 : 0);
+    if (r.swatch) { ctx.fillStyle = r.swatch; ctx.fillRect(nx, ry - 4, 12, 8); nx += 16; }
+    ctx.fillStyle = r.indent ? '#444444' : '#111111';
+    ctx.textAlign = 'left';
+    ctx.fillText(r.name || '', nx, ry);
     ctx.textAlign = 'right';
-    ctx.fillText(r.qty, x + w - pad, ry);
+    if (r.qty) ctx.fillText(r.qty, qtyR, ry);
+    if (showRates && r.rate) ctx.fillText(r.rate, rateR, ry);
+    if (showRates && r.amount) ctx.fillText(r.amount, amtR, ry);
     ctx.textAlign = 'left';
   });
   // Cache rendered size for hit-testing / selection box
@@ -5124,12 +6062,14 @@ function exportTakeoffCSV() {
   if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
   let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Markup %,Amount,Shapes,Deductions\n';
   takeoffItems.forEach(item => {
-    const { qty, shapes, amount } = computeTakeoffQty(item);
+    const { qty, shapes, amount, rate, subRows } = computeTakeoffQty(item);
     const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
     const unit = TAKEOFF_TYPE_UNITS[item.resultType];
     const qv = item.resultType === 'count' ? qty : qty.toFixed(3);
-    const rate = parseFloat(item.rate) || 0;
-    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${item.resultType},${item.factor||''},${unit},${qv},${rate||''},${item.markup||''},${rate>0?amount.toFixed(2):''},${shapes},${deds}\n`;
+    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${subRows?'assembly ('+item.resultType+')':item.resultType},${item.factor||''},${unit},${qv},${subRows?'':(rate||'')},${item.markup||''},${amount>0?amount.toFixed(2):''},${shapes},${deds}\n`;
+    if (subRows) subRows.forEach(s => {
+      csv += `"${(item.trade||'General').replace(/"/g,'""')}","  - ${s.name.replace(/"/g,'""')}",part (${SUBITEM_BASIS_LABELS[s.basis]||s.basis} x ${s.factor}),,${s.unit},${s.qty.toFixed(3)},${s.rate||''},,${s.rate>0?s.amount.toFixed(2):''},,\n`;
+    });
   });
   downloadBlob(csv, 'text/csv', currentFilename.replace(/\.pdf$/i, '') + '_takeoff.csv');
   showToast('Takeoff CSV exported');
@@ -5251,14 +6191,18 @@ function exportTakeoffXLSX() {
   Object.keys(trades).sort((a,b) => a === 'General' ? 1 : b === 'General' ? -1 : a.localeCompare(b)).forEach(trade => {
     let sub = 0;
     trades[trade].forEach(item => {
-      const { qty, shapes, amount } = computeTakeoffQty(item);
+      const { qty, shapes, amount, rate, subRows } = computeTakeoffQty(item);
       const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
-      const rate = parseFloat(item.rate) || 0;
-      sub += rate > 0 ? amount : 0;
-      sum.push([trade, item.name, TAKEOFF_TYPE_LABELS[item.resultType] || item.resultType,
+      sub += amount > 0 ? amount : 0;
+      sum.push([trade, item.name, (subRows ? 'Assembly — ' : '') + (TAKEOFF_TYPE_LABELS[item.resultType] || item.resultType),
         item.factor ? Number(item.factor) : '', TAKEOFF_TYPE_UNITS[item.resultType],
-        Number(qty.toFixed(3)), rate || '', item.markup ? Number(item.markup) : '',
-        rate > 0 ? Number(amount.toFixed(2)) : '', shapes, deds]);
+        Number(qty.toFixed(3)), subRows ? '' : (rate || ''), item.markup ? Number(item.markup) : '',
+        amount > 0 ? Number(amount.toFixed(2)) : '', shapes, deds]);
+      if (subRows) subRows.forEach(s => {
+        sum.push([trade, '    – ' + s.name, 'Part: ' + (SUBITEM_BASIS_LABELS[s.basis] || s.basis) + ' × ' + s.factor,
+          '', s.unit, Number(s.qty.toFixed(3)), s.rate || '', '',
+          s.rate > 0 ? Number(s.amount.toFixed(2)) : '', '', '']);
+      });
     });
     grand += sub;
     sum.push(['', trade + ' subtotal', '', '', '', '', '', '', sub ? Number(sub.toFixed(2)) : '', '', '']);
@@ -5267,19 +6211,53 @@ function exportTakeoffXLSX() {
   sum.push(['', 'ESTIMATE TOTAL', '', '', '', '', '', '', grand ? Number(grand.toFixed(2)) : '', '', '']);
 
   // Sheet 2 — per-shape breakdown
-  const shapes = [['Trade','Item','Page','Shape type','Deduction','Measured value','Scale used']];
+  const shapes = [['Trade','Item','Zone','Page','Shape type','Deduction','Measured value','Scale used']];
   takeoffItems.forEach(item => {
     annotations.filter(a => a.takeoffItemId === item.id).forEach(a => {
       const cal = _calFor(a.page, a.points && a.points[0]);
-      shapes.push([(item.trade || 'General'), item.name, a.page + 1, a.type,
+      const zone = a.zoneId && getTakeoffZone(a.zoneId);
+      shapes.push([(item.trade || 'General'), item.name, zone ? zone.name : '', a.page + 1, a.type,
         a.isDeduction ? 'Yes' : '', (a.label || '').replace('−','-'), cal ? cal.scale : 'NOT CALIBRATED']);
     });
   });
 
-  const bytes = _xlsxFromSheets([
+  const sheets = [
     { name: 'Takeoff Summary', rows: sum },
     { name: 'Shape Breakdown', rows: shapes }
-  ]);
+  ];
+
+  // Sheet 3 — per-zone subtotals (only when zones are in use)
+  if (takeoffZones.length) {
+    const zrows = [['Zone','Trade','Item','Unit','Quantity','Amount ($)']];
+    const zoneList = [...takeoffZones.map(z => ({ id: z.id, name: z.name })), { id: null, name: '(no zone)' }];
+    zoneList.forEach(z => {
+      let zTotal = 0, zAny = false;
+      takeoffItems.forEach(item => {
+        const r = computeTakeoffQty(item, a => (a.zoneId || null) === z.id);
+        if (!r.shapes) return;
+        zAny = true;
+        if (r.amount > 0) zTotal += r.amount;
+        zrows.push([z.name, item.trade || 'General', item.name, TAKEOFF_TYPE_UNITS[item.resultType],
+          Number(r.qty.toFixed(3)), r.amount > 0 ? Number(r.amount.toFixed(2)) : '']);
+      });
+      if (zAny) { zrows.push(['', '', z.name + ' subtotal', '', '', zTotal ? Number(zTotal.toFixed(2)) : '']); zrows.push([]); }
+    });
+    sheets.push({ name: 'By Zone', rows: zrows });
+  }
+
+  // Sheet 4 — rate build-ups (only when any item has one)
+  if (takeoffItems.some(i => Array.isArray(i.rateComponents) && i.rateComponents.length)) {
+    const rrows = [['Item','Component','$ per unit']];
+    takeoffItems.forEach(item => {
+      if (!Array.isArray(item.rateComponents) || !item.rateComponents.length) return;
+      item.rateComponents.forEach(c => rrows.push([item.name, c.label, Number((parseFloat(c.amount) || 0).toFixed(2))]));
+      rrows.push([item.name, 'TOTAL RATE', Number(effectiveTakeoffRate(item).toFixed(2))]);
+      rrows.push([]);
+    });
+    sheets.push({ name: 'Rate Build-ups', rows: rrows });
+  }
+
+  const bytes = _xlsxFromSheets(sheets);
   downloadBlob(bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     currentFilename.replace(/\.pdf$/i, '') + '_takeoff.xlsx');
   showToast('Takeoff exported to Excel');
@@ -5288,6 +6266,20 @@ function exportTakeoffXLSX() {
 function togglePanel() {
   const collapsed = document.getElementById('panel').classList.toggle('collapsed');
   panelUserCollapsed = collapsed; // remember the user's explicit choice
+}
+
+// Topbar "Panel" button / F4 — reopen or hide the right panel. (The × in the
+// panel header could close it, but nothing visible could bring it back.)
+function togglePanelVisible() {
+  const panel = document.getElementById('panel');
+  if (panel.classList.contains('collapsed')) {
+    panelUserCollapsed = false;
+    panel.classList.remove('collapsed');
+    openPropertiesPanel(true);
+  } else {
+    panel.classList.add('collapsed');
+    panelUserCollapsed = true;
+  }
 }
 
 function getFilePropertiesHTML() {
@@ -5375,6 +6367,23 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
+  if (ann.type === 'legend') {
+    html += `<div class="properties-section"><div class="properties-section-title">Takeoff Table</div><div class="properties-section-content">
+      <div class="property-row"><div class="property-label">Style:</div><select id="prop-legend-mode" class="select-input">
+        <option value="simple" ${(ann.legendMode||'simple')==='simple'?'selected':''}>Legend — items &amp; quantities</option>
+        <option value="summary" ${ann.legendMode==='summary'?'selected':''}>Summary — rates &amp; totals</option>
+        <option value="detailed" ${ann.legendMode==='detailed'?'selected':''}>Detailed — every measured shape</option>
+      </select></div>
+      <div class="property-row"><div class="property-label">Covers:</div><select id="prop-legend-scope" class="select-input">
+        <option value="doc" ${(ann.legendScope||'doc')==='doc'?'selected':''}>Whole document</option>
+        <option value="page" ${ann.legendScope==='page'?'selected':''}>This page only</option>
+      </select></div>
+      <div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" class="checkbox-input" id="prop-legend-rates" ${ann.showRates !== false ? 'checked' : ''}> Show rates &amp; amounts</label></div>
+      <div style="font-size:10px;color:var(--text-muted)">Updates live as you measure; bakes into saves, prints and flattens.</div>
+    </div></div>`;
+  }
+
   if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature' && ann.type !== 'legend') {
     html += `<div class="properties-section"><div class="properties-section-title">Appearance</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Colour:</div><input type="color" id="prop-color" class="color-picker" value="${ann.color||'#D97757'}"></div>
@@ -5417,6 +6426,23 @@ function getAnnotationPropertiesHTML(ann) {
     html += `</div></div>`;
   }
 
+  // Rotation — 90° buttons for everything rotatable; exact angle for shapes
+  // that carry a stored rotation, "rotate by" for shapes whose points are
+  // rotated permanently (lines, polygons, measurements...).
+  if (annCanRotate(ann)) {
+    const isProp = ROT_PROP_TYPES.includes(ann.type);
+    html += `<div class="properties-section"><div class="properties-section-title">Rotation</div><div class="properties-section-content">
+      <div class="property-row" style="gap:6px">
+        <button class="modal-btn" style="flex:1" onclick="rotateSelectedAnnotation(-90)" title="Rotate 90° anti-clockwise">&#8634; 90&deg;</button>
+        <button class="modal-btn" style="flex:1" onclick="rotateSelectedAnnotation(90)" title="Rotate 90° clockwise">&#8635; 90&deg;</button>
+      </div>
+      ${isProp
+        ? `<div class="property-row"><div class="property-label">Angle (&deg;):</div><input type="number" id="prop-rotation" class="property-input" min="-360" max="360" step="1" value="${Math.round(ann.rotation||0)}"></div>`
+        : `<div class="property-row"><div class="property-label">By (&deg;):</div><input type="number" id="prop-rotate-by" class="property-input" step="1" value="15" style="width:60px"><button class="modal-btn" onclick="rotateSelectedAnnotation(parseFloat(document.getElementById('prop-rotate-by').value)||0)">Apply</button></div>`}
+      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Or drag the round handle above the selected shape (Shift = 15&deg; steps)</div>
+    </div></div>`;
+  }
+
   // Takeoff assignment — link/unlink this shape to a takeoff item after the fact
   if (['measure','polyline','dimension','area','count'].includes(ann.type) && takeoffItems.length) {
     const compat = compatibleTakeoffItems(ann);
@@ -5431,6 +6457,11 @@ function getAnnotationPropertiesHTML(ann) {
         ${ann.takeoffItemId ? `<div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
           <input type="checkbox" onchange="toggleShapeDeduction('${safeId}')" ${ann.isDeduction ? 'checked' : ''}>
           Deduction (subtracts from item)</label></div>` : ''}
+        ${ann.takeoffItemId && takeoffZones.length ? `<div class="property-row"><div class="property-label">Zone:</div>
+          <select class="select-input" onchange="setShapeZone('${safeId}', this.value)">
+            <option value="">(no zone)</option>
+            ${takeoffZones.map(z => `<option value="${z.id}" ${ann.zoneId === z.id ? 'selected' : ''}>${escapeHtml(z.name)}</option>`).join('')}
+          </select></div>` : ''}
       </div></div>`;
     }
   }
@@ -5544,6 +6575,14 @@ function attachAnnotationListeners(ann) {
   bind('prop-thickness', 'thickness', t => parseFloat(t.value));
   bind('prop-linestyle', 'lineStyle');
   bind('prop-hatch', 'hatch');
+  bind('prop-rotation', 'rotation', t => {
+    let v = parseFloat(t.value) || 0;
+    v %= 360; if (v < 0) v += 360;
+    return v;
+  });
+  bind('prop-legend-mode', 'legendMode');
+  bind('prop-legend-scope', 'legendScope');
+  bind('prop-legend-rates', 'showRates', t => t.checked);
 
   const opSlider = document.getElementById('prop-opacity');
   if (opSlider) opSlider.addEventListener('input', e => { ann.opacity = parseInt(e.target.value); document.getElementById('prop-op-val').textContent = e.target.value+'%'; redrawAnnotations(); pushHistorySoon(); });
@@ -5733,7 +6772,7 @@ function getToolPropertiesHTML(tool) {
     if (!['text','highlight'].includes(tool)) {
       html += `<div class="property-row"><div class="property-label">Thickness:</div><input type="number" id="tool-thickness" class="property-input" min="0.5" max="10" step="0.5" value="${toolProperties.thickness}"></div>`;
     }
-    if (['line','arrow','measure','polyline','dimension'].includes(tool)) {
+    if (['line','arrow','measure','polyline','polyshape','dimension'].includes(tool)) {
       html += `<div class="property-row"><div class="property-label">Line Style:</div><select id="tool-linestyle" class="select-input">
         <option value="solid" ${toolProperties.lineStyle==='solid'?'selected':''}>Solid</option>
         <option value="dashed" ${toolProperties.lineStyle==='dashed'?'selected':''}>Dashed</option>
@@ -5868,6 +6907,7 @@ function saveToHistory() {
     measurements: measurements,
     countGroups: countGroups,
     takeoffItems: takeoffItems,
+    takeoffZones: takeoffZones,
     viewports: viewports
   }));
   if (history.length > 50) { history.shift(); historyIndex--; }
@@ -5891,6 +6931,7 @@ function _applyHistorySnapshot(snap) {
     measurements = s.measurements || [];
     countGroups = s.countGroups || {};
     takeoffItems = s.takeoffItems || takeoffItems;
+    if (s.takeoffZones) takeoffZones = s.takeoffZones;
     if (s.viewports) viewports = s.viewports;
   }
   selectedAnnotationId = null;
@@ -7463,9 +8504,12 @@ function showSaveToast(msg) {
   if (!toast) {
     toast = document.createElement('div');
     toast.id = 'bdm-save-toast';
+    // pointer-events:none is load-bearing: the toast sits centred over the
+    // horizontal scrollbar and only fades to opacity 0 — without it, the
+    // invisible box swallowed clicks on the middle of the bottom scrollbar.
     toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);'
       + 'background:#1a1b2e;color:#e8e9f0;border:1px solid #D97757;padding:8px 16px;'
-      + 'border-radius:6px;font:13px "Segoe UI",sans-serif;z-index:9999;'
+      + 'border-radius:6px;font:13px "Segoe UI",sans-serif;z-index:9999;pointer-events:none;'
       + 'box-shadow:0 4px 12px rgba(0,0,0,0.4);opacity:0;transition:opacity 0.2s';
     document.body.appendChild(toast);
   }
@@ -7807,6 +8851,7 @@ async function saveProject() {
       countGroups: countGroups,
       measurements: measurements,
       takeoffItems: takeoffItems,
+      takeoffZones: takeoffZones,
       viewports: viewports,
       toolPresets: toolPresets,
       savedAt: new Date().toISOString()
@@ -8679,7 +9724,8 @@ function rebuildMeasurements() {
   const measTypes = ['measure', 'polyline', 'dimension', 'area'];
   const existingIds = new Set(measurements.map(m => m.id));
 
-  annotations.filter(a => measTypes.includes(a.type)).forEach(ann => {
+  // isShape = drawn with the polyline SHAPE tool — never a measurement
+  annotations.filter(a => measTypes.includes(a.type) && !a.isShape).forEach(ann => {
     if (!existingIds.has(ann.id)) {
       measurements.push({
         id: ann.id, page: ann.page,
