@@ -344,5 +344,38 @@ while ((m = re.exec(h))) {
 - **Takeoff shape lists** — the active item's editor lists every measured shape (page + value): click to locate, ± flips deduction, ⤴ unlinks, × deletes. Any existing measurement can also be assigned to an item from its Properties panel ("Takeoff" section dropdown + deduction checkbox). `assignAnnotationToItem`, `compatibleTakeoffItems`.
 - **On-sheet legend** — "Place Legend on Page" (takeoff panel) drops a live white table annotation (item colour / name / qty) that recomputes on every redraw and bakes into saves/prints/flattens. Draggable; new annotation type 'legend' (`drawLegendAnn`, hit-test via cached `_legendW/_legendH`).
 
+### v2.4 — rotate, scrollbar fix, two-document viewing (2 Jul 2026)
+
+**Bug fix: bottom scroll bar dead in the middle.** The save/snap toast (`showSaveToast`) is a `position:fixed` element centred at the bottom of the window that only fades to `opacity:0` — it never got `pointer-events:none`, so after the first toast an invisible box permanently swallowed clicks on the middle of the horizontal scrollbar. Fixed by adding `pointer-events:none` to the toast and to the typed-distance hint (same risk at `bottom:56px`).
+
+**Rotate shapes.** Two families (see `ROT_PROP_TYPES` / `ROT_POINT_TYPES` constants):
+- Box/anchored shapes (rectangle, ellipse, highlight, image, signature, stamp, text) carry `ann.rotation` (degrees CW) applied as a canvas transform around `annRotationCenter()` in `drawAnnotation` — so screen, bake, flatten, compress and print all render it identically, and it persists in saves/history for free (plain property). Points stay stored unrotated; `annLocalPoint()` maps probe points into the local frame for `hitTest`, `getResizeHandleAtPoint` and `applyResize`. Snap candidates are rotated to on-screen positions in `snapPagePoint`.
+- Point-based shapes (line, arrow, measure, dimension, polygon, polyline, area, cloud, pen) get rotation baked permanently into their points around the centroid — measurements are unaffected (rotation-invariant).
+- UX: round drag handle floating above the selected shape (Shift = 15° steps, magnet on 0/90/180/270), plus a Rotation section in Properties (↺/↻ 90° buttons; exact angle input for stored-rotation shapes, "rotate by" for point-based). `cutcontent` deliberately excluded — redactions stay axis-aligned. Rotating text about its anchor; stamps about their centre point.
+
+**Split view (two documents side by side).** New `#canvas-split-row` wraps `#canvas-wrapper` plus a draggable divider and `#split-pane` (own header: document dropdown, page nav, zoom ±/Fit, ⇄ swap, ✕). The pane renders any open tab — or another page of the active document — via its own pdf.js render loop (`renderSplitPane`, cancel-safe via `_splitRenderSeq`). Annotations are drawn by temporarily swapping the doc-state globals (`drawSplitPaneAnnotations`) since `drawAnnotation`/`_calFor` read globals; synchronous swap-and-restore. **The pane is view-only** (pan/zoom/page-nav; no markup editing) — ⇄ swaps which document is in the editor. When the pane shows the doc being edited, `scheduleSplitRefresh()` (hooked at the end of `redrawAnnotations`) mirrors edits live, one overlay redraw per frame. `closeDoc`/`renderDocTabs` keep `splitDocIndex` and the dropdown in sync. `#drop-zone` became an absolute overlay so the empty state still fills the canvas area.
+
+**Pop-out window.** `openPopoutWindow()` — `window.open(location.href, …)` gives a second fully independent editor (own tabs, own state) to drag onto the other monitor. Entry points: topbar "Split" button + View menu → "Split View (side by side)" / "New Window (second screen)".
+
+### v2.5 — takeoff estimating upgrade (2 Jul 2026)
+
+**Assemblies (composite items).** An item can carry `subItems: [{name, basis, factor, unit, rate}]` — one drawn shape feeds several bill lines. `computeTakeoffQty` now aggregates every geometry basis per item (length m, area m², perimeter m — absolute, so deduction openings still get edge treatment — and signed count); each part's qty = basis × factor (e.g. Slab area → Concrete m³ at ×0.1 depth, Edge formwork m from perimeter, Pump fixed). Assembly amount = Σ parts × (1 + markup%); the parent's flat rate is ignored. Editor lives in the active item's expander ("+ Make this an assembly"); parts appear indented in the panel, exports and the on-sheet summary. Verified numerically in node (48m² slab with 2m² opening → 4.8m³ / 36m perim / correct $ totals).
+
+**Zones.** `takeoffZones` [{id,name}] per document + `activeTakeoffZoneId`; new shapes get `ann.zoneId` (persists with annotations). Zone picker row in the takeoff panel (+ Add zone…/rename/delete — deleting keeps shapes, drops the tag), per-shape reassignment in the shape's Properties → Takeoff, "By Zone" subtotal cards in the panel, Zone column in Shape Breakdown and a "By Zone" sheet in the XLSX. Persisted through doc tabs, saves, history and the split-pane global swap.
+
+**Rate build-up.** `item.rateComponents: [{label, amount}]` — when present, `effectiveTakeoffRate()` (their sum) replaces the flat rate everywhere and the panel shows "$X (built up)" read-only. Editor in the item expander; XLSX gains a "Rate Build-ups" sheet.
+
+**Takeoff on the drawings.** `placeTakeoffSummary()` places a legend-type annotation with `legendMode:'summary'`; `drawLegendAnn` rewritten with three styles switchable from the annotation's Properties → Takeoff Table: simple (items+qty, the old legend), summary (trade-grouped with rates/amounts/subtotals/estimate total), detailed (every measured shape with page, zone, deduct flag and its dimension). Scope: whole document or this-page-only; rates column toggleable. Still recomputes live on every redraw and bakes into saves/prints/flattens.
+
+### v2.6 — toolbar layout (2 Jul 2026)
+
+**Top bar wraps + compact mode.** `#topbar` now `flex-wrap: wrap` (auto second row on narrow windows) instead of `overflow-x: auto` which hid buttons behind a sideways scroll. New compact toggle (double-arrow button, far right): `#topbar.compact .topbar-btn { font-size: 0 }` collapses labels to icon-only without touching markup (tooltips still name everything). Persisted in localStorage `bdm-topbar-compact`.
+
+**Left toolbar grouped.** Tools now sit in four collapsible groups — MEASURE (teal), SHAPES (orange), MARKUP (purple), EDIT (red) — each a `.tool-group[data-group=…]` with coloured left stripe + tinted background and a clickable label (chevron) to collapse. Select/Pan stay ungrouped on top. Collapsed state persisted per group (`bdm-toolgroup-<name>`), restored in `restoreToolbarLayout()` on DOMContentLoaded. `setTool`'s `.tool-btn` querySelectorAll still finds the nested buttons; button markup unchanged (24 preserved).
+
+### v2.6.1 — polyline shape + heading legibility (2 Jul 2026)
+- New **Polyline Shape** tool (Y) in the SHAPES group: same click-click flow as the polyline measure but commits `type:'polyline'` with `isShape:true, hideLabel:true` — no measurement label, skipped by `rebuildMeasurements` and `drawPolylineMeasure` label logic. Icon = zigzag with vertex dots.
+- Tool group headings enlarged 7.5px → 9px with brighter per-group colours (teal/orange/purple/red 300-level tints) after feedback they were hard to read.
+
 ### Lesson learned (tooling)
 - The OneDrive-synced project folder can serve a **stale/truncated copy to the sandbox shell** while the real file (via Read/Write tools) is fine — verify against the real file, and beware `sed -i` on the mount. A mid-edit OneDrive lock once truncated the file tail (EBUSY); if a file ever ends mid-line, the missing tail can be restored from v1 since the last ~400 lines are unchanged between versions.
