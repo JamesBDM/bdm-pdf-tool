@@ -5922,11 +5922,21 @@ function getTakeoffPanelHTML() {
           ${(() => {
             const itemShapes = annotations.filter(a => a.takeoffItemId === item.id);
             if (!itemShapes.length) return '<div style="font-size:10px;color:var(--text-muted)">No shapes measured yet — draw on the plan.</div>';
-            let sh = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Shapes (${itemShapes.length}) — click to locate · ± flips deduction</div>`;
+            // Volume/vertical items get a per-shape depth/height box on every row.
+            const shFactored = item.resultType === 'volume' || item.resultType === 'vertical';
+            const shWhat = item.resultType === 'vertical' ? 'height' : 'depth';
+            const shDef = parseFloat(item.factor) || 0;
+            let sh = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Shapes (${itemShapes.length}) — click to locate · ± flips deduction${shFactored ? ` · ${shWhat} mm per shape (blank = item default ${shDef || '?'})` : ''}</div>`;
             itemShapes.forEach(a => {
+              const hasOv = a.takeoffFactor !== undefined && a.takeoffFactor !== null && a.takeoffFactor !== '' && isFinite(parseFloat(a.takeoffFactor));
+              const effF = hasOv ? parseFloat(a.takeoffFactor) : shDef;
               sh += `<div style="display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:3px;background:var(--bg-secondary, rgba(0,0,0,0.15))">
-                <span onclick="locateTakeoffShape('${a.id}')" title="Go to this shape" style="flex:1;min-width:0;font-size:10px;cursor:pointer;color:${a.isDeduction ? '#e74c3c' : 'var(--text-secondary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                <span onclick="locateTakeoffShape('${a.id}')" title="Go to this shape${shFactored ? ` — using ${effF || 'NO'} mm ${shWhat}` : ''}" style="flex:1;min-width:0;font-size:10px;cursor:pointer;color:${a.isDeduction ? '#e74c3c' : 'var(--text-secondary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
                   p${a.page+1} · ${escapeHtml(a.label || a.type)}</span>
+                ${shFactored ? `<input type="number" step="1" min="0" value="${hasOv ? a.takeoffFactor : ''}" placeholder="${shDef || 'mm'}"
+                  title="This shape's ${shWhat} in mm. Blank = item default (${shDef ? shDef + ' mm' : 'not set'}). Currently using ${effF || 'NOTHING — set a value!'}${effF ? ' mm' : ''}."
+                  style="width:52px;font-size:10px;padding:1px 3px;border:1px solid ${hasOv ? 'var(--accent, #D97757)' : 'var(--border-color)'};border-radius:3px;background:none;color:${hasOv ? 'var(--accent, #D97757)' : 'var(--text-secondary)'}"
+                  onclick="event.stopPropagation()" onchange="setShapeFactor('${a.id}', this.value)">` : ''}
                 <button onclick="toggleShapeDeduction('${a.id}')" title="${a.isDeduction ? 'Make this shape ADD again' : 'Make this shape a DEDUCTION'}" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:${a.isDeduction ? '#e74c3c' : 'var(--text-muted)'};cursor:pointer;font-size:10px;padding:0 4px">±</button>
                 <button onclick="unassignTakeoffShape('${a.id}')" title="Unlink from this item (shape stays on drawing)" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:10px;padding:0 2px">⤴</button>
                 <button onclick="deleteTakeoffShape('${a.id}')" title="Delete this shape" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px">×</button>
