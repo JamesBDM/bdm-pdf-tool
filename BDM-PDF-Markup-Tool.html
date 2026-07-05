@@ -5375,6 +5375,11 @@ function computeTakeoffQty(item, shapeFilter) {
   let lenPx = 0, areaPx = 0, perimPx = 0, countN = 0;
   const lengthLike = item.resultType === 'length' || item.resultType === 'vertical';
   const areaLike   = item.resultType === 'area'   || item.resultType === 'volume';
+  const factored   = item.resultType === 'vertical' || item.resultType === 'volume';
+  const factor = parseFloat(item.factor) || 0;        // item default height / depth in mm
+  // Per-shape factored total: Σ (geometry × THIS shape's own height/depth).
+  // Each shape uses its takeoffFactor override when set, else the item default.
+  let factoredAcc = 0, factorMissing = false;
   annotations.forEach(a => {
     if (a.takeoffItemId !== item.id || !a.points || !a.points.length) return;
     if (shapeFilter && !shapeFilter(a)) return;
@@ -5384,30 +5389,36 @@ function computeTakeoffQty(item, shapeFilter) {
     if (item.resultType === 'count') { raw += sign; return; }
     const cal = _calFor(a.page, a.points[0]);
     if (!cal) { uncal = true; return; }
+    // Effective height/depth for THIS shape (mm): override wins over item default.
+    const hasOverride = a.takeoffFactor !== undefined && a.takeoffFactor !== null && a.takeoffFactor !== '' && isFinite(parseFloat(a.takeoffFactor));
+    const shFactor = hasOverride ? parseFloat(a.takeoffFactor) : factor;
+    if (factored && !(shFactor > 0)) factorMissing = true;
     if (lengthLike) {
-      const d = _polyPerimeterPx(a.points, false);
-      raw += sign * (d / cal.pixelsPerMm);            // mm
-      lenPx += sign * (d / cal.pixelsPerMm);
+      const mm = sign * (_polyPerimeterPx(a.points, false) / cal.pixelsPerMm); // mm
+      raw += mm;
+      lenPx += mm;
+      factoredAcc += mm * shFactor;
     } else if (areaLike && a.points.length >= 3) {
-      raw += sign * (getPolygonArea(a.points) / (cal.pixelsPerMm * cal.pixelsPerMm)); // mm²
-      areaPx += sign * (getPolygonArea(a.points) / (cal.pixelsPerMm * cal.pixelsPerMm));
+      const areaMm2 = sign * (getPolygonArea(a.points) / (cal.pixelsPerMm * cal.pixelsPerMm)); // mm²
+      raw += areaMm2;
+      areaPx += areaMm2;
       perimPx += _polyPerimeterPx(a.points, true) / cal.pixelsPerMm; // absolute — openings still get edges
+      factoredAcc += areaMm2 * shFactor;
     }
   });
-  const factor = parseFloat(item.factor) || 0;        // height / depth in mm
   let qty;
   switch (item.resultType) {
     case 'length':   qty = raw / 1000; break;                       // mm → m
     case 'area':     qty = raw / 1e6; break;                        // mm² → m²
-    case 'vertical': qty = (raw * factor) / 1e6; break;             // mm × mm → m²
-    case 'volume':   qty = (raw * factor) / 1e9; break;             // mm² × mm → m³
+    case 'vertical': qty = factoredAcc / 1e6; break;                // Σ(mm × mm) → m²
+    case 'volume':   qty = factoredAcc / 1e9; break;                // Σ(mm² × mm) → m³
     default:         qty = raw;                                     // count
   }
   const lenM = lenPx / 1000, areaM2 = areaPx / 1e6, perimM = perimPx / 1000;
   const rate = effectiveTakeoffRate(item);
   const markup = parseFloat(item.markup) || 0;   // % on top of rate (Cubit-style Markup column)
   // Missing factor on a factored type — flag like uncalibrated
-  const needsFactor = (item.resultType === 'vertical' || item.resultType === 'volume') && !(factor > 0);
+  const needsFactor = factored && factorMissing;
 
   // Assembly: sub-items derive their quantities from this item's geometry.
   let subRows = null, amount;
@@ -5606,6 +5617,16 @@ function setShapeZone(annId, zoneId) {
   if (!a) return;
   if (zoneId) a.zoneId = zoneId; else delete a.zoneId;
   saveToHistory(); refreshTakeoffPanel(); openPropertiesPanel();
+}
+
+// Per-shape height/depth override for volume (m³) and vertical (m²) items.
+// Blank clears the override so the shape falls back to the item default.
+function setShapeFactor(annId, value) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  const v = (value === '' || value === null || value === undefined) ? NaN : parseFloat(value);
+  if (isFinite(v) && v >= 0) a.takeoffFactor = v; else delete a.takeoffFactor;
+  saveToHistory(); refreshTakeoffPanel(); redrawAnnotations();
 }
 
 // ---- Rate build-up (labour + material + plant components per item) ----
@@ -6269,13 +6290,20 @@ function exportTakeoffXLSX() {
   sum.push(['', 'ESTIMATE TOTAL', '', '', '', '', '', '', grand ? Number(grand.toFixed(2)) : '', '', '']);
 
   // Sheet 2 — per-shape breakdown
-  const shapes = [['Trade','Item','Zone','Page','Shape type','Deduction','Measured value','Scale used']];
+  const shapes = [['Trade','Item','Zone','Page','Shape type','Deduction','Measured value','Depth/Height mm','Scale used']];
   takeoffItems.forEach(item => {
+    const factored = item.resultType === 'volume' || item.resultType === 'vertical';
     annotations.filter(a => a.takeoffItemId === item.id).forEach(a => {
       const cal = _calFor(a.page, a.points && a.points[0]);
       const zone = a.zoneId && getTakeoffZone(a.zoneId);
+      let eff = '';
+      if (factored) {
+        const hasOv = a.takeoffFactor !== undefined && a.takeoffFactor !== null && a.takeoffFactor !== '';
+        const n = hasOv ? parseFloat(a.takeoffFactor) : (parseFloat(item.factor) || 0);
+        eff = (isFinite(n) && n > 0) ? Number(n) : '';
+      }
       shapes.push([(item.trade || 'General'), item.name, zone ? zone.name : '', a.page + 1, a.type,
-        a.isDeduction ? 'Yes' : '', (a.label || '').replace('−','-'), cal ? cal.scale : 'NOT CALIBRATED']);
+        a.isDeduction ? 'Yes' : '', (a.label || '').replace('−','-'), eff, cal ? cal.scale : 'NOT CALIBRATED']);
     });
   });
 
@@ -6516,6 +6544,17 @@ function getAnnotationPropertiesHTML(ann) {
         ${ann.takeoffItemId ? `<div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
           <input type="checkbox" onchange="toggleShapeDeduction('${safeId}')" ${ann.isDeduction ? 'checked' : ''}>
           Deduction (subtracts from item)</label></div>` : ''}
+        ${(() => {
+          const it = ann.takeoffItemId && getTakeoffItem(ann.takeoffItemId);
+          if (!it || (it.resultType !== 'volume' && it.resultType !== 'vertical')) return '';
+          const what = it.resultType === 'vertical' ? 'Height' : 'Depth';
+          const def = parseFloat(it.factor) || 0;
+          const hasOv = ann.takeoffFactor !== undefined && ann.takeoffFactor !== null && ann.takeoffFactor !== '';
+          const val = hasOv ? ann.takeoffFactor : '';
+          return `<div class="property-row"><div class="property-label" title="This shape's ${what.toLowerCase()} in mm. Leave blank to use the item default (${def ? def + ' mm' : 'not set'}).">${what} mm:</div>
+            <input type="number" class="property-input" step="1" min="0" value="${val}" placeholder="${def ? def + ' (item)' : 'item default'}"
+              onchange="setShapeFactor('${safeId}', this.value)"></div>`;
+        })()}
         ${ann.takeoffItemId && takeoffZones.length ? `<div class="property-row"><div class="property-label">Zone:</div>
           <select class="select-input" onchange="setShapeZone('${safeId}', this.value)">
             <option value="">(no zone)</option>
