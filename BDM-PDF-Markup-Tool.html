@@ -65,6 +65,8 @@ input, select, textarea { font: inherit; color: inherit; }
 #topbar.compact .logo span { display: none; }
 #topbar .logo { font-weight: 700; font-size: 14px; color: var(--accent); letter-spacing: 0.5px; white-space: nowrap; }
 #topbar .logo span { color: var(--text-secondary); font-weight: 400; font-size: 12px; margin-left: 6px; }
+#topbar .logo #app-version { color: var(--accent); font-weight: 700; font-size: 10px; border: 1px solid var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 6px; opacity: .85; }
+#topbar.compact .logo #app-version { display: inline; } /* version stays visible even in compact mode */
 #topbar .separator { width: 1px; height: 20px; background: var(--border-color); margin: 0 2px; flex-shrink:0; }
 .topbar-btn {
   display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 4px;
@@ -365,6 +367,39 @@ input, select, textarea { font: inherit; color: inherit; }
    of the same one) side by side with the editor. View/pan/zoom only; all
    markup editing happens in the main pane. */
 #canvas-split-row { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+
+/* ESTIMATE WORKBOOK (v2.8) — Cubit-style spreadsheet docked under the drawing */
+#workbook-dock { display: none; flex-direction: column; height: 300px; min-height: 120px; max-height: 75vh; background: var(--bg-secondary); border-top: 1px solid var(--border-color); flex: none; }
+#workbook-dock.open { display: flex; }
+#workbook-resizer { height: 5px; cursor: ns-resize; background: var(--border-color); opacity: .5; flex: none; }
+#workbook-resizer:hover, #workbook-resizer.dragging { opacity: 1; background: var(--accent); }
+#workbook-toolbar { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-bottom: 1px solid var(--border-color); flex: none; }
+#workbook-body { flex: 1; overflow: auto; min-height: 0; }
+#wb-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+#wb-table th { position: sticky; top: 0; z-index: 2; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--border-color); }
+#wb-table th.wb-left { text-align: left; }
+#wb-table td { padding: 2px 6px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+#wb-table tr.wb-pkg td { background: rgba(255,255,255,0.045); font-weight: 700; cursor: pointer; user-select: none; }
+#wb-table tr.wb-pkg:hover td { background: rgba(255,255,255,0.08); }
+#wb-table tr.wb-item:hover td { background: var(--bg-hover); }
+#wb-table tr.wb-part td { color: var(--text-secondary); font-size: 10.5px; }
+#wb-table tr.wb-meas td { color: var(--text-secondary); font-size: 10.5px; cursor: pointer; }
+#wb-table tr.wb-meas:hover td { background: var(--bg-hover); }
+#wb-table tr.wb-total td { font-weight: 700; border-top: 2px solid var(--border-color); background: rgba(255,255,255,0.045); }
+.wb-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wb-code { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.wb-act { text-align: right; white-space: nowrap; }
+.wb-act button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 0 3px; }
+.wb-act button:hover { color: var(--text-primary); }
+.wb-input { width: 100%; background: none; border: 1px solid transparent; border-radius: 3px; padding: 1px 3px; font-size: 11.5px; color: var(--text-primary); }
+.wb-input:hover { border-color: var(--border-color); }
+.wb-input:focus { border-color: var(--accent); outline: none; background: var(--bg-primary); }
+.wb-num-input { width: 66px; text-align: right; }
+.wb-exp { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 10px; width: 14px; padding: 0; flex: none; }
+.wb-tag { flex: none; font-size: 8.5px; font-weight: 700; color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 3px; padding: 0 3px; }
+#wb-table tr.wb-sel td { background: rgba(217,119,87,0.16); }
+tr.wb-flash td { animation: wbflash 1.2s ease-out; }
+@keyframes wbflash { 0% { background: rgba(217,119,87,0.5); } 100% { background: transparent; } }
 #split-divider { display: none; flex: 0 0 5px; cursor: col-resize; background: var(--border-color); }
 #split-divider.visible { display: block; }
 #split-divider:hover { background: var(--accent); }
@@ -482,7 +517,7 @@ canvas { display: block; }
 
 /* Print styles */
 @media print {
-  #topbar, #toolbar, #panel, #statusbar, .thumbnail-strip, #calibration-banner, #merge-drop-overlay, #drop-zone, #split-pane, #split-divider { display: none !important; }
+  #topbar, #toolbar, #panel, #statusbar, .thumbnail-strip, #calibration-banner, #merge-drop-overlay, #drop-zone, #split-pane, #split-divider, #workbook-dock { display: none !important; }
   #main { display: block !important; }
   #canvas-area { overflow: visible !important; }
   #canvas-wrapper { overflow: visible !important; }
@@ -547,7 +582,7 @@ canvas { display: block; }
 <div id="app">
   <!-- TOP BAR -->
   <div id="topbar">
-    <div class="logo">BDM <span>PDF Tool</span></div>
+    <div class="logo">BDM <span>PDF Tool</span><span id="app-version" title="App version — check this matches the latest release after a redeploy"></span></div>
     <div class="separator"></div>
     <div style="position:relative; display:inline-block;">
       <button class="topbar-btn" id="btn-new" onclick="toggleNewMenu(event)" title="Create new document or add a blank page">
@@ -684,6 +719,10 @@ canvas { display: block; }
     <button class="topbar-btn" onclick="toggleSplitView()" title="Split view — show a second document (or another page of this one) beside the editor">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
       Split
+    </button>
+    <button class="topbar-btn" onclick="toggleWorkbook()" title="Estimate workbook — Excel-style trade breakdown of the whole job, linked to the drawing shapes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
+      Workbook
     </button>
     <div class="separator"></div>
     <button class="topbar-btn" onclick="setTool('snipregion')" title="Snip a region — drag a rectangle on the page to capture it as an image. (You can also press Ctrl+V to paste a screenshot from the clipboard.)">
@@ -849,6 +888,23 @@ canvas { display: block; }
       </div>
       <div class="panel-scroll" id="panel-content"></div>
     </div>
+  </div>
+
+  <!-- ESTIMATE WORKBOOK (v2.8) — Cubit-style spreadsheet linked to the drawings -->
+  <div id="workbook-dock">
+    <div id="workbook-resizer" title="Drag to resize the workbook"></div>
+    <div id="workbook-toolbar">
+      <span style="font-weight:700;font-size:11.5px;color:var(--accent);letter-spacing:.4px">ESTIMATE WORKBOOK</span>
+      <span id="wb-status" style="font-size:10px;color:var(--text-muted)"></span>
+      <span class="topbar-spacer"></span>
+      <button class="topbar-btn" onclick="wbSetAll(false)" title="Expand every package">Expand all</button>
+      <button class="topbar-btn" onclick="wbSetAll(true)" title="Collapse to packages">Collapse all</button>
+      <div class="separator"></div>
+      <button class="topbar-btn" onclick="exportTakeoffXLSX()" title="Export the estimate to Excel (formulas + package tree)">Export Excel</button>
+      <button class="topbar-btn" onclick="exportTakeoffCSV()" title="Export CSV">CSV</button>
+      <button class="modal-close" onclick="toggleWorkbook(false)" title="Close workbook">×</button>
+    </div>
+    <div id="workbook-body"></div>
   </div>
 
   <!-- BOTTOM BAR (Bluebeam-style) -->
@@ -1037,18 +1093,39 @@ let calibrationMM = 100;
 let defaultCalibration = null;
 
 // ============================================================
+// APP VERSION — bump this with every release; it shows in the top bar so
+// users can tell at a glance which build they're running (local vs deployed).
+// ============================================================
+const APP_VERSION = 'v2.8.1';
+
+// ============================================================
 // TAKEOFF (Cubit-style) STATE
 // ============================================================
 // Each takeoff item accumulates quantities from multiple shapes, like a
 // Cubit estimate line. resultType: 'length' | 'area' | 'count'.
-// Shapes link back via annotation.takeoffItemId; annotation.isDeduction
-// subtracts from the total (openings/voids).
+// Shapes link back via annotation.takeoffItemId (primary — drives colour);
+// annotation.takeoffExtraIds[] holds ADDITIONAL items the same shape feeds
+// (one outline, several bill lines). annotation.isDeduction subtracts from
+// the total (openings/voids) of every linked item.
 let takeoffItems = [];           // [{id, name, resultType, color, trade, rate, factor, rateComponents?, subItems?}]
 let takeoffZones = [];           // [{id, name}] — Level 1 / Unit A / Stage 2 subtotal groupings
 let activeTakeoffZoneId = null;  // zone tagged onto newly measured shapes (ann.zoneId)
 let activeTakeoffItemId = null;  // item currently being measured against
 let takeoffDeductMode = false;   // when true, new shapes are deductions
 let highlightTakeoffItemId = null; // item whose shapes are glowing on the canvas
+let takeoffPickItemId = null;    // item collecting EXISTING shapes via canvas clicks (Add existing shapes mode)
+
+// v2.8 — takeoffItems/takeoffZones are JOB-level: one estimate across every
+// open document. These flags track when doc-state globals are temporarily
+// swapped (split-pane render) so cross-doc quantity computation stays correct.
+let _docStateSwapped = false;    // true while another doc's state occupies the globals
+let _swapDocIdx = -1;            // which doc the swapped-in globals belong to
+
+// Estimate workbook (Cubit-style spreadsheet dock under the drawing)
+let workbookOpen = false;                 // dock visibility (persisted)
+let wbCollapsed = {};                     // package path → true when collapsed
+let wbExpandedItems = {};                 // item id → true when its measurements are shown
+let _wbLastSyncedSel = null;              // last selection the workbook scrolled to
 
 // Viewports — regions of a sheet with their OWN scale (Bluebeam-style),
 // e.g. a 1:20 detail beside a 1:100 plan. Measurements whose anchor point
@@ -1399,6 +1476,11 @@ document.addEventListener('DOMContentLoaded', () => {
   initThumbResize();
   // Restore collapsed tool groups + compact topbar preference
   restoreToolbarLayout();
+  // Restore estimate workbook dock (open state + height)
+  restoreWorkbookState();
+  // Show the app version in the top bar
+  const verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = APP_VERSION;
   // Set initial snap button state
   const snapBtn = document.getElementById('btn-snap');
   if (snapBtn && snapEnabled) snapBtn.style.color = 'var(--accent)';
@@ -1432,10 +1514,8 @@ function captureActiveDocState() {
   d.calBannerDismissed = calBannerDismissed;
   d.currentFilename = currentFilename;
   d.currentFileHandle = currentFileHandle;
-  d.takeoffItems = takeoffItems;
-  d.takeoffZones = takeoffZones;
-  d.activeTakeoffZoneId = activeTakeoffZoneId;
-  d.activeTakeoffItemId = activeTakeoffItemId;
+  // NOTE (v2.8): takeoffItems / takeoffZones are JOB-level — shared across all
+  // open documents, never swapped per tab. Only per-document state lives here.
   d.pageViewMode = pageViewMode;
   d.viewports = viewports;
 }
@@ -1460,12 +1540,8 @@ function restoreDocState(idx) {
   calBannerDismissed = d.calBannerDismissed || {};
   currentFilename = d.currentFilename || 'document.pdf';
   currentFileHandle = d.currentFileHandle || null;
-  takeoffItems = d.takeoffItems || [];
-  takeoffZones = d.takeoffZones || [];
-  activeTakeoffZoneId = d.activeTakeoffZoneId || null;
-  activeTakeoffItemId = d.activeTakeoffItemId || null;
-  takeoffDeductMode = false;
-  highlightTakeoffItemId = null;
+  // takeoffItems / takeoffZones / active item+zone are JOB-level (v2.8) — they
+  // survive tab switches so one estimate spans every open document.
   viewports = d.viewports || [];
   activeDocIndex = idx;
 
@@ -1705,8 +1781,13 @@ function drawSplitPaneAnnotations(d, canvas) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Keep the active doc's entry fresh so job-level quantity computations
+  // (legend tables etc.) that run during this swap see current data.
+  if (!_docStateSwapped) captureActiveDocState();
+  // takeoffItems / takeoffZones are job-level (v2.8) — NOT swapped per doc.
   const sv = { annotations, measurements, countGroups, pageCalibrations, defaultCalibration,
-               viewports, takeoffItems, takeoffZones, currentScale, currentPage, selectedAnnotationId, highlightTakeoffItemId };
+               viewports, currentScale, currentPage, selectedAnnotationId, highlightTakeoffItemId };
+  _docStateSwapped = true; _swapDocIdx = splitDocIndex;
   try {
     annotations = d.annotations || [];
     measurements = d.measurements || [];
@@ -1714,8 +1795,6 @@ function drawSplitPaneAnnotations(d, canvas) {
     pageCalibrations = d.pageCalibrations || {};
     defaultCalibration = d.defaultCalibration || null;
     viewports = d.viewports || [];
-    takeoffItems = d.takeoffItems || [];
-    takeoffZones = d.takeoffZones || [];
     currentScale = splitScale;
     currentPage = splitPage;
     selectedAnnotationId = null;
@@ -1727,7 +1806,8 @@ function drawSplitPaneAnnotations(d, canvas) {
     }
   } finally {
     ({ annotations, measurements, countGroups, pageCalibrations, defaultCalibration,
-       viewports, takeoffItems, takeoffZones, currentScale, currentPage, selectedAnnotationId, highlightTakeoffItemId } = sv);
+       viewports, currentScale, currentPage, selectedAnnotationId, highlightTakeoffItemId } = sv);
+    _docStateSwapped = false; _swapDocIdx = -1;
   }
 }
 
@@ -1743,7 +1823,7 @@ function scheduleSplitRefresh() {
     const ac = document.getElementById('split-ann-canvas');
     if (!ac || !ac.width) return;
     drawSplitPaneAnnotations({
-      annotations, measurements, countGroups, pageCalibrations, defaultCalibration, viewports, takeoffItems, takeoffZones
+      annotations, measurements, countGroups, pageCalibrations, defaultCalibration, viewports
     }, ac);
   });
 }
@@ -1976,13 +2056,17 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     pageCalibrations = {};        // fresh per-document calibration (was leaking between tabs)
     defaultCalibration = null;
     calBannerDismissed = {};
-    takeoffItems = [];
-    activeTakeoffItemId = null;
-    takeoffDeductMode = false;
-    highlightTakeoffItemId = null;
     viewports = [];
-    takeoffZones = [];
-    activeTakeoffZoneId = null;
+    // Takeoff is JOB-level (v2.8): opening ANOTHER document keeps the running
+    // estimate. Only a first document (fresh session) starts a fresh job.
+    if (openDocs.length === 0) {
+      takeoffItems = [];
+      takeoffZones = [];
+      activeTakeoffItemId = null;
+      activeTakeoffZoneId = null;
+      takeoffDeductMode = false;
+      highlightTakeoffItemId = null;
+    }
     cancelInProgressDrawing();
     currentFilename = filename || 'document.pdf';
 
@@ -1994,8 +2078,9 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       else { const k = Object.keys(pageCalibrations)[0]; if (k !== undefined) defaultCalibration = { ...pageCalibrations[k] }; }
       if (restoredProject.countGroups) countGroups = restoredProject.countGroups;
       if (Array.isArray(restoredProject.measurements)) measurements = restoredProject.measurements;
-      if (Array.isArray(restoredProject.takeoffItems)) takeoffItems = restoredProject.takeoffItems;
-      if (Array.isArray(restoredProject.takeoffZones)) takeoffZones = restoredProject.takeoffZones;
+      // Merge the file's takeoff into the JOB estimate (adopts wholesale when
+      // the job is empty; otherwise appends items/zones it doesn't have yet)
+      mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones);
       if (Array.isArray(restoredProject.viewports)) viewports = restoredProject.viewports;
       // Intentionally NOT restoring toolPresets — user's local presets take priority
     }
@@ -2032,7 +2117,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       measurements, countGroups, currentCountGroup,
       pageCalibrations, pdfMetadata, calBannerDismissed,
       currentFilename, currentFileHandle,
-      takeoffItems, takeoffZones, activeTakeoffZoneId, activeTakeoffItemId, pageViewMode, viewports
+      pageViewMode, viewports  // takeoff state is job-level — not per doc
     };
     openDocs.push(newDocEntry);
     activeDocIndex = openDocs.length - 1;
@@ -2314,7 +2399,7 @@ function redrawAnnotations() {
     ctx.save();
     ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
     // Takeoff highlight — glow every shape linked to the highlighted item
-    if (highlightTakeoffItemId && ann.takeoffItemId === highlightTakeoffItemId) {
+    if (highlightTakeoffItemId && annLinkedToItem(ann, highlightTakeoffItemId)) {
       ctx.shadowColor = ann.color || '#D97757';
       ctx.shadowBlur = 12;
     }
@@ -2726,6 +2811,9 @@ function drawAreaMeasure(ctx, ann) {
   const perim = getPerimeter(ann.points);
   const cen = getCentroid(ann.points);
   let areaLabel = getCalibratedArea(area, ann.page, cen);
+  // Shapes feeding a Volume (m³) takeoff item label in m³ (area × depth), not m²
+  const volLabel = (typeof takeoffVolumeLabel === 'function') ? takeoffVolumeLabel(ann, area, cen) : null;
+  if (volLabel) areaLabel = volLabel;
   if (ann.isDeduction) areaLabel = '−' + areaLabel;
   const perimLabel = getCalibratedLabel(perim, ann.page, cen);
   ann.label = areaLabel; ann.perimLabel = perimLabel;
@@ -3400,6 +3488,28 @@ function onCanvasMouseDown(e) {
   if (currentTool === 'select') {
     const pagePt = toPage(screenPt);
     const handleTol = 8 / currentScale;
+
+    // 0) "Add existing shapes" pick mode — clicks link shapes to the collecting
+    //    item instead of selecting. Stays armed for bulk adding; Esc exits.
+    if (takeoffPickItemId) {
+      const pickItem = getTakeoffItem(takeoffPickItemId);
+      if (!pickItem) { takeoffPickItemId = null; }
+      else {
+        const picked = getAnnotationAtPoint(x, y);
+        if (picked) {
+          if (!compatibleTakeoffItems(picked).some(it => it.id === pickItem.id)) {
+            showToast('"' + pickItem.name + '" (' + TAKEOFF_TYPE_LABELS[pickItem.resultType] + ') can\'t take this shape type');
+          } else if (annLinkedToItem(picked, pickItem.id)) {
+            showToast('Already linked to ' + pickItem.name);
+          } else if (linkShapeToItem(picked, pickItem.id)) {
+            saveToHistory(); redrawAnnotations(); refreshTakeoffPanel();
+            const q = computeTakeoffQty(pickItem);
+            showToast('Added to ' + pickItem.name + ' — now ' + formatTakeoffQty(pickItem, q.qty));
+          }
+        }
+        return; // swallow the click either way — stay in pick mode
+      }
+    }
 
     // 1) Clicking on a measurement label → drag just the label, not the line/area.
     //    Search topmost-first so overlapping labels behave correctly.
@@ -4317,7 +4427,11 @@ function onKeyDown(e) {
     const hadDraft = twoClickStart || isDrawing || polylinePoints.length > 0 || calloutMode || areaDragStartScreen;
     cancelInProgressDrawing();
     if (!hadDraft) {
-      if (activeTakeoffItemId) {
+      if (takeoffPickItemId) {
+        // Exit "add existing shapes" pick mode first
+        stopTakeoffShapePick();
+      }
+      else if (activeTakeoffItemId) {
         // Stop measuring against the active takeoff item
         activeTakeoffItemId = null; takeoffDeductMode = false;
         setTool('select'); refreshTakeoffPanel(); showToast('Stopped measuring');
@@ -4970,6 +5084,8 @@ function selectAllText(el) {
 function setTool(tool) {
   // Track the last select/pan tool so we can return after drawing
   if (tool === 'select' || tool === 'pan') lastNavTool = tool;
+  // Leaving Select ends "add existing shapes" pick mode
+  if (tool !== 'select' && takeoffPickItemId) { takeoffPickItemId = null; refreshTakeoffPanel(); }
   currentTool = tool;
   polylinePoints = [];
   twoClickStart = null; isDrawing = false; startPoint = null; currentMovePoint = null;
@@ -5153,7 +5269,7 @@ function deleteSelectedAnnotation() {
     // Cut Content paints onto the PDF canvas at render time — re-render so
     // the hidden content actually comes back when the markup is deleted.
     if (ann.type === 'cutcontent') renderPage(currentPage);
-    if (ann.takeoffItemId && typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
+    if ((ann.takeoffItemId || (Array.isArray(ann.takeoffExtraIds) && ann.takeoffExtraIds.length)) && typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
     if (typeof refreshMeasurementsPanel === 'function') refreshMeasurementsPanel();
   }
 }
@@ -5173,6 +5289,9 @@ function openPropertiesPanel(forceOpen) {
   const panel = document.getElementById('panel');
   const panelTitle = document.getElementById('panel-title');
   const content = document.getElementById('panel-content');
+
+  // Workbook two-way link: selecting a takeoff shape scrolls/flashes its rows
+  if (typeof workbookSyncSelection === 'function') workbookSyncSelection();
 
   // Respect the user's choice to keep the panel closed — only force it open
   // on an explicit action (tab click / selection), not on every page turn.
@@ -5363,6 +5482,181 @@ function _polyPerimeterPx(points, closed) {
   return d;
 }
 
+// ---- Cross-document (job-level) helpers — v2.8 ----
+// The estimate spans every open document. These helpers iterate all docs'
+// annotations with the RIGHT calibration for each, by temporarily swapping
+// the doc-state globals (same pattern as the split pane render).
+
+// Which document do the current globals belong to?
+function _currentDocIdx() { return _docStateSwapped ? _swapDocIdx : activeDocIndex; }
+
+function _docLabel(idx) {
+  if (idx === activeDocIndex && !(_docStateSwapped && idx === _swapDocIdx)) return currentFilename || 'document.pdf';
+  const d = openDocs[idx];
+  return (d && d.currentFilename) || 'document.pdf';
+}
+// Short label for tight UI rows — filename minus .pdf, trimmed
+function _docShortLabel(idx) {
+  return _docLabel(idx).replace(/\.pdf$/i, '').slice(0, 24);
+}
+
+// Run fn(docIdx) once per open document with that doc's state occupying the
+// calibration-relevant globals (annotations, pageCalibrations, viewports,
+// defaultCalibration). Restores everything afterwards. Safe to call during a
+// split-pane swap (uses openDocs entries, which captureActiveDocState keeps fresh).
+function _eachTakeoffDocState(fn) {
+  if (!openDocs.length) { fn(activeDocIndex < 0 ? 0 : activeDocIndex); return; }
+  if (openDocs.length === 1) { fn(_currentDocIdx() >= 0 ? _currentDocIdx() : 0); return; }
+  if (!_docStateSwapped && activeDocIndex >= 0 && openDocs[activeDocIndex]) captureActiveDocState();
+  const homeIdx = _currentDocIdx();
+  const sv = { annotations, pageCalibrations, defaultCalibration, viewports };
+  try {
+    for (let i = 0; i < openDocs.length; i++) {
+      if (i === homeIdx) {
+        ({ annotations, pageCalibrations, defaultCalibration, viewports } = sv);
+      } else {
+        const d = openDocs[i];
+        annotations = d.annotations || [];
+        pageCalibrations = d.pageCalibrations || {};
+        defaultCalibration = d.defaultCalibration || null;
+        viewports = d.viewports || [];
+      }
+      fn(i);
+    }
+  } finally {
+    ({ annotations, pageCalibrations, defaultCalibration, viewports } = sv);
+  }
+}
+
+// Every shape linked to an item, across all open documents:
+// [{ a, docIdx }] — docIdx locates the document for jump-to-shape.
+function allTakeoffShapes(itemId, includeAll) {
+  const out = [];
+  _eachTakeoffDocState(docIdx => {
+    annotations.forEach(a => {
+      if (includeAll ? annTakeoffIds(a).length : annLinkedToItem(a, itemId)) out.push({ a, docIdx });
+    });
+  });
+  return out;
+}
+
+// Find an annotation by id in ANY open document → { a, docIdx } or null
+function _findShapeDoc(annId) {
+  if (activeDocIndex >= 0 && openDocs[activeDocIndex] && !_docStateSwapped) captureActiveDocState();
+  if (!openDocs.length) {
+    const a = annotations.find(x => x.id === annId);
+    return a ? { a, docIdx: Math.max(activeDocIndex, 0) } : null;
+  }
+  for (let i = 0; i < openDocs.length; i++) {
+    const arr = (i === activeDocIndex && !_docStateSwapped) ? annotations : (openDocs[i].annotations || []);
+    const a = arr.find(x => x.id === annId);
+    if (a) return { a, docIdx: i };
+  }
+  return null;
+}
+
+// Merge a loaded file's takeoff into the job estimate. Empty job adopts the
+// file's items wholesale; otherwise items/zones the job doesn't have (by id)
+// are appended, so re-opening files saved together reunites one estimate.
+function mergeTakeoffIntoJob(items, zones) {
+  let added = 0;
+  if (Array.isArray(items)) {
+    if (!takeoffItems.length) { takeoffItems = items; added = -1; }
+    else items.forEach(it => {
+      if (it && it.id && !takeoffItems.some(x => x.id === it.id)) { takeoffItems.push(it); added++; }
+    });
+  }
+  if (Array.isArray(zones)) {
+    if (!takeoffZones.length) takeoffZones = zones;
+    else zones.forEach(z => {
+      if (z && z.id && !takeoffZones.some(x => x.id === z.id)) takeoffZones.push(z);
+    });
+  }
+  if (added > 0) showToast(added + ' takeoff item(s) from this file added to the job estimate');
+}
+
+// ---- Multi-item linking ----
+// A shape's PRIMARY item is ann.takeoffItemId (drives its colour); any items in
+// ann.takeoffExtraIds[] ALSO receive its quantity — one shape, several bill lines
+// (e.g. the same slab outline feeds "Concrete slab" m³ and "Waterproof membrane" m²).
+function annLinkedToItem(a, itemId) {
+  return a.takeoffItemId === itemId ||
+         (Array.isArray(a.takeoffExtraIds) && a.takeoffExtraIds.includes(itemId));
+}
+// Every item id this shape is linked to (primary first, no duplicates)
+function annTakeoffIds(a) {
+  const ids = a.takeoffItemId ? [a.takeoffItemId] : [];
+  (Array.isArray(a.takeoffExtraIds) ? a.takeoffExtraIds : []).forEach(id => {
+    if (id && !ids.includes(id)) ids.push(id);
+  });
+  return ids;
+}
+// Drop extra links that duplicate the primary or point at deleted items
+function _pruneExtraIds(a) {
+  if (!Array.isArray(a.takeoffExtraIds)) return;
+  a.takeoffExtraIds = a.takeoffExtraIds.filter(id => id && id !== a.takeoffItemId && getTakeoffItem(id));
+  if (!a.takeoffExtraIds.length) delete a.takeoffExtraIds;
+}
+// Link a shape to an item: primary slot if free, otherwise as an extra.
+// Returns true when a link was actually added.
+function linkShapeToItem(a, itemId) {
+  const item = getTakeoffItem(itemId);
+  if (!item || annLinkedToItem(a, itemId)) return false;
+  if (!a.takeoffItemId) {
+    a.takeoffItemId = itemId;
+    a.color = item.color;
+    if (a.type === 'area') a.fillColor = item.color;
+    if (item.resultType !== 'count' && a.isDeduction === undefined) a.isDeduction = false;
+  } else {
+    if (!Array.isArray(a.takeoffExtraIds)) a.takeoffExtraIds = [];
+    a.takeoffExtraIds.push(itemId);
+  }
+  return true;
+}
+// Unlink a shape from ONE item. Removing the primary promotes the first extra
+// (the shape keeps contributing to its remaining items and takes that colour).
+function unlinkShapeFromItem(a, itemId) {
+  if (Array.isArray(a.takeoffExtraIds) && a.takeoffExtraIds.includes(itemId)) {
+    a.takeoffExtraIds = a.takeoffExtraIds.filter(id => id !== itemId);
+    if (!a.takeoffExtraIds.length) delete a.takeoffExtraIds;
+    return;
+  }
+  if (a.takeoffItemId !== itemId) return;
+  const next = (Array.isArray(a.takeoffExtraIds) && a.takeoffExtraIds[0]) || null;
+  if (next) {
+    a.takeoffExtraIds = a.takeoffExtraIds.slice(1);
+    if (!a.takeoffExtraIds.length) delete a.takeoffExtraIds;
+    a.takeoffItemId = next;
+    const item = getTakeoffItem(next);
+    if (item) { a.color = item.color; if (a.type === 'area') a.fillColor = item.color; }
+  } else {
+    delete a.takeoffItemId; delete a.isDeduction;
+  }
+}
+
+// If this area shape feeds a Volume (m³) item, its on-sheet label shows the
+// volume (area × the shape's effective depth) instead of the raw area.
+// Returns null when the shape isn't volume-linked, is uncalibrated, or has
+// no usable depth — callers then fall back to the normal m² label.
+function takeoffVolumeLabel(ann, areaPx, pt) {
+  if (!ann || ann.type !== 'area') return null;
+  const ids = annTakeoffIds(ann);
+  if (!ids.length) return null;
+  let volItem = null;
+  for (const id of ids) {
+    const it = getTakeoffItem(id);
+    if (it && it.resultType === 'volume') { volItem = it; break; }
+  }
+  if (!volItem) return null;
+  const cal = _calFor(ann.page, pt);
+  if (!cal) return null;
+  const hasOv = ann.takeoffFactor !== undefined && ann.takeoffFactor !== null && ann.takeoffFactor !== '' && isFinite(parseFloat(ann.takeoffFactor));
+  const depthMm = hasOv ? parseFloat(ann.takeoffFactor) : (parseFloat(volItem.factor) || 0);
+  if (!(depthMm > 0)) return null;
+  const mm3 = (areaPx / (cal.pixelsPerMm * cal.pixelsPerMm)) * depthMm;
+  return (mm3 / 1e9).toFixed(2) + 'm³';
+}
+
 // Compute an item's quantity NUMERICALLY from its shapes + calibration
 // (display strings like "1.25m" are never parsed). Viewport-aware.
 // Optional shapeFilter narrows the shapes (zone / page subtotals).
@@ -5380,9 +5674,12 @@ function computeTakeoffQty(item, shapeFilter) {
   // Per-shape factored total: Σ (geometry × THIS shape's own height/depth).
   // Each shape uses its takeoffFactor override when set, else the item default.
   let factoredAcc = 0, factorMissing = false;
-  annotations.forEach(a => {
-    if (a.takeoffItemId !== item.id || !a.points || !a.points.length) return;
-    if (shapeFilter && !shapeFilter(a)) return;
+  // v2.8: aggregate across EVERY open document, each with its own calibration.
+  // shapeFilter receives (annotation, docIdx) — zone filters ignore docIdx,
+  // page-scope legend filters use it to stay inside their own document.
+  _eachTakeoffDocState(docIdx => annotations.forEach(a => {
+    if (!annLinkedToItem(a, item.id) || !a.points || !a.points.length) return;
+    if (shapeFilter && !shapeFilter(a, docIdx)) return;
     shapes++;
     const sign = a.isDeduction ? -1 : 1;
     countN += sign;
@@ -5405,7 +5702,7 @@ function computeTakeoffQty(item, shapeFilter) {
       perimPx += _polyPerimeterPx(a.points, true) / cal.pixelsPerMm; // absolute — openings still get edges
       factoredAcc += areaMm2 * shFactor;
     }
-  });
+  }));
   let qty;
   switch (item.resultType) {
     case 'length':   qty = raw / 1000; break;                       // mm → m
@@ -5488,12 +5785,20 @@ function updateTakeoffItemField(id, field, value) {
 }
 
 // ---- Per-shape management (Cubit-style shape list) ----
-function locateTakeoffShape(annId) {
+// Jump to a shape in ANY open document: switch tab if needed, go to its page,
+// select it. The workbook and panel shape lists both route through this.
+function jumpToTakeoffShape(docIdx, annId) {
+  if (docIdx !== undefined && docIdx !== null && docIdx !== activeDocIndex && openDocs[docIdx]) switchToDoc(docIdx);
   const a = annotations.find(x => x.id === annId);
   if (!a) return;
   if (a.page !== currentPage) goToPage(a.page);
   selectedAnnotationId = annId;
   redrawAnnotations();
+  if (typeof workbookSyncSelection === 'function') workbookSyncSelection();
+}
+function locateTakeoffShape(annId) {
+  const hit = _findShapeDoc(annId);
+  if (hit) jumpToTakeoffShape(hit.docIdx, annId);
 }
 function toggleShapeDeduction(annId) {
   const a = annotations.find(x => x.id === annId);
@@ -5501,30 +5806,69 @@ function toggleShapeDeduction(annId) {
   a.isDeduction = !a.isDeduction;
   saveToHistory(); redrawAnnotations(); refreshTakeoffPanel(); refreshMeasurementsPanel();
 }
-function unassignTakeoffShape(annId) {
+function unassignTakeoffShape(annId, itemId) {
   const a = annotations.find(x => x.id === annId);
   if (!a) return;
-  delete a.takeoffItemId; delete a.isDeduction;
+  if (itemId) {
+    unlinkShapeFromItem(a, itemId); // just this item — other links survive
+  } else {
+    delete a.takeoffItemId; delete a.takeoffExtraIds; delete a.isDeduction;
+  }
   saveToHistory(); redrawAnnotations(); refreshTakeoffPanel();
 }
 function deleteTakeoffShape(annId) {
   selectedAnnotationId = annId;
   deleteSelectedAnnotation(); // handles history, redraw, panel refreshes
 }
-// Assign/unassign any existing measurement to a takeoff item (Properties panel dropdown)
+// Assign/unassign any existing measurement to a takeoff item (Properties panel dropdown).
+// This sets the PRIMARY link; extra links (takeoffExtraIds) are managed separately.
 function assignAnnotationToItem(annId, itemId) {
   const a = annotations.find(x => x.id === annId);
   if (!a) return;
   if (!itemId) {
-    delete a.takeoffItemId; delete a.isDeduction;
+    if (a.takeoffItemId) unlinkShapeFromItem(a, a.takeoffItemId); // promotes an extra if one exists
   } else {
     const item = getTakeoffItem(itemId);
     if (!item) return;
     a.takeoffItemId = itemId;
+    _pruneExtraIds(a); // new primary may have been an extra — de-duplicate
     a.color = item.color;
     if (a.type === 'area') a.fillColor = item.color;
   }
   saveToHistory(); redrawAnnotations(); refreshTakeoffPanel(); openPropertiesPanel();
+}
+// Also-count-toward links from the Properties panel
+function addAnnotationToExtraItem(annId, itemId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a || !itemId) return;
+  if (linkShapeToItem(a, itemId)) { saveToHistory(); redrawAnnotations(); refreshTakeoffPanel(); }
+  openPropertiesPanel();
+}
+function removeAnnotationExtraItem(annId, itemId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  unlinkShapeFromItem(a, itemId);
+  saveToHistory(); redrawAnnotations(); refreshTakeoffPanel(); openPropertiesPanel();
+}
+
+// ---- "Add existing shapes" pick mode ----
+// Armed from an item's editor: every shape clicked on the canvas (Select tool)
+// links to the collecting item — as an extra when it already has a primary,
+// so shapes can serve multiple items. Esc or the Done button exits.
+function startTakeoffShapePick(itemId) {
+  if (takeoffPickItemId === itemId) { stopTakeoffShapePick(); return; }
+  const item = getTakeoffItem(itemId);
+  if (!item) return;
+  setTool('select'); // may clear a previous pick — set ours after
+  takeoffPickItemId = itemId;
+  refreshTakeoffPanel();
+  showToast('Click shapes to add them to "' + item.name + '" — Esc / Done to finish');
+}
+function stopTakeoffShapePick(silent) {
+  if (!takeoffPickItemId) return;
+  takeoffPickItemId = null;
+  refreshTakeoffPanel();
+  if (!silent) showToast('Finished adding shapes');
 }
 // Items whose result type can accept this annotation's shape
 function compatibleTakeoffItems(ann) {
@@ -5540,16 +5884,26 @@ function compatibleTakeoffItems(ann) {
 // Toggle the on-canvas glow for an item's shapes
 function toggleTakeoffHighlight(id) {
   highlightTakeoffItemId = (highlightTakeoffItemId === id) ? null : id;
-  // Jump to the first shape so the glow is actually visible
+  // Jump to the first shape so the glow is actually visible — prefer one in
+  // the current document, else switch to the doc that has one (job-level).
   if (highlightTakeoffItemId) {
-    const first = annotations.find(a => a.takeoffItemId === id);
-    if (first && first.page !== currentPage) goToPage(first.page);
+    const local = annotations.find(a => annLinkedToItem(a, id));
+    if (local) {
+      if (local.page !== currentPage) goToPage(local.page);
+    } else {
+      const hit = allTakeoffShapes(id)[0];
+      if (hit && hit.docIdx !== activeDocIndex) {
+        switchToDoc(hit.docIdx);
+        if (hit.a.page !== currentPage) goToPage(hit.a.page);
+      }
+    }
   }
   redrawAnnotations();
   refreshTakeoffPanel();
 }
 
 function setActiveTakeoffItem(id) {
+  if (takeoffPickItemId) stopTakeoffShapePick(true); // switching items ends pick mode
   if (activeTakeoffItemId === id) {
     // Clicking the active item again deactivates it
     activeTakeoffItemId = null;
@@ -5604,9 +5958,10 @@ function renameActiveTakeoffZone() {
 function deleteActiveTakeoffZone() {
   const z = getTakeoffZone(activeTakeoffZoneId);
   if (!z) { showToast('Pick a zone first'); return; }
-  const n = annotations.filter(a => a.zoneId === z.id).length;
+  let n = 0;
+  _eachTakeoffDocState(() => { n += annotations.filter(a => a.zoneId === z.id).length; });
   if (!confirm('Delete zone "' + z.name + '"?\n\n' + n + ' shape(s) keep their measurements — they just lose the zone tag.')) return;
-  annotations.forEach(a => { if (a.zoneId === z.id) delete a.zoneId; });
+  _eachTakeoffDocState(() => annotations.forEach(a => { if (a.zoneId === z.id) delete a.zoneId; }));
   takeoffZones = takeoffZones.filter(x => x.id !== z.id);
   activeTakeoffZoneId = null;
   saveToHistory(); refreshTakeoffPanel(); openPropertiesPanel();
@@ -5693,10 +6048,10 @@ function setTakeoffItemColor(id, color) {
   const item = getTakeoffItem(id);
   if (!item) return;
   item.color = color;
-  // Recolour every shape already measured against this item
-  annotations.forEach(a => {
+  // Recolour every shape whose PRIMARY item this is — in every open document
+  _eachTakeoffDocState(() => annotations.forEach(a => {
     if (a.takeoffItemId === id) { a.color = color; if (a.type === 'area') a.fillColor = color; }
-  });
+  }));
   if (activeTakeoffItemId === id) toolProperties.color = color;
   saveToHistory(); redrawAnnotations(); refreshTakeoffPanel();
 }
@@ -5704,9 +6059,10 @@ function setTakeoffItemColor(id, color) {
 function deleteTakeoffItem(id) {
   const item = getTakeoffItem(id);
   if (!item) return;
-  const n = annotations.filter(a => a.takeoffItemId === id).length;
-  if (!confirm('Delete takeoff item "' + item.name + '"?\n\n' + n + ' measured shape(s) stay on the drawing — they\'re just unlinked from this item.')) return;
-  annotations.forEach(a => { if (a.takeoffItemId === id) { delete a.takeoffItemId; delete a.isDeduction; } });
+  const n = allTakeoffShapes(id).length;
+  if (!confirm('Delete takeoff item "' + item.name + '"?\n\n' + n + ' measured shape(s) stay on the drawings — they\'re just unlinked from this item.')) return;
+  _eachTakeoffDocState(() => annotations.forEach(a => { if (annLinkedToItem(a, id)) unlinkShapeFromItem(a, id); }));
+  if (takeoffPickItemId === id) takeoffPickItemId = null;
   takeoffItems = takeoffItems.filter(t => t.id !== id);
   if (activeTakeoffItemId === id) { activeTakeoffItemId = null; takeoffDeductMode = false; setTool('select'); }
   if (highlightTakeoffItemId === id) { highlightTakeoffItemId = null; redrawAnnotations(); }
@@ -5734,6 +6090,269 @@ function takeoffTagAnnotation(ann) {
 
 function refreshTakeoffPanel() {
   if (panelMode === 'takeoff') openPropertiesPanel();
+  if (workbookOpen) refreshWorkbook();
+}
+
+// ============================================================
+// ESTIMATE WORKBOOK (v2.8) — Cubit-style spreadsheet dock.
+// Trade packages (item.trade paths like "Concrete / Substructure") form a
+// collapsible tree; items sit inside packages; assembly parts and individual
+// measurements (per document/page) nest under each item. Every measurement
+// row click-throughs to the exact shape on the exact drawing.
+// ============================================================
+let _wbPkgKeys = [];       // package-index → key (avoids quoting keys in onclick)
+let _wbListenersWired = false;
+
+// Build the package tree from item.trade paths. "/" nests sub-packages.
+function buildTakeoffTree() {
+  const root = { name: '', key: '', children: [], items: [], _map: {} };
+  takeoffItems.forEach(item => {
+    let segs = String(item.trade || '').split('/').map(s => s.trim()).filter(Boolean);
+    if (!segs.length) segs = ['General'];
+    let node = root, key = '';
+    segs.forEach(seg => {
+      key = key ? key + ' / ' + seg : seg;
+      const lk = seg.toLowerCase();
+      if (!node._map[lk]) {
+        const child = { name: seg, key, children: [], items: [], _map: {} };
+        node._map[lk] = child;
+        node.children.push(child);
+      }
+      node = node._map[lk];
+    });
+    node.items.push(item);
+  });
+  const sortLevel = n => {
+    n.children.sort((a, b) => a.name === 'General' ? 1 : b.name === 'General' ? -1 : a.name.localeCompare(b.name));
+    n.children.forEach(sortLevel);
+  };
+  sortLevel(root);
+  return root;
+}
+
+function toggleWorkbook(force) {
+  workbookOpen = (force !== undefined) ? !!force : !workbookOpen;
+  const dock = document.getElementById('workbook-dock');
+  if (dock) dock.classList.toggle('open', workbookOpen);
+  try { localStorage.setItem('bdm-workbook-open', workbookOpen ? '1' : '0'); } catch (e) {}
+  if (workbookOpen) { wireWorkbookResizer(); refreshWorkbook(); }
+}
+function wbTogglePkgIdx(idx) {
+  const key = _wbPkgKeys[idx];
+  if (key === undefined) return;
+  wbCollapsed[key] = !wbCollapsed[key];
+  refreshWorkbook();
+}
+function wbToggleItem(id) {
+  wbExpandedItems[id] = !wbExpandedItems[id];
+  refreshWorkbook();
+}
+function wbSetAll(collapsed) {
+  const walk = n => { if (n.key) wbCollapsed[n.key] = collapsed; n.children.forEach(walk); };
+  buildTakeoffTree().children.forEach(walk);
+  if (collapsed) wbExpandedItems = {};
+  refreshWorkbook();
+}
+// Move an item to a different package path ("Concrete / Substructure / Footings")
+function wbEditPackage(itemId) {
+  const item = getTakeoffItem(itemId);
+  if (!item) return;
+  const v = prompt('Package path for "' + item.name + '"\n(use / to nest sub-packages, e.g. Concrete / Substructure / Footings):', item.trade || 'General');
+  if (v === null) return;
+  item.trade = v.trim();
+  saveToHistory(); refreshTakeoffPanel();
+}
+
+function refreshWorkbook() {
+  const body = document.getElementById('workbook-body');
+  if (!body || !workbookOpen) return;
+  body.innerHTML = getWorkbookHTML();
+  const status = document.getElementById('wb-status');
+  if (status) status.textContent = openDocs.length > 1
+    ? '— one estimate across ' + openDocs.length + ' documents'
+    : (takeoffItems.length ? '— ' + takeoffItems.length + ' item(s)' : '');
+}
+
+function getWorkbookHTML() {
+  if (!takeoffItems.length) {
+    return `<div style="padding:22px;color:var(--text-muted);font-size:12px;line-height:1.7">
+      No takeoff items yet. Add items in the <strong>Takeoff</strong> panel (right) and draw on the plans —
+      the workbook shows the whole estimate as a trade breakdown, across every open document.<br>
+      Tip: give items package paths like <strong>Concrete / Substructure / Footings</strong> in the Trade box to build sub-tables.</div>`;
+  }
+  const R = {};
+  takeoffItems.forEach(it => { R[it.id] = computeTakeoffQty(it); });
+  const tree = buildTakeoffTree();
+  const multiDoc = openDocs.length > 1;
+  _wbPkgKeys = [];
+  const pkgAmount = node =>
+    node.items.reduce((s, it) => s + (R[it.id].amount > 0 ? R[it.id].amount : 0), 0) +
+    node.children.reduce((s, c) => s + pkgAmount(c), 0);
+  let rows = '', grand = 0;
+
+  const measRows = (item, depth) => {
+    const entries = allTakeoffShapes(item.id);
+    if (!entries.length) {
+      return `<tr class="wb-meas"><td></td><td colspan="6" style="padding-left:${22 + (depth + 1) * 14}px;color:var(--text-muted)">no shapes measured yet</td><td></td></tr>`;
+    }
+    return entries.map(({ a, docIdx }) => {
+      const zone = a.zoneId && getTakeoffZone(a.zoneId);
+      const local = docIdx === activeDocIndex;
+      const shared = annTakeoffIds(a).length > 1;
+      return `<tr class="wb-meas" data-ann-id="${a.id}" onclick="jumpToTakeoffShape(${docIdx},'${a.id}')" title="Click to jump to this shape on the drawing">
+        <td></td>
+        <td colspan="2" style="padding-left:${22 + (depth + 1) * 14}px">${multiDoc ? escapeHtml(_docShortLabel(docIdx)) + ' · ' : ''}p${a.page + 1}${zone ? ' · ' + escapeHtml(zone.name) : ''}${a.isDeduction ? ' · <span style="color:#e74c3c">deduct</span>' : ''}${shared ? ' <span title="Shared with other items">⇄</span>' : ''}</td>
+        <td class="wb-num">${escapeHtml((a.label || a.type))}</td>
+        <td></td><td></td><td></td>
+        <td class="wb-act">${local
+          ? `<button onclick="event.stopPropagation();toggleShapeDeduction('${a.id}')" title="Flip deduction">±</button><button onclick="event.stopPropagation();unassignTakeoffShape('${a.id}','${item.id}')" title="Unlink from this item">⤴</button>`
+          : `<span title="In ${escapeHtml(_docLabel(docIdx))} — click the row to jump there">↗</span>`}</td>
+      </tr>`;
+    }).join('');
+  };
+
+  const itemRows = (item, depth, code) => {
+    const r = R[item.id];
+    const unit = TAKEOFF_TYPE_UNITS[item.resultType];
+    const isAsm = !!r.subRows;
+    const builtUp = Array.isArray(item.rateComponents) && item.rateComponents.length;
+    const exp = !!wbExpandedItems[item.id];
+    const isLit = item.id === highlightTakeoffItemId;
+    const typeTag = isAsm ? 'AS' : ({ length: 'L', area: 'A', vertical: 'V', volume: 'V³', count: 'C' }[item.resultType] || '?');
+    let h = `<tr class="wb-item" data-item-id="${item.id}">
+      <td class="wb-code">${code}</td>
+      <td style="padding-left:${8 + depth * 14}px"><div style="display:flex;align-items:center;gap:5px">
+        <button class="wb-exp" onclick="wbToggleItem('${item.id}')" title="${exp ? 'Hide' : 'Show'} this item's measurements (${r.shapes})">${exp ? '▾' : '▸'}</button>
+        <input type="color" value="${item.color}" title="Item colour" onchange="setTakeoffItemColor('${item.id}', this.value)" style="width:13px;height:13px;padding:0;border:none;background:none;cursor:pointer;flex:none">
+        <input class="wb-input" style="flex:1;min-width:70px" value="${escapeHtml(item.name)}" title="Item description — edit inline" onchange="updateTakeoffItemField('${item.id}','name',this.value)">
+        <span class="wb-tag" title="${TAKEOFF_TYPE_LABELS[item.resultType]}">${typeTag}</span>
+        <button class="wb-exp" style="width:auto" onclick="wbEditPackage('${item.id}')" title="Move to another package — current: ${escapeHtml(item.trade || 'General')}">✎</button>
+      </div></td>
+      <td class="wb-num" style="color:var(--text-secondary)">${unit}</td>
+      <td class="wb-num" style="color:${item.color};font-weight:700" title="${r.shapes} shape(s)${r.uncal ? ' — check calibration / height-depth!' : ''}">${formatTakeoffQty(item, r.qty)}${r.uncal ? ' ⚠' : ''}</td>
+      <td class="wb-num">${isAsm
+        ? `<span style="color:var(--text-muted)" title="Assembly — priced from its parts">parts</span>`
+        : builtUp
+          ? `<span title="Built up from rate components (edit in the Takeoff panel)">${formatMoney(effectiveTakeoffRate(item))}</span>`
+          : `<input class="wb-input wb-num-input" type="number" step="0.01" value="${item.rate || ''}" placeholder="rate" onchange="updateTakeoffItemField('${item.id}','rate',this.value)">`}</td>
+      <td class="wb-num"><input class="wb-input wb-num-input" style="width:44px" type="number" step="0.5" value="${item.markup || ''}" placeholder="0" title="Markup %" onchange="updateTakeoffItemField('${item.id}','markup',this.value)"></td>
+      <td class="wb-num" style="color:var(--success, #4ade80)">${r.amount > 0 ? formatMoney(r.amount) : ''}</td>
+      <td class="wb-act">
+        <button onclick="toggleTakeoffHighlight('${item.id}')" title="Highlight this item's shapes on the drawing" style="color:${isLit ? item.color : 'var(--text-muted)'}">${isLit ? '◉' : '◎'}</button>
+      </td>
+    </tr>`;
+    if (isAsm) {
+      r.subRows.forEach(s => {
+        h += `<tr class="wb-part">
+          <td></td>
+          <td style="padding-left:${22 + (depth + 1) * 14}px">– ${escapeHtml(s.name)} <span style="color:var(--text-muted);font-size:9.5px">(${SUBITEM_BASIS_LABELS[s.basis] || s.basis} × ${s.factor})</span></td>
+          <td class="wb-num">${escapeHtml(s.unit || '')}</td>
+          <td class="wb-num">${s.qty.toFixed(2)}</td>
+          <td class="wb-num">${s.rate > 0 ? formatMoney(s.rate) : ''}</td>
+          <td></td>
+          <td class="wb-num">${s.rate > 0 ? formatMoney(s.amount) : ''}</td>
+          <td></td>
+        </tr>`;
+      });
+    }
+    if (exp) h += measRows(item, depth);
+    return h;
+  };
+
+  const walk = (node, depth, code) => {
+    const idx = _wbPkgKeys.push(node.key) - 1;
+    const amt = pkgAmount(node);
+    const collapsed = !!wbCollapsed[node.key];
+    rows += `<tr class="wb-pkg" onclick="wbTogglePkgIdx(${idx})" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(node.key)}">
+      <td class="wb-code">${code}</td>
+      <td colspan="5" style="padding-left:${8 + depth * 14}px">${collapsed ? '▸' : '▾'} ${escapeHtml(node.name.toUpperCase())} <span style="color:var(--text-muted);font-weight:400;font-size:10px">(${node.items.length + node.children.length ? countPkgItems(node) + ' items' : 'empty'})</span></td>
+      <td class="wb-num">${amt > 0 ? formatMoney(amt) : ''}</td>
+      <td></td>
+    </tr>`;
+    if (collapsed) return;
+    node.items.forEach((item, i) => { rows += itemRows(item, depth + 1, code + '.' + (i + 1)); });
+    node.children.forEach((c, i) => walk(c, depth + 1, code + '.' + (node.items.length + i + 1)));
+  };
+  const countPkgItems = node => node.items.length + node.children.reduce((s, c) => s + countPkgItems(c), 0);
+
+  tree.children.forEach((c, i) => { grand += pkgAmount(c); walk(c, 0, String(i + 1)); });
+
+  return `<table id="wb-table">
+    <thead><tr>
+      <th class="wb-left" style="width:52px">Code</th>
+      <th class="wb-left">Description</th>
+      <th style="width:44px">Unit</th>
+      <th style="width:96px">Qty</th>
+      <th style="width:84px">Rate</th>
+      <th style="width:52px" title="Markup %">MU %</th>
+      <th style="width:104px">Amount</th>
+      <th style="width:56px"></th>
+    </tr></thead>
+    <tbody>${rows}
+      <tr class="wb-total"><td></td><td>ESTIMATE TOTAL</td><td></td><td></td><td></td><td></td>
+        <td class="wb-num" style="color:var(--success, #4ade80)">${grand > 0 ? formatMoney(grand) : '—'}</td><td></td></tr>
+    </tbody></table>`;
+}
+
+// Shape → workbook: when a linked shape is selected on the canvas, expand its
+// item, scroll it into view and flash the row(s). Called on selection changes.
+function workbookSyncSelection() {
+  if (!workbookOpen) return;
+  if (!selectedAnnotationId) { _wbLastSyncedSel = null; return; }
+  if (_wbLastSyncedSel === selectedAnnotationId) return;
+  const hit = _findShapeDoc(selectedAnnotationId);
+  if (!hit) return;
+  const ids = annTakeoffIds(hit.a);
+  if (!ids.length) return;
+  _wbLastSyncedSel = selectedAnnotationId;
+  // Un-collapse every ancestor package of the first linked item + expand it
+  const item = getTakeoffItem(ids[0]);
+  if (item) {
+    let segs = String(item.trade || '').split('/').map(s => s.trim()).filter(Boolean);
+    if (!segs.length) segs = ['General'];
+    let key = '';
+    segs.forEach(seg => { key = key ? key + ' / ' + seg : seg; wbCollapsed[key] = false; });
+    wbExpandedItems[ids[0]] = true;
+  }
+  refreshWorkbook();
+  const row = document.querySelector(`#wb-table tr[data-ann-id="${selectedAnnotationId}"]`)
+           || document.querySelector(`#wb-table tr[data-item-id="${ids[0]}"]`);
+  ids.forEach(id => document.querySelectorAll(`#wb-table tr[data-item-id="${id}"]`).forEach(r => r.classList.add('wb-sel')));
+  if (row) { row.classList.add('wb-sel', 'wb-flash'); row.scrollIntoView({ block: 'nearest' }); }
+}
+
+// Restore persisted dock state (called once from DOMContentLoaded)
+function restoreWorkbookState() {
+  try {
+    const h = parseInt(localStorage.getItem('bdm-workbook-h'));
+    const dock = document.getElementById('workbook-dock');
+    if (dock && h >= 120) dock.style.height = Math.min(h, Math.round(window.innerHeight * 0.75)) + 'px';
+    if (localStorage.getItem('bdm-workbook-open') === '1') toggleWorkbook(true);
+  } catch (e) {}
+}
+function wireWorkbookResizer() {
+  if (_wbListenersWired) return;
+  _wbListenersWired = true;
+  const rez = document.getElementById('workbook-resizer');
+  const dock = document.getElementById('workbook-dock');
+  if (!rez || !dock) return;
+  let from = null;
+  rez.addEventListener('mousedown', e => {
+    from = { y: e.clientY, h: dock.getBoundingClientRect().height };
+    rez.classList.add('dragging');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!from) return;
+    const h = Math.max(120, Math.min(Math.round(window.innerHeight * 0.75), from.h + (from.y - e.clientY)));
+    dock.style.height = h + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!from) return;
+    from = null;
+    rez.classList.remove('dragging');
+    try { localStorage.setItem('bdm-workbook-h', String(Math.round(dock.getBoundingClientRect().height))); } catch (e) {}
+  });
 }
 
 function getTakeoffPanelHTML() {
@@ -5785,6 +6404,8 @@ function getTakeoffPanelHTML() {
       <button onclick="toggleTakeoffDeduct()" title="Shapes drawn while ON subtract from the total (openings, voids)"
         style="padding:4px 10px;font-size:10px;font-weight:700;border-radius:4px;cursor:pointer;border:1px solid ${takeoffDeductMode ? '#e74c3c' : 'var(--border-color)'};background:${takeoffDeductMode ? 'rgba(231,76,60,0.25)' : 'var(--bg-tertiary)'};color:${takeoffDeductMode ? '#e74c3c' : 'var(--text-secondary)'}">
         ${takeoffDeductMode ? 'DEDUCT ON' : 'Deduct'}</button>
+      <button onclick="toggleWorkbook()" title="Open the estimate workbook — Excel-style trade breakdown linked to the drawings"
+        style="padding:4px 8px;font-size:10px;font-weight:700;border-radius:4px;cursor:pointer;border:1px solid ${workbookOpen ? 'var(--accent)' : 'var(--border-color)'};background:var(--bg-tertiary);color:${workbookOpen ? 'var(--accent)' : 'var(--text-secondary)'}">⊞ Workbook</button>
     </div>
     <div style="display:flex;gap:4px;align-items:center;margin-top:6px">
       <label style="font-size:10px;color:var(--text-muted);white-space:nowrap" title="New shapes are tagged with the active zone — subtotals per zone appear below and in exports">Zone</label>
@@ -5840,8 +6461,8 @@ function getTakeoffPanelHTML() {
         const needsFactor = item.resultType === 'vertical' || item.resultType === 'volume';
         rows += `<div style="margin:-2px 0 2px;padding:6px 8px;border:1px dashed var(--border-color);border-top:none;border-radius:0 0 6px 6px;display:flex;flex-direction:column;gap:5px" onclick="event.stopPropagation()">
           <div style="display:flex;gap:4px;align-items:center">
-            <label style="font-size:10px;color:var(--text-muted);width:62px">Trade</label>
-            <input type="text" class="property-input" style="flex:1;font-size:11px" value="${escapeHtml(item.trade || '')}" placeholder="e.g. Concrete"
+            <label style="font-size:10px;color:var(--text-muted);width:62px" title="Trade package — use / to nest sub-packages in the workbook, e.g. Concrete / Substructure / Footings">Trade</label>
+            <input type="text" class="property-input" style="flex:1;font-size:11px" value="${escapeHtml(item.trade || '')}" placeholder="e.g. Concrete / Substructure"
                    onchange="updateTakeoffItemField('${item.id}','trade',this.value)">
           </div>
           ${subRows ? `<div style="font-size:10px;color:var(--text-muted);padding:2px 0">Assembly — priced from its parts below; the flat rate is ignored.</div>` : (() => {
@@ -5918,28 +6539,38 @@ function getTakeoffPanelHTML() {
             <input type="number" class="property-input" style="flex:1;font-size:11px" value="${item.factor || ''}" placeholder="e.g. 2700"
                    onchange="updateTakeoffItemField('${item.id}','factor',this.value)">
           </div>` : ''}
-          <button onclick="renameTakeoffItem('${item.id}')" style="font-size:10px;background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;padding:3px">Rename item</button>
+          <div style="display:flex;gap:4px">
+            <button onclick="renameTakeoffItem('${item.id}')" style="flex:1;font-size:10px;background:none;border:1px solid var(--border-color);border-radius:3px;color:var(--text-secondary);cursor:pointer;padding:3px">Rename item</button>
+            <button onclick="startTakeoffShapePick('${item.id}')" title="Link shapes already on the drawing to this item — click them on the plan. A shape can serve several items."
+              style="flex:1;font-size:10px;background:${takeoffPickItemId === item.id ? 'rgba(45,212,191,0.18)' : 'none'};border:1px solid ${takeoffPickItemId === item.id ? '#2dd4bf' : 'var(--border-color)'};border-radius:3px;color:${takeoffPickItemId === item.id ? '#2dd4bf' : 'var(--text-secondary)'};cursor:pointer;padding:3px;font-weight:${takeoffPickItemId === item.id ? '700' : '400'}">
+              ${takeoffPickItemId === item.id ? '✓ Done adding' : '＋ Add existing shapes'}</button>
+          </div>
+          ${takeoffPickItemId === item.id ? `<div style="font-size:10px;color:#2dd4bf;padding:2px 0">Click shapes on the drawing to add them — Esc or Done to finish.</div>` : ''}
           ${(() => {
-            const itemShapes = annotations.filter(a => a.takeoffItemId === item.id);
-            if (!itemShapes.length) return '<div style="font-size:10px;color:var(--text-muted)">No shapes measured yet — draw on the plan.</div>';
+            const entries = allTakeoffShapes(item.id);
+            if (!entries.length) return '<div style="font-size:10px;color:var(--text-muted)">No shapes measured yet — draw on the plan, or use ＋ Add existing shapes.</div>';
+            const multiDoc = openDocs.length > 1;
             // Volume/vertical items get a per-shape depth/height box on every row.
             const shFactored = item.resultType === 'volume' || item.resultType === 'vertical';
             const shWhat = item.resultType === 'vertical' ? 'height' : 'depth';
             const shDef = parseFloat(item.factor) || 0;
-            let sh = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Shapes (${itemShapes.length}) — click to locate · ± flips deduction${shFactored ? ` · ${shWhat} mm per shape (blank = item default ${shDef || '?'})` : ''}</div>`;
-            itemShapes.forEach(a => {
+            let sh = `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">Shapes (${entries.length}) — click to locate · ± flips deduction${shFactored ? ` · ${shWhat} mm per shape (blank = item default ${shDef || '?'})` : ''}</div>`;
+            entries.forEach(({ a, docIdx }) => {
               const hasOv = a.takeoffFactor !== undefined && a.takeoffFactor !== null && a.takeoffFactor !== '' && isFinite(parseFloat(a.takeoffFactor));
               const effF = hasOv ? parseFloat(a.takeoffFactor) : shDef;
+              const isLocal = docIdx === activeDocIndex; // edit buttons only for the active document's shapes
+              const docTag = multiDoc ? `<span style="color:var(--text-muted)">${escapeHtml(_docShortLabel(docIdx))} · </span>` : '';
               sh += `<div style="display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:3px;background:var(--bg-secondary, rgba(0,0,0,0.15))">
-                <span onclick="locateTakeoffShape('${a.id}')" title="Go to this shape${shFactored ? ` — using ${effF || 'NO'} mm ${shWhat}` : ''}" style="flex:1;min-width:0;font-size:10px;cursor:pointer;color:${a.isDeduction ? '#e74c3c' : 'var(--text-secondary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                  p${a.page+1} · ${escapeHtml(a.label || a.type)}</span>
-                ${shFactored ? `<input type="number" step="1" min="0" value="${hasOv ? a.takeoffFactor : ''}" placeholder="${shDef || 'mm'}"
+                <span onclick="jumpToTakeoffShape(${docIdx},'${a.id}')" title="Go to this shape${multiDoc ? ' in ' + escapeHtml(_docLabel(docIdx)) : ''}${shFactored ? ` — using ${effF || 'NO'} mm ${shWhat}` : ''}${annTakeoffIds(a).length > 1 ? ' — shared with ' + (annTakeoffIds(a).length - 1) + ' other item(s)' : ''}" style="flex:1;min-width:0;font-size:10px;cursor:pointer;color:${a.isDeduction ? '#e74c3c' : 'var(--text-secondary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                  ${docTag}p${a.page+1} · ${escapeHtml(a.label || a.type)}${annTakeoffIds(a).length > 1 ? ' <span style="color:var(--text-muted)" title="Shared with other items">⇄</span>' : ''}</span>
+                ${isLocal && shFactored ? `<input type="number" step="1" min="0" value="${hasOv ? a.takeoffFactor : ''}" placeholder="${shDef || 'mm'}"
                   title="This shape's ${shWhat} in mm. Blank = item default (${shDef ? shDef + ' mm' : 'not set'}). Currently using ${effF || 'NOTHING — set a value!'}${effF ? ' mm' : ''}."
                   style="width:52px;font-size:10px;padding:1px 3px;border:1px solid ${hasOv ? 'var(--accent, #D97757)' : 'var(--border-color)'};border-radius:3px;background:none;color:${hasOv ? 'var(--accent, #D97757)' : 'var(--text-secondary)'}"
                   onclick="event.stopPropagation()" onchange="setShapeFactor('${a.id}', this.value)">` : ''}
-                <button onclick="toggleShapeDeduction('${a.id}')" title="${a.isDeduction ? 'Make this shape ADD again' : 'Make this shape a DEDUCTION'}" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:${a.isDeduction ? '#e74c3c' : 'var(--text-muted)'};cursor:pointer;font-size:10px;padding:0 4px">±</button>
-                <button onclick="unassignTakeoffShape('${a.id}')" title="Unlink from this item (shape stays on drawing)" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:10px;padding:0 2px">⤴</button>
-                <button onclick="deleteTakeoffShape('${a.id}')" title="Delete this shape" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px">×</button>
+                ${isLocal ? `<button onclick="toggleShapeDeduction('${a.id}')" title="${a.isDeduction ? 'Make this shape ADD again' : 'Make this shape a DEDUCTION'}" style="background:none;border:1px solid var(--border-color);border-radius:3px;color:${a.isDeduction ? '#e74c3c' : 'var(--text-muted)'};cursor:pointer;font-size:10px;padding:0 4px">±</button>
+                <button onclick="unassignTakeoffShape('${a.id}','${item.id}')" title="Unlink from this item (shape stays on drawing; other item links survive)" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:10px;padding:0 2px">⤴</button>
+                <button onclick="deleteTakeoffShape('${a.id}')" title="Delete this shape" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:11px;padding:0 2px">×</button>`
+                : `<button onclick="jumpToTakeoffShape(${docIdx},'${a.id}')" title="In another document — jump there to edit" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:10px;padding:0 2px">↗</button>`}
               </div>`;
             });
             return sh;
@@ -6038,8 +6669,11 @@ function placeTakeoffSummary() {
 
 function drawLegendAnn(ctx, ann) {
   const mode = ann.legendMode || 'simple';     // simple | summary | detailed
-  const scope = ann.legendScope || 'doc';      // doc | page
-  const filter = scope === 'page' ? (a => a.page === ann.page) : null;
+  const scope = ann.legendScope || 'doc';      // doc (= whole job) | page
+  // Page scope must stay inside THIS legend's document — quantities are
+  // job-wide (v2.8), so the filter also checks the doc index.
+  const legendDoc = _currentDocIdx();
+  const filter = scope === 'page' ? ((a, d) => a.page === ann.page && (d === undefined || d === legendDoc)) : null;
   const showRates = mode !== 'simple' && ann.showRates !== false;
   const pad = 6, fs = 9, headFs = 10;
   const rowH = mode === 'simple' ? 14 : 13;
@@ -6072,11 +6706,12 @@ function drawLegendAnn(ctx, ann) {
             rate: s.rate > 0 ? formatMoney(s.rate) : '', amount: s.rate > 0 ? formatMoney(s.amount) : '' });
         });
         if (mode === 'detailed') {
-          annotations.forEach(a => {
-            if (a.takeoffItemId !== item.id || (filter && !filter(a))) return;
+          const multiDoc = openDocs.length > 1;
+          allTakeoffShapes(item.id).forEach(({ a, docIdx }) => {
+            if (filter && !filter(a, docIdx)) return;
             const zone = a.zoneId && getTakeoffZone(a.zoneId);
             tRows.push({ indent: 1,
-              name: 'p' + (a.page + 1) + (zone ? ' · ' + zone.name : '') + (a.isDeduction ? ' · deduct' : ''),
+              name: (multiDoc ? _docShortLabel(docIdx) + ' · ' : '') + 'p' + (a.page + 1) + (zone ? ' · ' + zone.name : '') + (a.isDeduction ? ' · deduct' : ''),
               qty: (a.label || a.type) });
           });
         }
@@ -6090,7 +6725,7 @@ function drawLegendAnn(ctx, ann) {
     if (anyPriced && showRates) rows.push({ name: 'ESTIMATE TOTAL', amount: formatMoney(grand), bold: true, rule: true });
   }
   const title = mode === 'simple' ? 'TAKEOFF LEGEND'
-    : 'TAKEOFF SUMMARY — ' + (scope === 'page' ? 'PAGE ' + (ann.page + 1) : 'ALL PAGES');
+    : 'TAKEOFF SUMMARY — ' + (scope === 'page' ? 'PAGE ' + (ann.page + 1) : (openDocs.length > 1 ? 'ALL DOCUMENTS' : 'ALL PAGES'));
 
   // ---- Measure columns ----
   ctx.save();
@@ -6152,7 +6787,7 @@ function exportTakeoffCSV() {
   let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Markup %,Amount,Shapes,Deductions\n';
   takeoffItems.forEach(item => {
     const { qty, shapes, amount, rate, subRows } = computeTakeoffQty(item);
-    const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
+    const deds = allTakeoffShapes(item.id).filter(x => x.a.isDeduction).length;
     const unit = TAKEOFF_TYPE_UNITS[item.resultType];
     const qv = item.resultType === 'count' ? qty : qty.toFixed(3);
     csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${subRows?'assembly ('+item.resultType+')':item.resultType},${item.factor||''},${unit},${qv},${subRows?'':(rate||'')},${item.markup||''},${amount>0?amount.toFixed(2):''},${shapes},${deds}\n`;
@@ -6219,14 +6854,22 @@ function _colRef(i) { // 0 → A, 25 → Z, 26 → AA
   while (i > 0) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); }
   return s;
 }
-// sheets: [{name, rows: [[v, ...], ...]}] — numbers become numeric cells, everything else inline strings
+// sheets: [{name, rows: [[cell, ...], ...], cols?: [width, ...]}]
+// A cell is a raw value (number → numeric cell, everything else inline string)
+// OR an object { v: cachedValue, f: 'formula', s: styleIndex } — v2.8 adds
+// real formulas, a styles part, and column widths so exports open in Excel
+// as live, formatted estimates rather than flat values.
+// Style indexes (cellXfs): 0 default · 1 bold · 2 header (bold white on navy)
+// · 3 subtotal label (bold, grey fill, top border) · 4 qty 0.00 · 5 money
+// · 6 subtotal money · 7 muted italic small
 function _xlsxFromSheets(sheets) {
   const enc = new TextEncoder();
   const files = [];
   const sheetRefs = sheets.map((s, i) =>
     `<sheet name="${_xmlEsc(s.name.slice(0,31))}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('');
   const sheetRels = sheets.map((s, i) =>
-    `<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('');
+    `<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('') +
+    `<Relationship Id="rId${sheets.length+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`;
   const types = sheets.map((s, i) =>
     `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
   files.push({ name: '[Content_Types].xml', data: enc.encode(
@@ -6235,7 +6878,37 @@ function _xlsxFromSheets(sheets) {
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` +
     `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
     types + `</Types>`) });
+  files.push({ name: 'xl/styles.xml', data: enc.encode(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0.00"/><numFmt numFmtId="165" formatCode="&quot;$&quot;#,##0.00"/></numFmts>` +
+    `<fonts count="4">` +
+      `<font><sz val="11"/><name val="Calibri"/></font>` +
+      `<font><b/><sz val="11"/><name val="Calibri"/></font>` +
+      `<font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font>` +
+      `<font><i/><sz val="9"/><color rgb="FF808080"/><name val="Calibri"/></font>` +
+    `</fonts>` +
+    `<fills count="4">` +
+      `<fill><patternFill patternType="none"/></fill>` +
+      `<fill><patternFill patternType="gray125"/></fill>` +
+      `<fill><patternFill patternType="solid"><fgColor rgb="FF1F3864"/><bgColor rgb="FF1F3864"/></patternFill></fill>` +
+      `<fill><patternFill patternType="solid"><fgColor rgb="FFEDEDED"/><bgColor rgb="FFEDEDED"/></patternFill></fill>` +
+    `</fills>` +
+    `<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>` +
+    `<border><left/><right/><top style="thin"><color rgb="FF808080"/></top><bottom/><diagonal/></border></borders>` +
+    `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+    `<cellXfs count="8">` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+      `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+      `<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>` +
+      `<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>` +
+      `<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+      `<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+      `<xf numFmtId="165" fontId="1" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"/>` +
+      `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+    `</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`) });
   files.push({ name: '_rels/.rels', data: enc.encode(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
@@ -6243,7 +6916,7 @@ function _xlsxFromSheets(sheets) {
   files.push({ name: 'xl/workbook.xml', data: enc.encode(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
-    `<sheets>${sheetRefs}</sheets></workbook>`) });
+    `<sheets>${sheetRefs}</sheets><calcPr fullCalcOnLoad="1"/></workbook>`) });
   files.push({ name: 'xl/_rels/workbook.xml.rels', data: enc.encode(
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheetRels}</Relationships>`) });
@@ -6254,17 +6927,109 @@ function _xlsxFromSheets(sheets) {
       row.forEach((v, c) => {
         if (v === null || v === undefined || v === '') return;
         const ref = _colRef(c) + (r + 1);
+        // Rich cell: { v: cached value, f: formula (no leading =), s: style index }
+        if (typeof v === 'object' && !(v instanceof Date)) {
+          const sAttr = v.s ? ` s="${v.s}"` : '';
+          const val = v.v;
+          const hasVal = val !== null && val !== undefined && val !== '';
+          if (v.f) {
+            const cached = (typeof val === 'number' && isFinite(val)) ? `<v>${val}</v>` : '';
+            cells += `<c r="${ref}"${sAttr}><f>${_xmlEsc(v.f)}</f>${cached}</c>`;
+          } else if (typeof val === 'number' && isFinite(val)) {
+            cells += `<c r="${ref}"${sAttr}><v>${val}</v></c>`;
+          } else if (hasVal) {
+            cells += `<c r="${ref}"${sAttr} t="inlineStr"><is><t xml:space="preserve">${_xmlEsc(val)}</t></is></c>`;
+          } else if (v.s) {
+            cells += `<c r="${ref}"${sAttr}/>`; // style-only cell (filled header/subtotal bands)
+          }
+          return;
+        }
         if (typeof v === 'number' && isFinite(v)) cells += `<c r="${ref}"><v>${v}</v></c>`;
         else cells += `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${_xmlEsc(v)}</t></is></c>`;
       });
       rowsXml += `<row r="${r+1}">${cells}</row>`;
     });
+    const colsXml = Array.isArray(s.cols) && s.cols.length
+      ? `<cols>${s.cols.map((w, ci) => w ? `<col min="${ci+1}" max="${ci+1}" width="${w}" customWidth="1"/>` : '').join('')}</cols>`
+      : '';
     files.push({ name: `xl/worksheets/sheet${i+1}.xml`, data: enc.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-      `<sheetData>${rowsXml}</sheetData></worksheet>`) });
+      colsXml + `<sheetData>${rowsXml}</sheetData></worksheet>`) });
   });
   return _buildZip(files);
+}
+
+// Sheet 1 (v2.8) — the ESTIMATE: the workbook's package tree with LIVE Excel
+// formulas. Item amount = Qty × Rate × (1 + MU/100); package subtotals and the
+// estimate total are SUM formulas over their children, so the exported file
+// stays a working estimate — change a rate in Excel and everything reflows.
+function _buildEstimateSheet() {
+  const R = {};
+  takeoffItems.forEach(it => { R[it.id] = computeTakeoffQty(it); });
+  const tree = buildTakeoffTree();
+  const rows = [];
+  rows.push([{ v: 'Code', s: 2 }, { v: 'Description', s: 2 }, { v: 'Unit', s: 2 }, { v: 'Qty', s: 2 }, { v: 'Rate', s: 2 }, { v: 'MU %', s: 2 }, { v: 'Amount', s: 2 }]);
+  const topRefs = [];
+  let grand = 0;
+
+  const walk = (node, depth, code) => {
+    const hdrIdx = rows.length;                 // 0-based; Excel row = hdrIdx+1
+    rows.push([{ v: code, s: 3 }, { v: '  '.repeat(depth) + node.name.toUpperCase(), s: 3 }, { s: 3 }, { s: 3 }, { s: 3 }, { s: 3 }, null]);
+    const amountRefs = [];
+    let pkgAmt = 0;
+    node.items.forEach((item, ii) => {
+      const r = R[item.id];
+      const icode = code + '.' + (ii + 1);
+      const unit = TAKEOFF_TYPE_UNITS[item.resultType];
+      const mu = parseFloat(item.markup) || 0;
+      if (r.amount > 0) pkgAmt += r.amount;
+      if (r.subRows) {
+        const itemRowNum = rows.length + 1;
+        rows.push([icode, '  '.repeat(depth + 1) + item.name + '  (assembly)', unit,
+          { v: Number(r.qty.toFixed(3)), s: 4 }, '', mu || '', null]);
+        const partRefs = [];
+        r.subRows.forEach(s2 => {
+          const pn = rows.length + 1;
+          rows.push(['', '  '.repeat(depth + 2) + '– ' + s2.name + '  (' + (SUBITEM_BASIS_LABELS[s2.basis] || s2.basis) + ' × ' + s2.factor + ')', s2.unit || '',
+            { v: Number(s2.qty.toFixed(3)), s: 4 }, { v: Number((s2.rate || 0).toFixed(2)), s: 5 }, '',
+            { f: `D${pn}*E${pn}`, v: Number((s2.qty * (s2.rate || 0)).toFixed(2)), s: 5 }]);
+          partRefs.push('G' + pn);
+        });
+        rows[itemRowNum - 1][6] = partRefs.length
+          ? { f: `SUM(${partRefs.join(',')})*(1+${mu}/100)`, v: Number(r.amount.toFixed(2)), s: 5 }
+          : { v: 0, s: 5 };
+        amountRefs.push('G' + itemRowNum);
+      } else {
+        const rn = rows.length + 1;
+        rows.push([icode, '  '.repeat(depth + 1) + item.name, unit,
+          { v: Number(r.qty.toFixed(3)), s: 4 }, { v: Number((r.rate || 0).toFixed(2)), s: 5 }, mu || '',
+          { f: `D${rn}*E${rn}*(1+F${rn}/100)`, v: Number(r.amount.toFixed(2)), s: 5 }]);
+        amountRefs.push('G' + rn);
+      }
+    });
+    node.children.forEach((c, ci) => {
+      const sub = walk(c, depth + 1, code + '.' + (node.items.length + ci + 1));
+      amountRefs.push(sub.ref);
+      pkgAmt += sub.amt;
+    });
+    rows[hdrIdx][6] = amountRefs.length
+      ? { f: `SUM(${amountRefs.join(',')})`, v: Number(pkgAmt.toFixed(2)), s: 6 }
+      : { s: 6 };
+    return { ref: 'G' + (hdrIdx + 1), amt: pkgAmt };
+  };
+
+  tree.children.forEach((c, i) => {
+    const sub = walk(c, 0, String(i + 1));
+    topRefs.push(sub.ref);
+    grand += sub.amt;
+  });
+  rows.push([]);
+  rows.push([{ s: 3 }, { v: 'ESTIMATE TOTAL', s: 3 }, { s: 3 }, { s: 3 }, { s: 3 }, { s: 3 },
+    topRefs.length ? { f: `SUM(${topRefs.join(',')})`, v: Number(grand.toFixed(2)), s: 6 } : { s: 6 }]);
+  rows.push([]);
+  rows.push(['', { v: 'Quantities measured in the BDM PDF tool' + (openDocs.length > 1 ? ' across ' + openDocs.length + ' documents' : '') + ' — see Shape Breakdown for every measurement\'s drawing, page and scale.', s: 7 }]);
+  return { name: 'Estimate', rows, cols: [8, 48, 7, 12, 12, 8, 14] };
 }
 
 function exportTakeoffXLSX() {
@@ -6281,7 +7046,7 @@ function exportTakeoffXLSX() {
     let sub = 0;
     trades[trade].forEach(item => {
       const { qty, shapes, amount, rate, subRows } = computeTakeoffQty(item);
-      const deds = annotations.filter(a => a.takeoffItemId === item.id && a.isDeduction).length;
+      const deds = allTakeoffShapes(item.id).filter(x => x.a.isDeduction).length;
       sub += amount > 0 ? amount : 0;
       sum.push([trade, item.name, (subRows ? 'Assembly — ' : '') + (TAKEOFF_TYPE_LABELS[item.resultType] || item.resultType),
         item.factor ? Number(item.factor) : '', TAKEOFF_TYPE_UNITS[item.resultType],
@@ -6299,11 +7064,13 @@ function exportTakeoffXLSX() {
   });
   sum.push(['', 'ESTIMATE TOTAL', '', '', '', '', '', '', grand ? Number(grand.toFixed(2)) : '', '', '']);
 
-  // Sheet 2 — per-shape breakdown
-  const shapes = [['Trade','Item','Zone','Page','Shape type','Deduction','Measured value','Depth/Height mm','Scale used']];
+  // Sheet 2 — per-shape breakdown (every document in the job)
+  const shapes = [['Trade','Item','Document','Zone','Page','Shape type','Deduction','Measured value','Depth/Height mm','Scale used']];
   takeoffItems.forEach(item => {
     const factored = item.resultType === 'volume' || item.resultType === 'vertical';
-    annotations.filter(a => a.takeoffItemId === item.id).forEach(a => {
+    // _eachTakeoffDocState swaps in each doc's calibration so _calFor is right per shape
+    _eachTakeoffDocState(docIdx => annotations.forEach(a => {
+      if (!annLinkedToItem(a, item.id)) return;
       const cal = _calFor(a.page, a.points && a.points[0]);
       const zone = a.zoneId && getTakeoffZone(a.zoneId);
       let eff = '';
@@ -6312,14 +7079,15 @@ function exportTakeoffXLSX() {
         const n = hasOv ? parseFloat(a.takeoffFactor) : (parseFloat(item.factor) || 0);
         eff = (isFinite(n) && n > 0) ? Number(n) : '';
       }
-      shapes.push([(item.trade || 'General'), item.name, zone ? zone.name : '', a.page + 1, a.type,
+      shapes.push([(item.trade || 'General'), item.name, _docLabel(docIdx), zone ? zone.name : '', a.page + 1, a.type,
         a.isDeduction ? 'Yes' : '', (a.label || '').replace('−','-'), eff, cal ? cal.scale : 'NOT CALIBRATED']);
-    });
+    }));
   });
 
   const sheets = [
-    { name: 'Takeoff Summary', rows: sum },
-    { name: 'Shape Breakdown', rows: shapes }
+    _buildEstimateSheet(),   // live-formula estimate, package tree (v2.8)
+    { name: 'Takeoff Summary', rows: sum, cols: [16, 34, 30, 16, 7, 11, 11, 10, 12, 8, 11] },
+    { name: 'Shape Breakdown', rows: shapes, cols: [16, 26, 24, 14, 6, 11, 10, 16, 15, 14] }
   ];
 
   // Sheet 3 — per-zone subtotals (only when zones are in use)
@@ -6551,12 +7319,31 @@ function getAnnotationPropertiesHTML(ann) {
             <option value="">(not assigned)</option>
             ${compat.map(it => `<option value="${it.id}" ${ann.takeoffItemId === it.id ? 'selected' : ''}>${escapeHtml(it.name)}</option>`).join('')}
           </select></div>
+        ${(ann.takeoffExtraIds || []).map(xid => {
+          const xi = getTakeoffItem(xid);
+          if (!xi) return '';
+          return `<div class="property-row" style="justify-content:space-between;align-items:center">
+            <div style="font-size:11px;color:var(--text-secondary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${xi.color};margin-right:4px"></span>also: ${escapeHtml(xi.name)}</div>
+            <button onclick="removeAnnotationExtraItem('${safeId}','${xid}')" title="Remove this extra link" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:12px;padding:0 4px">×</button>
+          </div>`;
+        }).join('')}
+        ${(() => {
+          if (!ann.takeoffItemId) return '';
+          const opts = compat.filter(it => !annLinkedToItem(ann, it.id));
+          if (!opts.length) return '';
+          return `<div class="property-row"><div class="property-label" title="This shape's quantity also feeds the item you pick — one shape, several bill lines.">Also add to:</div>
+            <select class="select-input" onchange="if(this.value)addAnnotationToExtraItem('${safeId}', this.value)">
+              <option value="">(pick item…)</option>
+              ${opts.map(it => `<option value="${it.id}">${escapeHtml(it.name)}</option>`).join('')}
+            </select></div>`;
+        })()}
         ${ann.takeoffItemId ? `<div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
           <input type="checkbox" onchange="toggleShapeDeduction('${safeId}')" ${ann.isDeduction ? 'checked' : ''}>
-          Deduction (subtracts from item)</label></div>` : ''}
+          Deduction (subtracts from ${(ann.takeoffExtraIds || []).length ? 'ALL linked items' : 'item'})</label></div>` : ''}
         ${(() => {
-          const it = ann.takeoffItemId && getTakeoffItem(ann.takeoffItemId);
-          if (!it || (it.resultType !== 'volume' && it.resultType !== 'vertical')) return '';
+          // Height/depth override applies when ANY linked item is factored (volume/vertical)
+          const it = annTakeoffIds(ann).map(getTakeoffItem).find(x => x && (x.resultType === 'volume' || x.resultType === 'vertical'));
+          if (!it) return '';
           const what = it.resultType === 'vertical' ? 'Height' : 'Depth';
           const def = parseFloat(it.factor) || 0;
           const hasOv = ann.takeoffFactor !== undefined && ann.takeoffFactor !== null && ann.takeoffFactor !== '';
@@ -6577,7 +7364,7 @@ function getAnnotationPropertiesHTML(ann) {
   // Measurement info
   if (ann.label || ann.perimLabel) {
     html += `<div class="properties-section"><div class="properties-section-title">Measurement</div><div class="properties-section-content">`;
-    if (ann.label) html += `<div class="property-row"><div class="property-label">${ann.type==='area'?'Area':'Length'}:</div><div class="property-value" style="color:var(--accent);font-weight:600">${ann.label}</div></div>`;
+    if (ann.label) html += `<div class="property-row"><div class="property-label">${ann.type==='area' ? (ann.label.indexOf('m³') !== -1 ? 'Volume' : 'Area') : 'Length'}:</div><div class="property-value" style="color:var(--accent);font-weight:600">${ann.label}</div></div>`;
     if (ann.perimLabel) html += `<div class="property-row"><div class="property-label">Perimeter:</div><div class="property-value" style="color:var(--accent)">${ann.perimLabel}</div></div>`;
     html += `</div></div>`;
   }
