@@ -1109,7 +1109,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.2';
+const APP_VERSION = 'v2.8.3';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -1531,6 +1531,7 @@ function captureActiveDocState() {
   // open documents, never swapped per tab. Only per-document state lives here.
   d.pageViewMode = pageViewMode;
   d.viewports = viewports;
+  d.docModified = docModified;
 }
 
 function restoreDocState(idx) {
@@ -1556,6 +1557,7 @@ function restoreDocState(idx) {
   // takeoffItems / takeoffZones / active item+zone are JOB-level (v2.8) — they
   // survive tab switches so one estimate spans every open document.
   viewports = d.viewports || [];
+  docModified = !!d.docModified;
   activeDocIndex = idx;
 
   // Cancel any half-finished drawing from the previous document
@@ -1589,8 +1591,29 @@ function switchToDoc(idx) {
   restoreDocState(idx);
 }
 
-function closeDoc(idx) {
+function closeDoc(idx, force) {
   if (idx < 0 || idx >= openDocs.length) return;
+
+  // Unsaved markups? Offer Save / Close Without Saving / Cancel before the
+  // sheet (and its edits) disappear. force=true skips the check (used by the
+  // modal buttons themselves after the user has chosen).
+  if (!force) {
+    const dirty = (idx === activeDocIndex) ? docModified : !!openDocs[idx].docModified;
+    if (dirty) {
+      const name = (idx === activeDocIndex ? currentFilename : openDocs[idx].currentFilename) || 'document.pdf';
+      const esc = String(name).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      showModal('Unsaved changes', `
+        <div style="font-size:13px;line-height:1.6">
+          <b>${esc}</b> has markups that haven't been saved.<br>
+          <span style="color:var(--text-secondary);font-size:12px">Save writes the markups into the PDF so they're there when you reopen it.</span>
+        </div>`, [
+        { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
+        { text: 'Close Without Saving', class: 'secondary', onclick: `closeCurrentModal(); closeDoc(${idx}, true)` },
+        { text: 'Save & Close', class: 'primary', onclick: `closeCurrentModal(); saveThenCloseDoc(${idx})` }
+      ]);
+      return;
+    }
+  }
 
   // If we're closing the active doc, make sure we don't then write
   // stale globals back into a neighbour during restore.
@@ -1663,6 +1686,23 @@ function closeDoc(idx) {
 function closeActiveDoc() {
   if (activeDocIndex >= 0) closeDoc(activeDocIndex);
 }
+
+// "Save & Close" from the unsaved-changes prompt: switch to the doc (Save
+// always operates on the active document), save, then close it for real.
+async function saveThenCloseDoc(idx) {
+  if (idx !== activeDocIndex) switchToDoc(idx);
+  await saveProject();
+  // Only close if the save actually went through (flag cleared on success);
+  // a failed/cancelled save keeps the sheet open so nothing is lost.
+  if (!docModified) closeDoc(activeDocIndex, true);
+}
+
+// Closing the browser tab/window with unsaved markups in ANY open document
+// triggers the browser's own "leave site?" confirmation.
+window.addEventListener('beforeunload', (e) => {
+  const anyDirty = docModified || openDocs.some((d, i) => i !== activeDocIndex && d.docModified);
+  if (anyDirty) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // ============================================================
 // SPLIT VIEW — second pane showing another open document (or another
@@ -1931,8 +1971,9 @@ function renderDocTabs() {
   bar.innerHTML = openDocs.map((d, i) => {
     const active = i === activeDocIndex ? ' active' : '';
     const name = esc(d.currentFilename || 'document.pdf');
-    return `<div class="doc-tab${active}" onclick="switchToDoc(${i})" title="${name}">`
-      + `<span class="tab-name">${name}</span>`
+    const mod = (i === activeDocIndex) ? docModified : !!d.docModified;
+    return `<div class="doc-tab${active}" onclick="switchToDoc(${i})" title="${name}${mod ? ' — unsaved changes' : ''}">`
+      + `<span class="tab-name">${mod ? '<span style="color:var(--accent)">●</span> ' : ''}${name}</span>`
       + `<button class="tab-close" onclick="event.stopPropagation(); closeDoc(${i})" title="Close">`
       + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`
       + `</button></div>`;
@@ -2117,6 +2158,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     checkCalibrationBanner();
     setTool('select');
     saveToHistory();
+    docModified = false; // the initial history snapshot isn't an edit
 
     // Try to read the drawing scale from each sheet's title block (background)
     setTimeout(() => { autoDetectScalesFromText().catch(e => console.warn('auto-scale scan failed:', e)); }, 400);
@@ -7853,6 +7895,10 @@ function _annotationsForSnapshot() {
   });
 }
 function saveToHistory() {
+  if (!docModified) {
+    docModified = true;  // first edit since open/save — show ● on the tab
+    if (typeof renderDocTabs === 'function') renderDocTabs();
+  }
   historyIndex++;
   history = history.slice(0, historyIndex);
   // Snapshot measurements + countGroups + takeoffItems alongside annotations
@@ -8365,6 +8411,11 @@ let thumbCtxPage = -1;
 // selection bar, the right-click menu, or the Delete key.
 let thumbSelectedPages = new Set();
 let thumbSelectAnchor = -1;      // range start for Shift+click
+
+// Unsaved-changes tracking (v2.8.3): true once the active document has been
+// edited since open/last save. Per-doc via capture/restore; closing a dirty
+// tab (or the window) prompts to save first.
+let docModified = false;
 let thumbItemSize = 100; // CSS grid item min-width (controlled by zoom slider)
 let thumbRenderQueue = null; // debounce re-render
 
@@ -9472,6 +9523,11 @@ function downloadBlob(data, mimeType, filename) {
 // drop on a supporting browser), overwrite the original IN PLACE. Otherwise
 // fall back to a normal browser download.
 async function writeSavedBytes(savedBytes) {
+  // Whichever route the bytes take (in-place write or Downloads copy), the
+  // markups are now saved — the close-tab prompt stands down.
+  docModified = false;
+  if (activeDocIndex >= 0 && openDocs[activeDocIndex]) openDocs[activeDocIndex].docModified = false;
+  renderDocTabs(); // drop the ● unsaved marker
   if (currentFileHandle && typeof currentFileHandle.createWritable === 'function') {
     try {
       // Permission check — handles obtained via launchQueue are already granted,

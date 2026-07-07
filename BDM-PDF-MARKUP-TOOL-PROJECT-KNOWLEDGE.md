@@ -406,5 +406,9 @@ while ((m = re.exec(h))) {
 ### v2.8.1 — version badge (7 Jul 2026)
 - `const APP_VERSION` (top of the globals, above the TAKEOFF STATE section) renders as an accent-bordered badge next to the logo (`#app-version`, populated on DOMContentLoaded). **Bump it with every release** — it's how users tell the local build from the deployed one at jamesbdm.github.io. Stays visible in compact topbar mode.
 
+### v2.8.3 — save prompt on close (7 Jul 2026)
+- **Unsaved-changes tracking.** `docModified` global (per-doc via capture/restore, `d.docModified`): set by the first `saveToHistory()` after open/save (also re-renders tabs to show an accent ● + "unsaved changes" tooltip on the dirty tab), cleared in `loadPdf` (initial snapshot isn't an edit) and at the top of `writeSavedBytes` (both in-place saves and Downloads-copy fallbacks count as saved).
+- **Close prompt.** `closeDoc(idx, force)` — closing a dirty sheet shows a Save & Close / Close Without Saving / Cancel modal. `saveThenCloseDoc` switches to the doc, runs `saveProject()`, and only closes if the flag actually cleared (failed/cancelled save keeps the sheet open). `beforeunload` warns when ANY open document is dirty.
+
 ### v2.8.2 — thumbnail multi-select delete + resizable takeoff tables (7 Jul 2026)
 - **Thumbnail multi-select.** Ctrl/Cmd+click toggles pages in the thumbnail strip, Shift+click selects a range from the last anchor (falls back to the current page); plain click clears and navigates as before. Selected pages get a blue outline + ✓ badge; a selection bar appears above the strip ("N pages selected · Delete · ✕"). Bulk delete vi
