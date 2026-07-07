@@ -167,6 +167,14 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .thumbnail-item:hover { border-color: var(--text-secondary); }
 .thumbnail-item.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* Multi-selected pages (Ctrl/Shift+click) — blue so it reads differently from the orange current page */
+.thumbnail-item.selected { border-color: #2E86DE; box-shadow: 0 0 0 2px #2E86DE; }
+.thumbnail-item.selected::after { content: '✓'; position: absolute; top: 2px; right: 2px; width: 15px; height: 15px; border-radius: 50%; background: #2E86DE; color: #fff; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+#thumb-select-bar { display: none; align-items: center; gap: 5px; padding: 4px 6px; background: rgba(46,134,222,0.15); border-bottom: 1px solid var(--border-color); font-size: 10px; color: var(--text-secondary); }
+#thumb-select-bar.visible { display: flex; }
+#thumb-select-bar button { font-size: 10px; padding: 2px 7px; border-radius: 3px; cursor: pointer; }
+#thumb-select-bar .tsb-del { background: var(--danger, #e74c3c); color: #fff; font-weight: 700; }
+#thumb-select-bar .tsb-clear { background: none; border: 1px solid var(--border-color); color: var(--text-secondary); }
 .thumbnail-canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
 .thumb-label {
   position: absolute; bottom: 0; left: 0; right: 0; text-align: center;
@@ -829,6 +837,11 @@ canvas { display: block; }
         <input type="range" class="thumb-zoom-slider" id="thumb-zoom" min="60" max="250" value="100" title="Thumbnail size" oninput="setThumbZoom(this.value)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="1"/></svg>
       </div>
+      <div id="thumb-select-bar" title="Ctrl+click toggles pages · Shift+click selects a range">
+        <span id="thumb-select-count" style="flex:1"></span>
+        <button class="tsb-del" onclick="deleteSelectedThumbPages()" title="Delete all selected pages">Delete</button>
+        <button class="tsb-clear" onclick="clearThumbSelection()" title="Clear selection (Esc)">✕</button>
+      </div>
       <div class="thumb-scroll-area" id="thumb-scroll-area"></div>
       <div class="thumb-resize-handle" id="thumb-resize-handle"></div>
     </div>
@@ -980,7 +993,7 @@ canvas { display: block; }
   <div class="thumb-ctx-item" id="thumb-ctx-moveup" onclick="thumbCtxMoveUp()">Move Up</div>
   <div class="thumb-ctx-item" id="thumb-ctx-movedown" onclick="thumbCtxMoveDown()">Move Down</div>
   <div class="thumb-ctx-sep"></div>
-  <div class="thumb-ctx-item danger" onclick="thumbCtxDelete()">Delete Page</div>
+  <div class="thumb-ctx-item danger" id="thumb-ctx-delete" onclick="thumbCtxDelete()">Delete Page</div>
 </div>
 <input type="file" id="thumb-insert-input" accept=".pdf" style="display:none" onchange="handleThumbInsert(event)">
 
@@ -1096,7 +1109,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.1';
+const APP_VERSION = 'v2.8.2';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3270,6 +3283,16 @@ function getAnnotationHandlePoints(ann) {
   if (ann.type === 'text') {
     return [ann.points[0]];
   }
+  // Takeoff legend / summary table — 4 corner handles; dragging any corner
+  // scales the whole table (ann.legendScale) around the opposite corner.
+  if (ann.type === 'legend') {
+    const w = ann._legendW || 120, h = ann._legendH || 60;
+    const p = ann.points[0];
+    return [
+      { x: p.x, y: p.y },         { x: p.x + w, y: p.y },      // TL, TR
+      { x: p.x, y: p.y + h },     { x: p.x + w, y: p.y + h }   // BL, BR
+    ];
+  }
   // For two-point shapes (rectangle, ellipse, highlight, cutcontent), return 8 handles (corners + midpoints)
   if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points.length === 2) {
     const [a, b] = ann.points;
@@ -3314,6 +3337,32 @@ function applyResize(ann, handleIdx, newPagePt) {
       allPts[handleIdx].x = newPagePt.x;
       allPts[handleIdx].y = newPagePt.y;
     }
+    return;
+  }
+
+  // Takeoff legend / summary — corner drag rescales the table proportionally
+  // (content re-lays-out from ann.legendScale on the next draw); the corner
+  // OPPOSITE the dragged one stays pinned.
+  if (ann.type === 'legend') {
+    const w = ann._legendW || 1, h = ann._legendH || 1;
+    const p = ann.points[0];
+    const ls = ann.legendScale || 1;
+    const baseW = w / ls, baseH = h / ls;   // content size at scale 1
+    let newW, anchorX, anchorY;
+    switch (handleIdx) {
+      case 0: newW = (p.x + w) - newPagePt.x; anchorX = p.x + w; anchorY = p.y + h; break; // TL → pin BR
+      case 1: newW = newPagePt.x - p.x;       anchorX = p.x;     anchorY = p.y + h; break; // TR → pin BL
+      case 2: newW = (p.x + w) - newPagePt.x; anchorX = p.x + w; anchorY = p.y;     break; // BL → pin TR
+      default: newW = newPagePt.x - p.x;      anchorX = p.x;     anchorY = p.y;     break; // BR → pin TL
+    }
+    const ns = Math.max(0.4, Math.min(6, newW / baseW));
+    ann.legendScale = ns;
+    const nw = baseW * ns, nh = baseH * ns;
+    ann.points[0] = {
+      x: (handleIdx === 0 || handleIdx === 2) ? anchorX - nw : anchorX,
+      y: (handleIdx === 0 || handleIdx === 1) ? anchorY - nh : anchorY
+    };
+    ann._legendW = nw; ann._legendH = nh; // keep handles accurate mid-drag
     return;
   }
 
@@ -4427,7 +4476,11 @@ function onKeyDown(e) {
     const hadDraft = twoClickStart || isDrawing || polylinePoints.length > 0 || calloutMode || areaDragStartScreen;
     cancelInProgressDrawing();
     if (!hadDraft) {
-      if (takeoffPickItemId) {
+      if (thumbSelectedPages.size) {
+        // Clear thumbnail multi-selection first
+        clearThumbSelection();
+      }
+      else if (takeoffPickItemId) {
         // Exit "add existing shapes" pick mode first
         stopTakeoffShapePick();
       }
@@ -6675,8 +6728,11 @@ function drawLegendAnn(ctx, ann) {
   const legendDoc = _currentDocIdx();
   const filter = scope === 'page' ? ((a, d) => a.page === ann.page && (d === undefined || d === legendDoc)) : null;
   const showRates = mode !== 'simple' && ann.showRates !== false;
-  const pad = 6, fs = 9, headFs = 10;
-  const rowH = mode === 'simple' ? 14 : 13;
+  // legendScale (drag any corner of the selected table) scales every metric,
+  // so the table re-lays-out proportionally at any size.
+  const ls = Math.max(0.4, Math.min(6, ann.legendScale || 1));
+  const pad = 6 * ls, fs = 9 * ls, headFs = 10 * ls;
+  const rowH = (mode === 'simple' ? 14 : 13) * ls;
 
   // ---- Row model: {swatch, indent, name, qty, rate, amount, bold, rule} ----
   const rows = [];
@@ -6733,7 +6789,7 @@ function drawLegendAnn(ctx, ann) {
   ctx.font = fs + 'px "Segoe UI", Arial, sans-serif';
   let nameW = 70, qtyW = 30, rateW = 0, amtW = 0;
   rows.forEach(r => {
-    const ind = (r.indent ? 10 : 0) + (r.swatch ? 16 : 0);
+    const ind = (r.indent ? 10 * ls : 0) + (r.swatch ? 16 * ls : 0);
     nameW = Math.max(nameW, ctx.measureText(r.name || '').width + ind);
     qtyW  = Math.max(qtyW, ctx.measureText(r.qty || '').width);
     if (showRates) {
@@ -6742,7 +6798,7 @@ function drawLegendAnn(ctx, ann) {
     }
   });
   ctx.font = '600 ' + headFs + 'px "Segoe UI", Arial, sans-serif';
-  const gap = 10;
+  const gap = 10 * ls;
   let w = pad + nameW + gap + qtyW + (showRates ? gap + rateW + gap + amtW : 0) + pad;
   w = Math.max(w, pad + ctx.measureText(title).width + pad);
   const h = pad + rowH + rows.length * rowH + pad;
@@ -6751,23 +6807,23 @@ function drawLegendAnn(ctx, ann) {
   // ---- Draw ----
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#333333'; ctx.lineWidth = 0.75;
+  ctx.strokeStyle = '#333333'; ctx.lineWidth = 0.75 * ls;
   ctx.strokeRect(x, y, w, h);
   ctx.fillStyle = '#111111';
   ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-  ctx.fillText(title, x + pad, y + pad + rowH / 2 - 2);
+  ctx.fillText(title, x + pad, y + pad + rowH / 2 - 2 * ls);
   const qtyR = x + pad + nameW + gap + qtyW;
   const rateR = qtyR + gap + rateW;
   const amtR = rateR + gap + amtW;
   rows.forEach((r, i) => {
-    const ry = y + pad + rowH + i * rowH + rowH / 2 - 2;
+    const ry = y + pad + rowH + i * rowH + rowH / 2 - 2 * ls;
     ctx.font = (r.bold ? '700 ' : '') + fs + 'px "Segoe UI", Arial, sans-serif';
     if (r.rule) {
-      ctx.strokeStyle = '#999999'; ctx.lineWidth = 0.5;
+      ctx.strokeStyle = '#999999'; ctx.lineWidth = 0.5 * ls;
       ctx.beginPath(); ctx.moveTo(x + pad / 2, ry - rowH / 2 + 1); ctx.lineTo(x + w - pad / 2, ry - rowH / 2 + 1); ctx.stroke();
     }
-    let nx = x + pad + (r.indent ? 10 : 0);
-    if (r.swatch) { ctx.fillStyle = r.swatch; ctx.fillRect(nx, ry - 4, 12, 8); nx += 16; }
+    let nx = x + pad + (r.indent ? 10 * ls : 0);
+    if (r.swatch) { ctx.fillStyle = r.swatch; ctx.fillRect(nx, ry - 4 * ls, 12 * ls, 8 * ls); nx += 16 * ls; }
     ctx.fillStyle = r.indent ? '#444444' : '#111111';
     ctx.textAlign = 'left';
     ctx.fillText(r.name || '', nx, ry);
@@ -7245,7 +7301,10 @@ function getAnnotationPropertiesHTML(ann) {
       </select></div>
       <div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
         <input type="checkbox" class="checkbox-input" id="prop-legend-rates" ${ann.showRates !== false ? 'checked' : ''}> Show rates &amp; amounts</label></div>
-      <div style="font-size:10px;color:var(--text-muted)">Updates live as you measure; bakes into saves, prints and flattens.</div>
+      <div class="property-row"><div class="property-label" title="Or drag any corner of the selected table on the drawing">Size %:</div>
+        <input type="number" id="prop-legend-scale" class="property-input" min="40" max="600" step="10" value="${Math.round((ann.legendScale || 1) * 100)}" style="width:64px">
+        <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){delete a.legendScale; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}">Reset</button></div>
+      <div style="font-size:10px;color:var(--text-muted)">Updates live as you measure; bakes into saves, prints and flattens. Drag a corner to resize.</div>
     </div></div>`;
   }
 
@@ -7478,6 +7537,7 @@ function attachAnnotationListeners(ann) {
   bind('prop-legend-mode', 'legendMode');
   bind('prop-legend-scope', 'legendScope');
   bind('prop-legend-rates', 'showRates', t => t.checked);
+  bind('prop-legend-scale', 'legendScale', t => Math.max(0.4, Math.min(6, (parseFloat(t.value) || 100) / 100)));
 
   const opSlider = document.getElementById('prop-opacity');
   if (opSlider) opSlider.addEventListener('input', e => { ann.opacity = parseInt(e.target.value); document.getElementById('prop-op-val').textContent = e.target.value+'%'; redrawAnnotations(); pushHistorySoon(); });
@@ -8300,6 +8360,11 @@ function updateCalibrationIndicator() {
 // ============================================================
 let thumbDragIdx = -1;
 let thumbCtxPage = -1;
+// Multi-select in the thumbnail strip (v2.8.2): Ctrl+click toggles pages,
+// Shift+click selects a range, plain click clears. Bulk delete via the
+// selection bar, the right-click menu, or the Delete key.
+let thumbSelectedPages = new Set();
+let thumbSelectAnchor = -1;      // range start for Shift+click
 let thumbItemSize = 100; // CSS grid item min-width (controlled by zoom slider)
 let thumbRenderQueue = null; // debounce re-render
 
@@ -8370,8 +8435,30 @@ async function generateThumbnails() {
     const canvas = document.createElement('canvas');
     canvas.className = 'thumbnail-canvas';
 
-    // Click to navigate
-    item.onclick = () => { goToPage(parseInt(item.dataset.pageIdx)); };
+    // Click to navigate — Ctrl+click toggles selection, Shift+click selects a
+    // range (for bulk page delete), plain click clears any selection.
+    item.onclick = (e) => {
+      const idx = parseInt(item.dataset.pageIdx);
+      if (e.ctrlKey || e.metaKey) {
+        if (thumbSelectedPages.has(idx)) thumbSelectedPages.delete(idx);
+        else thumbSelectedPages.add(idx);
+        thumbSelectAnchor = idx;
+        updateThumbSelection();
+        return;
+      }
+      if (e.shiftKey) {
+        const from = thumbSelectAnchor >= 0 ? thumbSelectAnchor : currentPage;
+        thumbSelectedPages = new Set();
+        for (let p = Math.min(from, idx); p <= Math.max(from, idx); p++) thumbSelectedPages.add(p);
+        updateThumbSelection();
+        return;
+      }
+      if (thumbSelectedPages.size) clearThumbSelection();
+      thumbSelectAnchor = idx;
+      goToPage(idx);
+    };
+    // Shift+click shouldn't start a browser text/drag selection
+    item.addEventListener('mousedown', (e) => { if (e.shiftKey || e.ctrlKey || e.metaKey) e.preventDefault(); });
 
     // Right-click context menu
     item.addEventListener('contextmenu', (e) => {
@@ -8411,8 +8498,61 @@ async function generateThumbnails() {
     container.appendChild(wrapper);
   }
 
+  // Drop selected pages that no longer exist (after delete/merge), re-badge the rest
+  thumbSelectedPages.forEach(p => { if (p >= pdfDoc.numPages) thumbSelectedPages.delete(p); });
+  updateThumbSelection();
+
   // Render all thumbnail canvases at correct resolution
   await rerenderThumbCanvases();
+}
+
+// ---- Thumbnail multi-select (v2.8.2) ----
+function updateThumbSelection() {
+  const container = document.getElementById('thumb-scroll-area');
+  if (container) container.querySelectorAll('.thumbnail-item').forEach(el => {
+    el.classList.toggle('selected', thumbSelectedPages.has(parseInt(el.dataset.pageIdx)));
+  });
+  const bar = document.getElementById('thumb-select-bar');
+  const count = document.getElementById('thumb-select-count');
+  if (bar) bar.classList.toggle('visible', thumbSelectedPages.size > 0);
+  if (count) count.textContent = thumbSelectedPages.size + ' page' + (thumbSelectedPages.size === 1 ? '' : 's') + ' selected';
+}
+function clearThumbSelection() {
+  if (!thumbSelectedPages.size) return;
+  thumbSelectedPages.clear();
+  thumbSelectAnchor = -1;
+  updateThumbSelection();
+}
+// Delete every selected page in one operation (annotations, calibrations and
+// viewports on deleted pages go with them; the rest shift down together).
+async function deleteSelectedThumbPages() {
+  const pages = Array.from(thumbSelectedPages).sort((a, b) => a - b);
+  if (!pages.length) return;
+  if (!pdfDoc) return;
+  if (pages.length >= pdfDoc.numPages) { alert('Cannot delete every page — at least one must remain.'); return; }
+  const listTxt = pages.length <= 12 ? ' (page ' + pages.map(p => p + 1).join(', ') + ')' : '';
+  if (!confirm('Delete ' + pages.length + ' selected page' + (pages.length === 1 ? '' : 's') + listTxt + '?')) return;
+  try {
+    const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    // Remove highest-first so remaining indices stay valid
+    for (let i = pages.length - 1; i >= 0; i--) doc.removePage(pages[i]);
+    const del = new Set(pages);
+    const shift = p => p - pages.filter(x => x < p).length;
+    annotations = annotations.filter(a => !del.has(a.page)).map(a => ({ ...a, page: shift(a.page) }));
+    const newCals = {};
+    Object.keys(pageCalibrations).forEach(k => {
+      const pg = parseInt(k);
+      if (!del.has(pg)) newCals[shift(pg)] = pageCalibrations[pg];
+    });
+    pageCalibrations = newCals;
+    viewports = viewports.filter(v => !del.has(v.page)).map(v => ({ ...v, page: shift(v.page) }));
+    currentPage = Math.max(0, Math.min(shift(currentPage), doc.getPageCount() - 1));
+    thumbSelectedPages.clear();
+    thumbSelectAnchor = -1;
+    await rebuildPdf(doc);
+    resetHistoryAfterPageOp();
+    showToast(pages.length + ' page' + (pages.length === 1 ? '' : 's') + ' deleted');
+  } catch (err) { alert('Error deleting pages: ' + err.message); }
 }
 
 // Re-render all thumbnail canvases at the resolution matching their current display size
@@ -8562,6 +8702,10 @@ function showThumbContextMenu(x, y) {
   const menu = document.getElementById('thumb-context-menu');
   menu.style.left = x + 'px'; menu.style.top = y + 'px';
   menu.classList.add('visible');
+  // Right-clicking within a multi-selection offers a bulk delete
+  const delItem = document.getElementById('thumb-ctx-delete');
+  if (delItem) delItem.textContent = (thumbSelectedPages.size > 1 && thumbSelectedPages.has(thumbCtxPage))
+    ? 'Delete ' + thumbSelectedPages.size + ' Selected Pages' : 'Delete Page';
   // Enable/disable move up/down
   document.getElementById('thumb-ctx-moveup').classList.toggle('disabled', thumbCtxPage <= 0);
   document.getElementById('thumb-ctx-movedown').classList.toggle('disabled', thumbCtxPage >= pdfDoc.numPages - 1);
@@ -9114,6 +9258,8 @@ async function thumbCtxMoveDown() {
 
 async function thumbCtxDelete() {
   hideThumbContextMenu();
+  // Multi-selection including the right-clicked page → bulk delete
+  if (thumbSelectedPages.size > 1 && thumbSelectedPages.has(thumbCtxPage)) { deleteSelectedThumbPages(); return; }
   if (pdfDoc.numPages <= 1) { alert('Cannot delete the only page'); return; }
   if (!confirm(`Delete page ${thumbCtxPage + 1}?`)) return;
   try {

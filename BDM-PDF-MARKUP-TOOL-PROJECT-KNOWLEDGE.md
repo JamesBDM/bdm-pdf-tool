@@ -406,5 +406,5 @@ while ((m = re.exec(h))) {
 ### v2.8.1 — version badge (7 Jul 2026)
 - `const APP_VERSION` (top of the globals, above the TAKEOFF STATE section) renders as an accent-bordered badge next to the logo (`#app-version`, populated on DOMContentLoaded). **Bump it with every release** — it's how users tell the local build from the deployed one at jamesbdm.github.io. Stays visible in compact topbar mode.
 
-### Lesson learned (tooling)
-- The OneDrive-synced project folder can serve a **stale/truncated copy to the sandbox shell** while the real file (via Read/Write tools) is fine — verify against the real file, and beware `sed -i` on the mount. A mid-edit OneDrive lock once truncated the file tail (EBUSY); if a file ever ends mid-line, the missing tail can be restored from v1 since the last ~400 lines are unchanged between versions.
+### v2.8.2 — thumbnail multi-select delete + resizable takeoff tables (7 Jul 2026)
+- **Thumbnail multi-select.** Ctrl/Cmd+click toggles pages in the thumbnail strip, Shift+click selects a range from the last anchor (falls back to the current page); plain click clears and navigates as before. Selected pages get a blue outline + ✓ badge; a selection bar appears above the strip ("N pages selected · Delete · ✕"). Bulk delete vi
