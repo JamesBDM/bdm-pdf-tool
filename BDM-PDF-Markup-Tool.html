@@ -1114,7 +1114,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.5';
+const APP_VERSION = 'v2.8.6';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3097,6 +3097,23 @@ function drawArrowShape(ctx, ann) {
   ctx.closePath(); ctx.fillStyle = ann.color||'#D97757'; ctx.fill();
 }
 
+// Word-wrap text to a maximum width (page units) with the ctx's current font.
+// Manual line breaks (\n) are kept; over-long single words overflow gracefully.
+function _wrapTextLines(ctx, text, maxW) {
+  const out = [];
+  String(text || '').split('\n').forEach(raw => {
+    if (!maxW || ctx.measureText(raw).width <= maxW) { out.push(raw); return; }
+    let line = '';
+    raw.split(' ').forEach(word => {
+      const test = line ? line + ' ' + word : word;
+      if (!line || ctx.measureText(test).width <= maxW) line = test;
+      else { out.push(line); line = word; }
+    });
+    out.push(line);
+  });
+  return out;
+}
+
 function drawTextAnn(ctx, ann) {
   ctx.globalAlpha = 1;
   ctx.fillStyle = ann.color || '#D97757';
@@ -3106,7 +3123,8 @@ function drawTextAnn(ctx, ann) {
   const fi = ann.fontStyle || 'normal';
   ctx.font = `${fi} ${fw} ${fs}px ${ff}`;
   ctx.textBaseline = 'top';
-  const lines = (ann.text||'').split('\n');
+  // ann.boxW (drag the box handle) wraps the text to that width
+  const lines = ann.boxW ? _wrapTextLines(ctx, ann.text || '', ann.boxW) : (ann.text||'').split('\n');
   lines.forEach((line, i) => {
     ctx.fillText(line, ann.points[0].x, ann.points[0].y + i * (fs + 2));
   });
@@ -3118,6 +3136,9 @@ function drawTextAnn(ctx, ann) {
       ctx.strokeStyle = ann.color||'#D97757'; ctx.lineWidth = 1; ctx.stroke();
     });
   }
+  // Cache the drawn box for hit-testing + the resize handle
+  const bw = ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width));
+  ann._annBox = { x: ann.points[0].x, y: ann.points[0].y, w: bw, h: Math.max(fs + 2, lines.length * (fs + 2)) };
 }
 
 function drawCalloutAnn(ctx, ann) {
@@ -3150,8 +3171,10 @@ function drawCalloutAnn(ctx, ann) {
   ctx.font = `${fi} ${fw} ${fs}px ${ff}`;
   ctx.textBaseline = 'top';
   const text = ann.text || '';
-  const lines = text.split('\n');
-  const maxW = Math.max(60, ...lines.map(l => ctx.measureText(l).width));
+  // ann.boxW (drag the box corner handle) fixes the box width and WRAPS the
+  // text inside it; without it the box auto-sizes to the longest line.
+  const lines = ann.boxW ? _wrapTextLines(ctx, text, ann.boxW) : text.split('\n');
+  const maxW = ann.boxW ? ann.boxW : Math.max(60, ...lines.map(l => ctx.measureText(l).width));
   const pad = 6;
   const boxW = maxW + pad*2, boxH = lines.length * (fs+3) + pad*2;
 
@@ -3161,6 +3184,7 @@ function drawCalloutAnn(ctx, ann) {
   ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity / 100 : 1;
   ctx.strokeStyle = color; ctx.lineWidth = 1;
   ctx.strokeRect(ann.textPos.x - pad, ann.textPos.y - pad, boxW, boxH);
+  ann._annBox = { x: ann.textPos.x - pad, y: ann.textPos.y - pad, w: boxW, h: boxH };
 
   ctx.fillStyle = ann.textColor || color;
   ctx.textAlign = ann.textAlign || 'left';
@@ -3454,12 +3478,19 @@ function rotateSelectedAnnotation(deg) {
 // ============================================================
 function getAnnotationHandlePoints(ann) {
   if (ann.type === 'callout') {
-    return [ann.anchor, ...(ann.knees||[]), ann.textPos].filter(Boolean);
+    const pts = [ann.anchor, ...(ann.knees||[]), ann.textPos].filter(Boolean);
+    // Extra handle at the text box's bottom-right corner — drag to set the
+    // box width; the text wraps inside it.
+    if (ann._annBox) pts.push({ x: ann._annBox.x + ann._annBox.w, y: ann._annBox.y + ann._annBox.h });
+    return pts;
   }
   if (!ann.points || ann.points.length === 0) return [];
-  // For text, return the anchor point handle (drag to move)
+  // For text: anchor handle (drag to move) + bottom-right box handle (drag to
+  // set wrap width)
   if (ann.type === 'text') {
-    return [ann.points[0]];
+    const pts = [ann.points[0]];
+    if (ann._annBox) pts.push({ x: ann._annBox.x + ann._annBox.w, y: ann._annBox.y + ann._annBox.h });
+    return pts;
   }
   // Takeoff legend / summary table — 4 corner handles; dragging any corner
   // scales the whole table (ann.legendScale) around the opposite corner.
@@ -3514,7 +3545,16 @@ function applyResize(ann, handleIdx, newPagePt) {
     if (handleIdx >= 0 && handleIdx < allPts.length) {
       allPts[handleIdx].x = newPagePt.x;
       allPts[handleIdx].y = newPagePt.y;
+    } else if (handleIdx === allPts.length) {
+      // Box corner handle — sets the text box width; text wraps inside
+      ann.boxW = Math.max(30, newPagePt.x - ann.textPos.x - 6);
     }
+    return;
+  }
+  // Text: handle 0 moves the anchor, handle 1 sets the wrap width
+  if (ann.type === 'text') {
+    if (handleIdx === 0) { ann.points[0] = { x: newPagePt.x, y: newPagePt.y }; }
+    else if (handleIdx === 1) { ann.boxW = Math.max(30, newPagePt.x - ann.points[0].x); }
     return;
   }
 
@@ -4224,10 +4264,15 @@ function onCanvasDoubleClick(e) {
     showCalloutTextInput(toPage(calloutAnchor), calloutKnees.map(k => toPage(k)), toPage(screenTextPos));
     calloutMode = false; calloutAnchor = null; calloutKnees = [];
   }
-  // Double-click on selected text/callout to edit inline
-  else if (currentTool === 'select' && selectedAnnotationId) {
-    const ann = annotations.find(a => a.id === selectedAnnotationId);
+  // Double-click any text/callout (selected or not) to edit it inline —
+  // the callout's text box is now hit-testable, so double-clicking the box
+  // goes straight into editing.
+  else if (currentTool === 'select') {
+    const rect = e.target.getBoundingClientRect();
+    const ann = getAnnotationAtPoint(e.clientX - rect.left, e.clientY - rect.top);
     if (ann && (ann.type === 'text' || ann.type === 'callout')) {
+      selectedAnnotationId = ann.id;
+      redrawAnnotations();
       editTextAnnotationInline(ann, e);
     }
   }
@@ -4235,13 +4280,13 @@ function onCanvasDoubleClick(e) {
 
 function onCanvasRightClick(e) {
   e.preventDefault();
-  if (currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon') finishPolyShape();
-  if (currentTool === 'callout' && calloutMode && calloutKnees.length > 0) {
-    // Right-click finishes leader path
-    const rect = e.target.getBoundingClientRect();
-    const screenTextPos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    showCalloutTextInput(toPage(calloutAnchor), calloutKnees.map(k => toPage(k)), toPage(screenTextPos));
-    calloutMode = false; calloutAnchor = null; calloutKnees = [];
+  // Right-click CANCELS an in-progress shape — same as Esc: the draft is
+  // discarded but the tool stays armed. (Polylines/areas/callouts are
+  // FINISHED with a double-click.)
+  const hadDraft = twoClickStart || isDrawing || polylinePoints.length > 0 || calloutMode || areaDragStartScreen || textSelStart;
+  if (hadDraft) {
+    cancelInProgressDrawing();
+    showToast('Shape cancelled — tool still armed (double-click finishes polylines/callouts)');
   }
 }
 
@@ -5411,6 +5456,10 @@ function pointInPolygon(x, y, pts) {
 
 function hitTest(x, y, ann, tol) {
   if (ann.type === 'callout') {
+    // Text box counts as the callout's body — click it to select/drag,
+    // double-click it to edit (previously only the leader was clickable)
+    const b = ann._annBox;
+    if (b && x >= b.x - tol && x <= b.x + b.w + tol && y >= b.y - tol && y <= b.y + b.h + tol) return true;
     return ptNearLine(x,y, ann.anchor, ann.textPos, tol) || (ann.knees||[]).some((k,i) => {
       const prev = i===0 ? ann.anchor : ann.knees[i-1];
       return ptNearLine(x,y, prev, k, tol);
@@ -5454,6 +5503,12 @@ function hitTest(x, y, ann, tol) {
       for (let i=0; i<ann.points.length-1; i++) { if (ptNearLine(x,y,ann.points[i],ann.points[i+1],tol)) return true; }
       return false;
     case 'text': {
+      // Prefer the exact box cached at draw time (wrap-aware); fall back to
+      // the character-count approximation before the first draw.
+      if (ann._annBox) {
+        const b = ann._annBox;
+        return x >= b.x - tol && x <= b.x + b.w + tol && y >= b.y - tol && y <= b.y + b.h + tol;
+      }
       const fs = ann.fontSize || 14;
       const lines = (ann.text||'').split('\n');
       const lineH = fs + 2;
@@ -7584,6 +7639,9 @@ function getAnnotationPropertiesHTML(ann) {
       </select></div>
       <div class="property-row"><div class="property-label">Text Color:</div><input type="color" id="prop-textcolor" class="color-picker" value="${ann.textColor||ann.color||'#D97757'}"></div>
       <div class="color-swatches" data-target="prop-textcolor"></div>
+      <div class="property-row"><div class="property-label" title="Fixed box width — text wraps inside it. Drag the bottom-right handle on the drawing, or type a value. Blank / Auto = size to the longest line.">Box width:</div>
+        <input type="number" id="prop-boxw" class="property-input" min="30" step="5" value="${ann.boxW ? Math.round(ann.boxW) : ''}" placeholder="auto" style="width:64px">
+        <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){delete a.boxW; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}">Auto</button></div>
     </div></div>`;
   }
 
@@ -7843,6 +7901,7 @@ function attachAnnotationListeners(ann) {
   bind('prop-underline', 'textDecoration', t => t.checked ? 'underline' : 'none');
   bind('prop-textalign', 'textAlign');
   bind('prop-textcolor', 'textColor');
+  bind('prop-boxw', 'boxW', t => { const v = parseFloat(t.value); return (isFinite(v) && v >= 30) ? v : undefined; });
   bind('prop-color', 'color');
   bind('prop-stamp-text', 'text');
   bind('prop-stamp-color', 'stampColor');
@@ -8171,7 +8230,7 @@ function selectStamp(s) {
 function _annotationsForSnapshot() {
   return annotations.map(a => {
     const c = Object.assign({}, a);
-    delete c._labelRect; delete c._perimRect; delete c._legendW; delete c._legendH;
+    delete c._labelRect; delete c._perimRect; delete c._legendW; delete c._legendH; delete c._annBox;
     return c;
   });
 }
