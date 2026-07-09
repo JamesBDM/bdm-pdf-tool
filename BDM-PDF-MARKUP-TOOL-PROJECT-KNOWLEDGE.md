@@ -406,6 +406,12 @@ while ((m = re.exec(h))) {
 ### v2.8.1 — version badge (7 Jul 2026)
 - `const APP_VERSION` (top of the globals, above the TAKEOFF STATE section) renders as an accent-bordered badge next to the logo (`#app-version`, populated on DOMContentLoaded). **Bump it with every release** — it's how users tell the local build from the deployed one at jamesbdm.github.io. Stays visible in compact topbar mode.
 
+### v2.8.10 — toolbar legibility (9 Jul 2026)
+- Left toolbar widened 52 → 66px (`--toolbar-width`); tool buttons 40 → 52px wide. Group headings (MEASURE/SHAPES/MARKUP/EDIT) were clipping to "ASURE"/"HAPES" — now 10px, tighter letter-spacing, nowrap. Shortcut letters were 7px muted specks — now 9px bold on a dark chip (bottom-right of each button), accent-coloured when the tool is active.
+
+### v2.8.9 — Bluebeam-style free box sizing for text & callout (9 Jul 2026)
+- v2.8.6's single bottom-right handle only drove width. Now text boxes and callout boxes carry `boxW` AND `boxH` with EIGHT handles (corners + edge midpoints, rectangle order via `_boxHandlePts`) — drag any handle to make the box any shape (square, tall, narrow); the opposite edge stays pinned (`_resizeBox` in `applyResize`, min 30×line-height). Text WRAPS to the box width; the box keeps the height you set (text overflows below if the box is too short — nothing is hidden). Text annotations' handles are now box-only (move = drag the body); callout keeps its leader handles + the 8 box handles, and resizing from the left/top moves `textPos` so the leader follows the box. Selected text/callouts show a dashed outline around the box. Properties row is now "Box W×H" with an Auto button (clears both).
+
 ### v2.8.8 — baked overlay lands off-sheet on centred-MediaBox pages (9 Jul 2026)
 - **Bug (critical for sharing):** CAD-exported sheets (Revit et al.) can have a MediaBox that doesn't start at (0,0) — e.g. centred, spanning [-1192,-841 → 1192,841]. The save bake drew the overlay PNG at (0,0), which on such pages is the sheet CENTRE — the whole markup layer landed half a page off-sheet, so recipients saw NO markups in Adobe/Chrome while the BDM tool (which re-renders live JSON) looked perfect. Diagnosed from a real file: `BDMBakedOverlay=1`, overlay image present as the last content-stream op, but positioned outside the visible area.
 - **Fix:** bake now anchors to `page.getMediaBox()` x/y (all four /Rotate branches). Repairing an already-sent file: inject `1 0 0 1 <mbx> <mby> cm` into the overlay's content stream (pikepdf); or just reopen + re-save with v2.8.8.

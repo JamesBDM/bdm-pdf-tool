@@ -33,7 +33,7 @@
   --warning: #fbbf24;
   --danger: #f87171;
   --info: #60a5fa;
-  --toolbar-width: 52px;
+  --toolbar-width: 66px; /* was 52 — group headings + shortcut letters were clipped */
   --sidebar-width: 300px;
   --statusbar-height: 28px;
   --thumbnail-width: 80px;
@@ -87,16 +87,18 @@ input, select, textarea { font: inherit; color: inherit; }
   padding: 6px 0; gap: 2px; align-items: center; overflow-y: auto;
 }
 .tool-btn {
-  width: 40px; height: 36px; display: flex; align-items: center; justify-content: center;
+  width: 52px; height: 36px; display: flex; align-items: center; justify-content: center;
   border-radius: 6px; transition: all .15s; position: relative;
 }
 .tool-btn:hover { background: var(--bg-hover); }
 .tool-btn.active { background: var(--accent-dim); color: var(--accent); }
 .tool-btn svg { width: 18px; height: 18px; }
 .tool-btn .shortcut {
-  position: absolute; bottom: 0px; right: 2px; font-size: 7px;
-  color: var(--text-muted); font-weight: 600;
+  position: absolute; bottom: 2px; right: 3px; font-size: 9px; line-height: 1;
+  color: var(--text-secondary); font-weight: 700;
+  background: rgba(0,0,0,0.4); border-radius: 3px; padding: 1px 3px;
 }
+.tool-btn.active .shortcut { color: var(--accent); }
 .tool-divider { width: 28px; height: 1px; background: var(--border-color); margin: 3px 0; }
 
 /* Tool groups — Measure / Shapes / Markup / Edit. Each group has a coloured
@@ -104,9 +106,10 @@ input, select, textarea { font: inherit; color: inherit; }
    is clickable to collapse the group (state remembered per machine). */
 .tool-group { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 1px 0 4px; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
 .tool-group-label {
-  width: 100%; text-align: center; font-size: 9px; font-weight: 700; letter-spacing: 0.05em;
-  color: var(--text-muted); cursor: pointer; user-select: none; padding: 4px 0 2px;
-  display: flex; align-items: center; justify-content: center; gap: 3px;
+  width: 100%; text-align: center; font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--text-muted); cursor: pointer; user-select: none; padding: 5px 1px 3px;
+  display: flex; align-items: center; justify-content: center; gap: 2px;
+  white-space: nowrap; overflow: hidden;
 }
 .tool-group-label:hover { filter: brightness(1.35); }
 .tool-group-label .tg-chevron { font-size: 8px; transition: transform .15s; }
@@ -1114,7 +1117,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.8';
+const APP_VERSION = 'v2.8.10';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2788,6 +2791,13 @@ function drawAnnotation(ctx, ann, isSelected) {
       ctx.strokeRect(Math.min(a.x,b.x), Math.min(a.y,b.y), Math.abs(b.x-a.x), Math.abs(b.y-a.y));
       ctx.setLineDash([]);
     }
+    // Text / callout: dashed outline around the (resizable, wrap-to-fit) box
+    if ((ann.type === 'text' || ann.type === 'callout') && ann._annBox) {
+      const b = ann._annBox;
+      ctx.strokeStyle = '#D97757'; ctx.lineWidth = 1 / currentScale; ctx.setLineDash([4/currentScale, 4/currentScale]);
+      ctx.strokeRect(b.x, b.y, b.w, b.h);
+      ctx.setLineDash([]);
+    }
     // Rotation handle — a circle floating above the shape's top-centre,
     // connected by a thin stalk. Drawn in the (possibly rotated) local frame
     // so it turns with the shape. Mouse hit-testing uses the page-space twin
@@ -3130,7 +3140,7 @@ function drawTextAnn(ctx, ann) {
   if (ann.boxFill && ann.boxFill !== 'none') {
     const bp = 3; // breathing room around the text
     const bw = (ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width))) + bp * 2;
-    const bh = Math.max(fs + 2, lines.length * (fs + 2)) + bp * 2;
+    const bh = (ann.boxH || Math.max(fs + 2, lines.length * (fs + 2))) + bp * 2;
     ctx.save();
     ctx.fillStyle = ann.boxFill;
     ctx.globalAlpha = (ann.fillOpacity !== undefined ? ann.fillOpacity : 100) / 100;
@@ -3149,9 +3159,12 @@ function drawTextAnn(ctx, ann) {
       ctx.strokeStyle = ann.color||'#D97757'; ctx.lineWidth = 1; ctx.stroke();
     });
   }
-  // Cache the drawn box for hit-testing + the resize handle
+  // Cache the drawn box for hit-testing + the resize handles.
+  // boxW/boxH (drag any of the 8 handles) fix the box size; text wraps to the
+  // width and the box keeps whatever height you set (square, tall, anything).
   const bw = ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width));
-  ann._annBox = { x: ann.points[0].x, y: ann.points[0].y, w: bw, h: Math.max(fs + 2, lines.length * (fs + 2)) };
+  const bh = ann.boxH || Math.max(fs + 2, lines.length * (fs + 2));
+  ann._annBox = { x: ann.points[0].x, y: ann.points[0].y, w: bw, h: bh };
 }
 
 function drawCalloutAnn(ctx, ann) {
@@ -3189,7 +3202,9 @@ function drawCalloutAnn(ctx, ann) {
   const lines = ann.boxW ? _wrapTextLines(ctx, text, ann.boxW) : text.split('\n');
   const maxW = ann.boxW ? ann.boxW : Math.max(60, ...lines.map(l => ctx.measureText(l).width));
   const pad = 6;
-  const boxW = maxW + pad*2, boxH = lines.length * (fs+3) + pad*2;
+  // boxH (drag any box handle) fixes the depth — square it off, stretch it
+  // down, whatever; without it the box hugs the wrapped text.
+  const boxW = maxW + pad*2, boxH = (ann.boxH ? ann.boxH : lines.length * (fs+3)) + pad*2;
 
   ctx.fillStyle = ann.fillColor || '#ffffff';
   ctx.globalAlpha = ann.fillOpacity !== undefined ? ann.fillOpacity / 100 : 0.9;
@@ -3489,21 +3504,28 @@ function rotateSelectedAnnotation(deg) {
 // ============================================================
 // ANNOTATION HANDLE POINTS (for selection + resize)
 // ============================================================
+// 8 handles around a rect — TL, TC, TR, ML, MR, BL, BC, BR (rectangle order)
+function _boxHandlePts(b) {
+  const midX = b.x + b.w / 2, midY = b.y + b.h / 2;
+  return [
+    { x: b.x, y: b.y },        { x: midX, y: b.y },        { x: b.x + b.w, y: b.y },
+    { x: b.x, y: midY },                                    { x: b.x + b.w, y: midY },
+    { x: b.x, y: b.y + b.h },  { x: midX, y: b.y + b.h },  { x: b.x + b.w, y: b.y + b.h }
+  ];
+}
+
 function getAnnotationHandlePoints(ann) {
   if (ann.type === 'callout') {
+    // Leader handles (anchor / knees / text position) + 8 box handles —
+    // the box resizes freely like Bluebeam and the text wraps inside it.
     const pts = [ann.anchor, ...(ann.knees||[]), ann.textPos].filter(Boolean);
-    // Extra handle at the text box's bottom-right corner — drag to set the
-    // box width; the text wraps inside it.
-    if (ann._annBox) pts.push({ x: ann._annBox.x + ann._annBox.w, y: ann._annBox.y + ann._annBox.h });
+    if (ann._annBox) pts.push(..._boxHandlePts(ann._annBox));
     return pts;
   }
   if (!ann.points || ann.points.length === 0) return [];
-  // For text: anchor handle (drag to move) + bottom-right box handle (drag to
-  // set wrap width)
+  // Text: the box IS the annotation — 8 resize handles; drag the body to move.
   if (ann.type === 'text') {
-    const pts = [ann.points[0]];
-    if (ann._annBox) pts.push({ x: ann._annBox.x + ann._annBox.w, y: ann._annBox.y + ann._annBox.h });
-    return pts;
+    return ann._annBox ? _boxHandlePts(ann._annBox) : [ann.points[0]];
   }
   // Takeoff legend / summary table — 4 corner handles; dragging any corner
   // scales the whole table (ann.legendScale) around the opposite corner.
@@ -3553,21 +3575,50 @@ function applyResize(ann, handleIdx, newPagePt) {
   // recomputed from the resized box, so the shape can walk a hair during a
   // rotated resize — acceptable for markup work.)
   newPagePt = annLocalPoint(ann, newPagePt.x, newPagePt.y);
+  // Free box resize shared by text + callout: hIdx 0..7 = TL,TC,TR,ML,MR,BL,BC,BR.
+  // Returns the new rect (opposite edge stays pinned); text wraps to the width.
+  const _resizeBox = (b, hIdx, pt, minW, minH) => {
+    let minX = b.x, maxX = b.x + b.w, minY = b.y, maxY = b.y + b.h;
+    switch (hIdx) {
+      case 0: minX = pt.x; minY = pt.y; break;
+      case 1: minY = pt.y; break;
+      case 2: maxX = pt.x; minY = pt.y; break;
+      case 3: minX = pt.x; break;
+      case 4: maxX = pt.x; break;
+      case 5: minX = pt.x; maxY = pt.y; break;
+      case 6: maxY = pt.y; break;
+      case 7: maxX = pt.x; maxY = pt.y; break;
+    }
+    if (maxX - minX < minW) { if ([0,3,5].includes(hIdx)) minX = maxX - minW; else maxX = minX + minW; }
+    if (maxY - minY < minH) { if ([0,1,2].includes(hIdx)) minY = maxY - minH; else maxY = minY + minH; }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  };
+
   if (ann.type === 'callout') {
     const allPts = [ann.anchor, ...(ann.knees||[]), ann.textPos].filter(Boolean);
     if (handleIdx >= 0 && handleIdx < allPts.length) {
       allPts[handleIdx].x = newPagePt.x;
       allPts[handleIdx].y = newPagePt.y;
-    } else if (handleIdx === allPts.length) {
-      // Box corner handle — sets the text box width; text wraps inside
-      ann.boxW = Math.max(30, newPagePt.x - ann.textPos.x - 6);
+    } else if (ann._annBox && handleIdx >= allPts.length && handleIdx < allPts.length + 8) {
+      // Box handle — resize the text box freely; text wraps to its width
+      const pad = 6, fs = ann.fontSize || 12;
+      const nb = _resizeBox(ann._annBox, handleIdx - allPts.length, newPagePt, 30 + pad * 2, fs + 3 + pad * 2);
+      ann.textPos = { x: nb.x + pad, y: nb.y + pad };  // box top-left (leader follows)
+      ann.boxW = nb.w - pad * 2;                        // content width  → wrap
+      ann.boxH = nb.h - pad * 2;                        // content height → box depth
+      ann._annBox = nb;                                 // keep handles live mid-drag
     }
     return;
   }
-  // Text: handle 0 moves the anchor, handle 1 sets the wrap width
+  // Text: 8 box handles — resize freely, text wraps to the width
   if (ann.type === 'text') {
-    if (handleIdx === 0) { ann.points[0] = { x: newPagePt.x, y: newPagePt.y }; }
-    else if (handleIdx === 1) { ann.boxW = Math.max(30, newPagePt.x - ann.points[0].x); }
+    if (!ann._annBox) { ann.points[0] = { x: newPagePt.x, y: newPagePt.y }; return; }
+    const fs = ann.fontSize || 14;
+    const nb = _resizeBox(ann._annBox, handleIdx, newPagePt, 30, fs + 2);
+    ann.points[0] = { x: nb.x, y: nb.y };
+    ann.boxW = nb.w;
+    ann.boxH = nb.h;
+    ann._annBox = nb;
     return;
   }
 
@@ -7652,9 +7703,10 @@ function getAnnotationPropertiesHTML(ann) {
       </select></div>
       <div class="property-row"><div class="property-label">Text Color:</div><input type="color" id="prop-textcolor" class="color-picker" value="${ann.textColor||ann.color||'#D97757'}"></div>
       <div class="color-swatches" data-target="prop-textcolor"></div>
-      <div class="property-row"><div class="property-label" title="Fixed box width — text wraps inside it. Drag the bottom-right handle on the drawing, or type a value. Blank / Auto = size to the longest line.">Box width:</div>
-        <input type="number" id="prop-boxw" class="property-input" min="30" step="5" value="${ann.boxW ? Math.round(ann.boxW) : ''}" placeholder="auto" style="width:64px">
-        <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){delete a.boxW; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}">Auto</button></div>
+      <div class="property-row"><div class="property-label" title="Fixed box size — text wraps to the width; the height is yours to set (drag any of the 8 handles on the drawing, or type values). Auto = hug the text.">Box W×H:</div>
+        <input type="number" id="prop-boxw" class="property-input" min="30" step="5" value="${ann.boxW ? Math.round(ann.boxW) : ''}" placeholder="auto" style="width:56px">
+        <input type="number" id="prop-boxh" class="property-input" min="10" step="5" value="${ann.boxH ? Math.round(ann.boxH) : ''}" placeholder="auto" style="width:56px">
+        <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){delete a.boxW; delete a.boxH; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}">Auto</button></div>
     </div></div>`;
   }
 
@@ -7926,6 +7978,7 @@ function attachAnnotationListeners(ann) {
   bind('prop-textalign', 'textAlign');
   bind('prop-textcolor', 'textColor');
   bind('prop-boxw', 'boxW', t => { const v = parseFloat(t.value); return (isFinite(v) && v >= 30) ? v : undefined; });
+  bind('prop-boxh', 'boxH', t => { const v = parseFloat(t.value); return (isFinite(v) && v >= 10) ? v : undefined; });
   bind('prop-color', 'color');
   bind('prop-stamp-text', 'text');
   bind('prop-stamp-color', 'stampColor');
