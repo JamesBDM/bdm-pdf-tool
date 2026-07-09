@@ -1114,7 +1114,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.6';
+const APP_VERSION = 'v2.8.8';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3125,6 +3125,19 @@ function drawTextAnn(ctx, ann) {
   ctx.textBaseline = 'top';
   // ann.boxW (drag the box handle) wraps the text to that width
   const lines = ann.boxW ? _wrapTextLines(ctx, ann.text || '', ann.boxW) : (ann.text||'').split('\n');
+  // Optional fill behind the text (ann.boxFill — Properties → Appearance).
+  // Separate property from shapes' fillColor so older text stays unfilled.
+  if (ann.boxFill && ann.boxFill !== 'none') {
+    const bp = 3; // breathing room around the text
+    const bw = (ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width))) + bp * 2;
+    const bh = Math.max(fs + 2, lines.length * (fs + 2)) + bp * 2;
+    ctx.save();
+    ctx.fillStyle = ann.boxFill;
+    ctx.globalAlpha = (ann.fillOpacity !== undefined ? ann.fillOpacity : 100) / 100;
+    ctx.fillRect(ann.points[0].x - bp, ann.points[0].y - bp, bw, bh);
+    ctx.restore();
+    ctx.fillStyle = ann.color || '#D97757'; // text colour back after the fill
+  }
   lines.forEach((line, i) => {
     ctx.fillText(line, ann.points[0].x, ann.points[0].y + i * (fs + 2));
   });
@@ -7699,6 +7712,17 @@ function getAnnotationPropertiesHTML(ann) {
       <div class="color-swatches" id="swatch-callout-fill" data-target="prop-callout-fill"></div>`;
     }
 
+    if (ann.type === 'text') {
+      const tfOn = ann.boxFill && ann.boxFill !== 'none';
+      html += `<div class="property-row"><div class="property-label" title="Fill colour behind the text — handy over busy linework">Box Fill:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
+        <input type="checkbox" id="prop-textfill-on" class="checkbox-input" ${tfOn ? 'checked' : ''}>
+        <input type="color" id="prop-textfill-color" class="color-picker" value="${tfOn ? ann.boxFill : '#ffffff'}" ${tfOn ? '' : 'disabled'}>
+      </div></div>
+      <div class="color-swatches" data-target="prop-textfill-color"></div>
+      <div class="slider-group"><div class="slider-label"><span>Fill Opacity:</span><span id="prop-tfo-val">${ann.fillOpacity !== undefined ? ann.fillOpacity : 100}%</span></div>
+        <input type="range" id="prop-textfill-opacity" class="slider" min="0" max="100" value="${ann.fillOpacity !== undefined ? ann.fillOpacity : 100}"></div>`;
+    }
+
     if (['rectangle','ellipse','polygon','area'].includes(ann.type)) {
       html += `<div class="property-row"><div class="property-label">Fill:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
         <input type="checkbox" id="prop-fill-on" class="checkbox-input" ${ann.fillColor&&ann.fillColor!=='none'?'checked':''}>
@@ -7940,6 +7964,25 @@ function attachAnnotationListeners(ann) {
 
   // Callout box fill colour
   bind('prop-callout-fill', 'fillColor');
+
+  // Text box fill (separate boxFill property so older text stays unfilled)
+  const tfOn = document.getElementById('prop-textfill-on');
+  const tfC = document.getElementById('prop-textfill-color');
+  if (tfOn) tfOn.addEventListener('change', e => {
+    if (e.target.checked) { ann.boxFill = tfC.value; tfC.disabled = false; }
+    else { ann.boxFill = 'none'; tfC.disabled = true; }
+    redrawAnnotations();
+    pushHistorySoon();
+  });
+  if (tfC) tfC.addEventListener('change', e => { ann.boxFill = e.target.value; redrawAnnotations(); pushHistorySoon(); });
+  const tfo = document.getElementById('prop-textfill-opacity');
+  if (tfo) tfo.addEventListener('input', e => {
+    ann.fillOpacity = parseInt(e.target.value);
+    const v = document.getElementById('prop-tfo-val');
+    if (v) v.textContent = e.target.value + '%';
+    redrawAnnotations();
+    pushHistorySoon();
+  });
 
   // Measurement label styling
   bind('prop-labelcolor', 'labelColor');
@@ -10266,16 +10309,23 @@ async function saveProject() {
         // already applied, but pdf-lib draws into UNROTATED page space.
         // Compensate for /Rotate so markups land correctly in external viewers.
         const sz = pages[i].getSize();
+        // CAD-exported sheets (e.g. Revit) can have a MediaBox that does NOT
+        // start at (0,0) — some are centred, spanning negative coords. pdf-lib
+        // positions are absolute page-space, so anchor the overlay to the
+        // mediabox origin or the bake lands off-sheet and "disappears" in
+        // external viewers (v2.8.8 fix).
+        let box = { x: 0, y: 0 };
+        try { const mb = pages[i].getMediaBox(); if (mb) box = { x: mb.x || 0, y: mb.y || 0 }; } catch (e) {}
         let rot = 0;
         try { rot = ((pages[i].getRotation().angle % 360) + 360) % 360; } catch (e) { rot = 0; }
         if (rot === 90) {
-          pages[i].drawImage(pngImage, { x: sz.width, y: 0, width: sz.height, height: sz.width, rotate: PDFLib.degrees(90) });
+          pages[i].drawImage(pngImage, { x: box.x + sz.width, y: box.y, width: sz.height, height: sz.width, rotate: PDFLib.degrees(90) });
         } else if (rot === 180) {
-          pages[i].drawImage(pngImage, { x: sz.width, y: sz.height, width: sz.width, height: sz.height, rotate: PDFLib.degrees(180) });
+          pages[i].drawImage(pngImage, { x: box.x + sz.width, y: box.y + sz.height, width: sz.width, height: sz.height, rotate: PDFLib.degrees(180) });
         } else if (rot === 270) {
-          pages[i].drawImage(pngImage, { x: 0, y: sz.height, width: sz.height, height: sz.width, rotate: PDFLib.degrees(270) });
+          pages[i].drawImage(pngImage, { x: box.x, y: box.y + sz.height, width: sz.height, height: sz.width, rotate: PDFLib.degrees(270) });
         } else {
-          pages[i].drawImage(pngImage, { x: 0, y: 0, width: sz.width, height: sz.height });
+          pages[i].drawImage(pngImage, { x: box.x, y: box.y, width: sz.width, height: sz.height });
         }
       }
     }

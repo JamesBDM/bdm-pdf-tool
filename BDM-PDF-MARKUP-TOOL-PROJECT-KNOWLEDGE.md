@@ -406,6 +406,13 @@ while ((m = re.exec(h))) {
 ### v2.8.1 — version badge (7 Jul 2026)
 - `const APP_VERSION` (top of the globals, above the TAKEOFF STATE section) renders as an accent-bordered badge next to the logo (`#app-version`, populated on DOMContentLoaded). **Bump it with every release** — it's how users tell the local build from the deployed one at jamesbdm.github.io. Stays visible in compact topbar mode.
 
+### v2.8.8 — baked overlay lands off-sheet on centred-MediaBox pages (9 Jul 2026)
+- **Bug (critical for sharing):** CAD-exported sheets (Revit et al.) can have a MediaBox that doesn't start at (0,0) — e.g. centred, spanning [-1192,-841 → 1192,841]. The save bake drew the overlay PNG at (0,0), which on such pages is the sheet CENTRE — the whole markup layer landed half a page off-sheet, so recipients saw NO markups in Adobe/Chrome while the BDM tool (which re-renders live JSON) looked perfect. Diagnosed from a real file: `BDMBakedOverlay=1`, overlay image present as the last content-stream op, but positioned outside the visible area.
+- **Fix:** bake now anchors to `page.getMediaBox()` x/y (all four /Rotate branches). Repairing an already-sent file: inject `1 0 0 1 <mbx> <mby> cm` into the overlay's content stream (pikepdf); or just reopen + re-save with v2.8.8.
+
+### v2.8.7 — text box fill (8 Jul 2026)
+- Text annotations can have a fill behind them (Properties → Appearance → "Box Fill": on/off checkbox + colour + opacity slider). Stored as `ann.boxFill` — deliberately SEPARATE from shapes' `fillColor`, because text annotations already carried an unused `fillColor` from toolProperties and honouring it would have retro-filled every existing text orange. Fill uses `ann.fillOpacity` (default 100), drawn with 3px padding behind the (wrap-aware) lines in `drawTextAnn`. Callouts already had Box Fill.
+
 ### v2.8.6 — callout/text editing + right-click cancel (8 Jul 2026)
 - **Callout text box is selectable.** `hitTest` callout case now checks the cached box rect (`ann._annBox`, cached at draw time, stripped from snapshots) before the leader lines — click the box to select/drag, not just the arrow.
 - **Double-click edits.** Double-click any text/callout (selected or not — `getAnnotationAtPoint` at the double-click) selects it and opens the inline editor.
