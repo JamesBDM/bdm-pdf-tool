@@ -406,6 +406,9 @@ while ((m = re.exec(h))) {
 ### v2.8.1 — version badge (7 Jul 2026)
 - `const APP_VERSION` (top of the globals, above the TAKEOFF STATE section) renders as an accent-bordered badge next to the logo (`#app-version`, populated on DOMContentLoaded). **Bump it with every release** — it's how users tell the local build from the deployed one at jamesbdm.github.io. Stays visible in compact topbar mode.
 
+### v2.8.11 — Save As opens in the current file's folder (9 Jul 2026)
+- `saveProjectAs` now passes `startIn: currentFileHandle` to `showSaveFilePicker` — a FILE handle as startIn opens the picker in that file's containing directory, so Save As lands in the current job folder instead of wherever the browser last saved. Only applies when the document was opened with a real file handle (file picker / launch); drag-dropped files without a handle keep the browser default.
+
 ### v2.8.10 — toolbar legibility (9 Jul 2026)
 - Left toolbar widened 52 → 66px (`--toolbar-width`); tool buttons 40 → 52px wide. Group headings (MEASURE/SHAPES/MARKUP/EDIT) were clipping to "ASURE"/"HAPES" — now 10px, tighter letter-spacing, nowrap. Shortcut letters were 7px muted specks — now 9px bold on a dark chip (bottom-right of each button), accent-coloured when the tool is active.
 

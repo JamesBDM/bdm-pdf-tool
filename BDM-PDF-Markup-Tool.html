@@ -1117,7 +1117,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.10';
+const APP_VERSION = 'v2.8.11';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -10005,10 +10005,14 @@ async function saveProjectAs() {
     return saveProject();
   }
   try {
-    const handle = await window.showSaveFilePicker({
+    const opts = {
       suggestedName: currentFilename || 'document.pdf',
       types: [{ description: 'PDF files', accept: { 'application/pdf': ['.pdf'] } }]
-    });
+    };
+    // Open the picker in the CURRENT file's folder (not wherever the browser
+    // last saved). startIn with the file's handle = its containing directory.
+    if (currentFileHandle) opts.startIn = currentFileHandle;
+    const handle = await window.showSaveFilePicker(opts);
     // Temporarily swap in the new handle so saveProject writes to it.
     const previousHandle = currentFileHandle;
     const previousName = currentFilename;
