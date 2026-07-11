@@ -138,7 +138,7 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .tool-btn:hover { background: var(--bg-hover); }
 .tool-btn.active { background: var(--accent-dim); color: var(--accent); }
-.tool-btn svg { width: 18px; height: 18px; }
+.tool-btn svg { width: 15px; height: 15px; } /* v3.2.1: match the quick-bar icon size (Print/Save etc.) */
 .tool-btn .shortcut {
   position: absolute; bottom: 2px; right: 3px; font-size: 9px; line-height: 1;
   color: var(--text-secondary); font-weight: 700;
@@ -667,6 +667,9 @@ canvas { display: block; }
 .tool-btn { border-radius: 9px; }
 .tool-btn.active { background: var(--accent); color: var(--accent-on); }
 .tool-btn.active .shortcut { color: var(--accent-on); background: rgba(0,0,0,0.25); }
+/* v3.2.1: legible shortcut chips in LIGHT theme (were grey-on-grey) */
+[data-theme="light"] .tool-btn .shortcut { background: rgba(20,32,60,0.10); color: #33415E; }
+[data-theme="light"] .tool-btn.active .shortcut { background: rgba(0,0,0,0.22); color: var(--accent-on); }
 
 /* Empty state: cream drafting-paper sheet with a faint 28px grid */
 #drop-zone {
@@ -1310,7 +1313,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.2';
+const APP_VERSION = 'v3.2.2';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3332,10 +3335,23 @@ function drawArrowShape(ctx, ann) {
 // Manual line breaks (\n) are kept; over-long single words overflow gracefully.
 function _wrapTextLines(ctx, text, maxW) {
   const out = [];
+  const breakWord = (word) => {
+    let chunk = '';
+    for (const ch of word) {
+      if (chunk && ctx.measureText(chunk + ch).width > maxW) { out.push(chunk); chunk = ch; }
+      else chunk += ch;
+    }
+    return chunk;
+  };
   String(text || '').split('\n').forEach(raw => {
     if (!maxW || ctx.measureText(raw).width <= maxW) { out.push(raw); return; }
     let line = '';
     raw.split(' ').forEach(word => {
+      if (ctx.measureText(word).width > maxW) {
+        if (line) { out.push(line); }
+        line = breakWord(word);
+        return;
+      }
       const test = line ? line + ' ' + word : word;
       if (!line || ctx.measureText(test).width <= maxW) line = test;
       else { out.push(line); line = word; }
