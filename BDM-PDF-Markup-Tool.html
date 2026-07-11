@@ -758,6 +758,10 @@ canvas { display: block; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-10"/></svg>
       Measures
     </button>
+    <button class="topbar-btn" onclick="openMarkupReport()" title="Markup Report — a PDF summary of every markup with a thumbnail, its type, content and measurement, grouped by page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+      Report
+    </button>
     <button class="topbar-btn" onclick="openToolChest()" title="Tool Chest - Saved Presets">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
       Presets
@@ -923,6 +927,7 @@ canvas { display: block; }
       <div class="separator"></div>
       <button class="topbar-btn" onclick="exportTakeoffXLSX()" title="Export the estimate to Excel (formulas + package tree)">Export Excel</button>
       <button class="topbar-btn" onclick="exportTakeoffCSV()" title="Export CSV">CSV</button>
+      <button class="topbar-btn" onclick="syncQuantityLink()" oncontextmenu="event.preventDefault();syncQuantityLink(true)" title="Quantity Link — write live quantities into YOUR estimate spreadsheet (a 'BDM Quantities' sheet + a named range per item, e.g. =QTY_Footings). Click again after measuring to re-sync. Right-click to link a different file.">Sync Excel</button>
       <button class="modal-close" onclick="toggleWorkbook(false)" title="Close workbook">×</button>
     </div>
     <div id="workbook-body"></div>
@@ -1117,7 +1122,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.8.11';
+const APP_VERSION = 'v2.9';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -10464,48 +10469,179 @@ function handleProjectLoad(event) {
 // PRINT
 // ============================================================
 // Cache for the most recently rendered preview page (raw colour, no greyscale)
-let _printPreviewCache = { pageIdx: -1, canvas: null };
+let _printPreviewCache = { pageIdx: -1, markups: true, canvas: null, physW: 0, physH: 0 };
+
+// Paper sizes in mm [width, height], portrait orientation
+const PRINT_PAPER_SIZES = {
+  a4: [210, 297], a3: [297, 420], a2: [420, 594], a1: [594, 841], a0: [841, 1189],
+  letter: [215.9, 279.4], legal: [215.9, 355.6], tabloid: [279.4, 431.8]
+};
+const PRINT_PAPER_LABELS = { a4: 'A4', a3: 'A3', a2: 'A2', a1: 'A1', a0: 'A0', letter: 'Letter', legal: 'Legal', tabloid: 'Tabloid' };
+// Overlap between adjacent tiles so sheets can be trimmed and joined
+const PRINT_TILE_OVERLAP_MM = 10;
+
+// Parse a Bluebeam-style page range ("1-3, 5, 8-10") into sorted 0-based
+// page indices. Returns null when the string contains anything unparseable.
+function parsePrintRange(str, max) {
+  const out = new Set();
+  for (let part of String(str || '').split(',')) {
+    part = part.trim();
+    if (!part) continue;
+    const m = part.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      let a = +m[1], b = +m[2];
+      if (a > b) [a, b] = [b, a];
+      for (let i = a; i <= b; i++) if (i >= 1 && i <= max) out.add(i - 1);
+    } else if (/^\d+$/.test(part)) {
+      const n = +part;
+      if (n >= 1 && n <= max) out.add(n - 1);
+    } else return null;
+  }
+  return out.size ? [...out].sort((a, b) => a - b) : null;
+}
+
+// Read every print dialog input into a single settings object.
+// pageList is null when a custom range fails to parse.
+function collectPrintSettings() {
+  const pages = document.getElementById('print-pages')?.value || 'current';
+  const s = {
+    pages,
+    rangeStr: document.getElementById('print-range')?.value || '',
+    reverse: !!document.getElementById('print-reverse')?.checked,
+    paper: document.getElementById('print-paper')?.value || 'auto',
+    orientation: document.getElementById('print-orientation')?.value || 'auto',
+    autoRotate: !!document.getElementById('print-autorotate')?.checked,
+    scaleMode: document.getElementById('print-scale')?.value || 'fit',
+    customPct: Math.min(400, Math.max(10, parseInt(document.getElementById('print-custom-pct')?.value) || 100)),
+    margins: document.getElementById('print-margins')?.value || 'none',
+    markups: document.getElementById('print-markups') ? document.getElementById('print-markups').checked : true,
+    greyscale: !!document.getElementById('print-greyscale')?.checked
+  };
+  s.marginMm = s.margins === 'none' ? 0 : s.margins === 'small' ? 5 : 10;
+  // Tiling maths needs a concrete sheet size — default to A4 when paper is Auto
+  s.tilePaper = s.paper === 'auto' ? 'a4' : s.paper;
+  if (pages === 'custom') {
+    s.pageList = parsePrintRange(s.rangeStr, pdfDoc.numPages);
+  } else if (pages === 'all') {
+    s.pageList = Array.from({ length: pdfDoc.numPages }, (_, i) => i);
+  } else {
+    s.pageList = [currentPage];
+  }
+  return s;
+}
+
+// Resolve the physical paper [w,h] in mm, honouring the orientation choice.
+// refW/refH = the reference page's size in mm, used when orientation is Auto.
+function resolvePaperMm(paperKey, orientation, refW, refH) {
+  const base = PRINT_PAPER_SIZES[paperKey];
+  if (!base) return null;
+  let landscape;
+  if (orientation === 'landscape') landscape = true;
+  else if (orientation === 'portrait') landscape = false;
+  else landscape = refW > refH;
+  return landscape ? [base[1], base[0]] : [base[0], base[1]];
+}
+
+// Return a copy of the canvas rotated 90° clockwise (for auto-rotate)
+function rotateCanvas90(c) {
+  const r = document.createElement('canvas');
+  r.width = c.height; r.height = c.width;
+  const ctx = r.getContext('2d');
+  ctx.translate(r.width / 2, r.height / 2);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(c, -c.width / 2, -c.height / 2);
+  return r;
+}
+
+// Tile layout for a page printed at scaledW×scaledH mm on the given paper
+function computeTiles(scaledW, scaledH, paperMm, marginMm) {
+  const printW = paperMm[0] - 2 * marginMm;
+  const printH = paperMm[1] - 2 * marginMm;
+  const stepW = Math.max(10, printW - PRINT_TILE_OVERLAP_MM);
+  const stepH = Math.max(10, printH - PRINT_TILE_OVERLAP_MM);
+  const cols = scaledW <= printW ? 1 : Math.ceil((scaledW - PRINT_TILE_OVERLAP_MM) / stepW);
+  const rows = scaledH <= printH ? 1 : Math.ceil((scaledH - PRINT_TILE_OVERLAP_MM) / stepH);
+  return { printW, printH, stepW, stepH, cols, rows };
+}
 
 function openPrintDialog() {
   if (!pdfDoc) { alert('No PDF loaded'); return; }
+  const paperOpts = Object.keys(PRINT_PAPER_SIZES).map(k =>
+    `<option value="${k}">${PRINT_PAPER_LABELS[k]} (${PRINT_PAPER_SIZES[k][0]} × ${PRINT_PAPER_SIZES[k][1]}mm)</option>`).join('');
   const body = `
-    <div style="display:flex;gap:16px;min-width:560px">
-      <div style="flex:1;display:flex;flex-direction:column;gap:12px">
+    <div style="display:flex;gap:16px;min-width:640px">
+      <div style="flex:1;display:flex;flex-direction:column;gap:10px">
         <div>
           <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Pages</label>
           <select id="print-pages" class="select-input" style="margin-top:4px">
             <option value="current">Current Page (${currentPage+1})</option>
             <option value="all">All Pages (${pdfDoc.numPages})</option>
+            <option value="custom">Custom Range…</option>
           </select>
         </div>
-        <div>
-          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Scale</label>
-          <select id="print-scale" class="select-input" style="margin-top:4px">
-            <option value="fit" selected>Fit to Page (edge to edge)</option>
-            <option value="actual">Actual Size (100%)</option>
-            <option value="custom">Custom %</option>
-          </select>
+        <div id="print-range-wrap" class="hidden">
+          <input type="text" id="print-range" class="property-input" placeholder="e.g. 1-3, 5, 8-10" style="margin-top:4px">
+        </div>
+        <div style="display:flex;gap:10px">
+          <div style="flex:1">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Paper Size</label>
+            <select id="print-paper" class="select-input" style="margin-top:4px">
+              <option value="auto" selected>Auto (printer default)</option>
+              ${paperOpts}
+            </select>
+          </div>
+          <div style="flex:1">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Orientation</label>
+            <select id="print-orientation" class="select-input" style="margin-top:4px">
+              <option value="auto" selected>Auto</option>
+              <option value="portrait">Portrait</option>
+              <option value="landscape">Landscape</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <div style="flex:1">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Scale</label>
+            <select id="print-scale" class="select-input" style="margin-top:4px">
+              <option value="fit" selected>Fit to Page (edge to edge)</option>
+              <option value="actual">Actual Size (100%)</option>
+              <option value="custom">Custom %</option>
+              <option value="tile">Tile Large Pages</option>
+            </select>
+          </div>
+          <div style="flex:1">
+            <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Margins</label>
+            <select id="print-margins" class="select-input" style="margin-top:4px">
+              <option value="none" selected>None (edge to edge)</option>
+              <option value="small">Small (5mm)</option>
+              <option value="default">Default (10mm)</option>
+            </select>
+          </div>
         </div>
         <div id="print-custom-wrap" class="hidden">
-          <label style="font-size:12px;color:var(--text-secondary)">Custom Scale %</label>
+          <label style="font-size:12px;color:var(--text-secondary)">Scale %</label>
           <input type="number" id="print-custom-pct" class="property-input" value="100" min="10" max="400" style="margin-top:4px">
         </div>
-        <div>
-          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Margins</label>
-          <select id="print-margins" class="select-input" style="margin-top:4px">
-            <option value="none" selected>None (edge to edge)</option>
-            <option value="small">Small (5mm)</option>
-            <option value="default">Default (10mm)</option>
-          </select>
-        </div>
-        <div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px 16px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="print-markups" checked style="margin:0">
+            Include markups
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="print-autorotate" checked style="margin:0">
+            Auto-rotate to fit paper
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+            <input type="checkbox" id="print-reverse" style="margin:0">
+            Reverse page order
+          </label>
           <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer">
             <input type="checkbox" id="print-greyscale" style="margin:0">
             Black &amp; white (greyscale)
           </label>
         </div>
         <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
-          <b>Fit to Page</b> stretches the whole page to fill the paper while keeping its shape — no blank strips. Markups are always included.
+          <b>Fit to Page</b> fills the paper while keeping the page's shape. <b>Tile Large Pages</b> splits big drawings (e.g. A1 plans) across multiple sheets at the chosen Scale % with a ${PRINT_TILE_OVERLAP_MM}mm overlap for joining — pick a Paper Size for accurate tiles.
         </div>
       </div>
       <div style="width:220px;display:flex;flex-direction:column">
@@ -10523,18 +10659,24 @@ function openPrintDialog() {
     { text: 'Print', class: 'primary', onclick: 'executePrint()' }
   ]);
   setTimeout(() => {
-    const sel = document.getElementById('print-scale');
-    if (sel) sel.addEventListener('change', () => {
-      document.getElementById('print-custom-wrap').classList.toggle('hidden', sel.value !== 'custom');
+    const scaleSel = document.getElementById('print-scale');
+    if (scaleSel) scaleSel.addEventListener('change', () => {
+      document.getElementById('print-custom-wrap').classList.toggle('hidden', scaleSel.value !== 'custom' && scaleSel.value !== 'tile');
       updatePrintPreview();
     });
-    ['print-pages','print-margins','print-greyscale','print-custom-pct'].forEach(id => {
+    const pagesSel = document.getElementById('print-pages');
+    if (pagesSel) pagesSel.addEventListener('change', () => {
+      document.getElementById('print-range-wrap').classList.toggle('hidden', pagesSel.value !== 'custom');
+      updatePrintPreview();
+    });
+    ['print-range','print-reverse','print-paper','print-orientation','print-autorotate',
+     'print-margins','print-markups','print-greyscale','print-custom-pct'].forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener('change', updatePrintPreview);
-      if (el.tagName === 'INPUT') el.addEventListener('input', updatePrintPreview);
+      if (el.tagName === 'INPUT' && el.type !== 'checkbox') el.addEventListener('input', updatePrintPreview);
     });
-    _printPreviewCache = { pageIdx: -1, canvas: null };
+    _printPreviewCache = { pageIdx: -1, markups: true, canvas: null, physW: 0, physH: 0 };
     updatePrintPreview();
   }, 100);
 }
@@ -10545,16 +10687,17 @@ async function updatePrintPreview() {
   const status = document.getElementById('print-preview-status');
   if (!canvas || !pdfDoc) return;
 
-  const pages = document.getElementById('print-pages')?.value || 'current';
-  const greyscale = document.getElementById('print-greyscale')?.checked;
-  const margins = document.getElementById('print-margins')?.value || 'none';
-  const scaleMode = document.getElementById('print-scale')?.value || 'fit';
-
-  const pageIdx = pages === 'all' ? 0 : currentPage;
+  const s = collectPrintSettings();
+  if (s.pages === 'custom' && !s.pageList) {
+    if (status) status.textContent = 'Enter a page range like 1-3, 5, 8-10';
+    return;
+  }
+  // Preview the current page when it's in the print set, else the first page of the set
+  const pageIdx = (s.pages === 'current' || s.pageList.includes(currentPage)) ? currentPage : s.pageList[0];
 
   try {
-    // Re-render the source canvas only if page changed
-    if (_printPreviewCache.pageIdx !== pageIdx || !_printPreviewCache.canvas) {
+    // Re-render the source canvas only if the page or markups toggle changed
+    if (_printPreviewCache.pageIdx !== pageIdx || _printPreviewCache.markups !== s.markups || !_printPreviewCache.canvas) {
       const page = await pdfDoc.getPage(pageIdx + 1);
       const vp1 = page.getViewport({ scale: 1 });
       const maxDim = 280;
@@ -10566,26 +10709,43 @@ async function updatePrintPreview() {
       cctx.fillStyle = 'white';
       cctx.fillRect(0, 0, vp.width, vp.height);
       await page.render({ canvasContext: cctx, viewport: vp }).promise;
-      const pageAnns = annotations.filter(a => a.page === pageIdx);
-      isBakingAnnotations = true;
-      try {
-        pageAnns.forEach(ann => {
-          cctx.save();
-          cctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-          drawAnnotation(cctx, ann, false);
-          cctx.restore();
-        });
-      } finally { isBakingAnnotations = false; }
-      _printPreviewCache = { pageIdx, canvas: c };
+      if (s.markups) {
+        const pageAnns = annotations.filter(a => a.page === pageIdx);
+        isBakingAnnotations = true;
+        try {
+          pageAnns.forEach(ann => {
+            cctx.save();
+            cctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+            drawAnnotation(cctx, ann, false);
+            cctx.restore();
+          });
+        } finally { isBakingAnnotations = false; }
+      }
+      _printPreviewCache = {
+        pageIdx, markups: s.markups, canvas: c,
+        physW: (vp1.width / 72) * 25.4, physH: (vp1.height / 72) * 25.4
+      };
     }
 
-    const src = _printPreviewCache.canvas;
+    let src = _printPreviewCache.canvas;
+    let physW = _printPreviewCache.physW, physH = _printPreviewCache.physH;
+
+    // Resolve paper + auto-rotate exactly like executePrint so the preview is honest
+    const paperKey = s.scaleMode === 'tile' ? s.tilePaper : s.paper;
+    const paperMm = paperKey === 'auto' ? null : resolvePaperMm(paperKey, s.orientation, physW, physH);
+    let rotated = false;
+    if (paperMm && s.autoRotate && ((physW > physH) !== (paperMm[0] > paperMm[1]))) {
+      src = rotateCanvas90(src);
+      [physW, physH] = [physH, physW];
+      rotated = true;
+    }
+
     canvas.width = src.width;
     canvas.height = src.height;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(src, 0, 0);
 
-    if (greyscale) {
+    if (s.greyscale) {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
@@ -10595,27 +10755,56 @@ async function updatePrintPreview() {
       ctx.putImageData(imageData, 0, 0);
     }
 
+    // Tile mode: overlay dashed red cut lines showing where sheets split
+    let tileNote = '';
+    if (s.scaleMode === 'tile' && paperMm) {
+      const scaledW = physW * s.customPct / 100, scaledH = physH * s.customPct / 100;
+      const t = computeTiles(scaledW, scaledH, paperMm, s.marginMm);
+      const pxPerMm = canvas.width / scaledW;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(220,60,60,0.9)';
+      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.5;
+      for (let c2 = 1; c2 < t.cols; c2++) {
+        const x = c2 * t.stepW * pxPerMm;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let r = 1; r < t.rows; r++) {
+        const y = r * t.stepH * pxPerMm;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+      ctx.restore();
+      const n = t.cols * t.rows;
+      tileNote = ` • ${t.cols}×${t.rows} = ${n} sheet${n > 1 ? 's' : ''}/page`;
+    }
+
     // Visualise margins as inner padding on the "paper" element
-    const marginPx = margins === 'none' ? 0 : margins === 'small' ? 6 : 12;
+    const marginPx = s.marginMm === 0 ? 0 : s.marginMm === 5 ? 6 : 12;
     if (paper) paper.style.padding = marginPx + 'px';
 
-    // For "actual" / "custom" modes, hint that scale is fixed (no auto-fit)
-    let modeNote = scaleMode === 'fit' ? 'Fit to page' : scaleMode === 'actual' ? 'Actual size' : 'Custom';
-    if (status) status.textContent = `Page ${pageIdx+1} • ${modeNote} • ${margins} margin${greyscale ? ' • B&W' : ''}`;
+    const paperNote = paperKey === 'auto' ? 'Auto paper'
+      : PRINT_PAPER_LABELS[paperKey] + (paperMm[0] > paperMm[1] ? ' landscape' : ' portrait') + (s.paper === 'auto' ? ' (auto)' : '');
+    const modeNote = { fit: 'Fit', actual: '100%', custom: s.customPct + '%', tile: 'Tiled @ ' + s.customPct + '%' }[s.scaleMode] || s.scaleMode;
+    if (status) status.textContent =
+      `Page ${pageIdx+1} • ${s.pageList.length} page${s.pageList.length>1?'s':''}${s.reverse?' (reversed)':''} • ${paperNote} • ${modeNote}${tileNote}` +
+      `${rotated ? ' • rotated' : ''}${s.greyscale ? ' • B&W' : ''}${s.markups ? '' : ' • no markups'}`;
   } catch(e) {
     if (status) status.textContent = 'Preview failed: ' + (e.message || e);
   }
 }
 
 async function executePrint() {
-  const pages = document.getElementById('print-pages').value;
-  const scaleMode = document.getElementById('print-scale').value;
-  const margins = document.getElementById('print-margins').value;
-  const greyscale = document.getElementById('print-greyscale').checked;
-  const customPct = parseInt(document.getElementById('print-custom-pct')?.value) || 100;
+  const s = collectPrintSettings();
+  if (s.pages === 'custom' && !s.pageList) {
+    alert('Invalid page range. Use numbers and dashes separated by commas, e.g. 1-3, 5, 8-10');
+    return;
+  }
   closeCurrentModal();
 
-  const marginVal = margins === 'none' ? '0' : margins === 'small' ? '5mm' : '10mm';
+  const pageList = s.pageList.slice();
+  if (s.reverse) pageList.reverse();
+
+  const marginVal = s.marginMm === 0 ? '0' : s.marginMm + 'mm';
   const printWin = window.open('', '_blank');
   if (!printWin) {
     alert('Could not open the print window — please allow pop-ups for this page and try Print again.');
@@ -10627,10 +10816,24 @@ async function executePrint() {
   if (document.fonts && document.fonts.ready) {
     try { await document.fonts.ready; } catch(e) {}
   }
+
+  // Resolve the job's physical paper size (mm). Orientation "Auto" follows the
+  // first printed page's aspect; per-page mismatches are handled by auto-rotate.
+  const firstPage = await pdfDoc.getPage(pageList[0] + 1);
+  const fvp = firstPage.getViewport({ scale: 1 });
+  const refW = (fvp.width / 72) * 25.4, refH = (fvp.height / 72) * 25.4;
+  const jobPaperKey = s.scaleMode === 'tile' ? s.tilePaper : s.paper;
+  const paperMm = jobPaperKey === 'auto' ? null : resolvePaperMm(jobPaperKey, s.orientation, refW, refH);
+  // @page size: explicit mm when a paper is chosen; otherwise just an
+  // orientation hint (or fully auto) so the printer default is used.
+  const pageSizeCss = paperMm ? `${paperMm[0]}mm ${paperMm[1]}mm`
+    : s.orientation === 'landscape' ? 'landscape'
+    : s.orientation === 'portrait' ? 'portrait' : 'auto';
+
   printWin.document.write(`<!DOCTYPE html><html><head>
     <title>Print - ${currentFilename}</title>
     <style>
-      @page { size: auto; margin: ${marginVal}; }
+      @page { size: ${pageSizeCss}; margin: ${marginVal}; }
       html, body { margin: 0; padding: 0; background: white; }
       .print-page {
         width: 100vw;
@@ -10658,8 +10861,6 @@ async function executePrint() {
     </style>
   </head><body>`);
 
-  const pageList = pages === 'all' ? Array.from({length:pdfDoc.numPages},(_,i)=>i) : [currentPage];
-
   for (const pi of pageList) {
     const page = await pdfDoc.getPage(pi + 1);
     // High-quality render scale (2x for crisp print)
@@ -10677,19 +10878,21 @@ async function executePrint() {
     // annotationMode:0 disables pdf.js's own annotation layer (we draw our own).
     await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 0 }).promise;
 
-    const pageAnns = annotations.filter(a => a.page === pi);
-    isBakingAnnotations = true;
-    try {
-      pageAnns.forEach(ann => {
-        ctx.save();
-        ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-        drawAnnotation(ctx, ann, false);
-        ctx.restore();
-      });
-    } finally { isBakingAnnotations = false; }
+    if (s.markups) {
+      const pageAnns = annotations.filter(a => a.page === pi);
+      isBakingAnnotations = true;
+      try {
+        pageAnns.forEach(ann => {
+          ctx.save();
+          ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+          drawAnnotation(ctx, ann, false);
+          ctx.restore();
+        });
+      } finally { isBakingAnnotations = false; }
+    }
 
     // Greyscale at canvas-level (more reliable than CSS filter on print)
-    if (greyscale) {
+    if (s.greyscale) {
       const imageData = ctx.getImageData(0, 0, vp.width, vp.height);
       const d = imageData.data;
       for (let i = 0; i < d.length; i += 4) {
@@ -10699,22 +10902,57 @@ async function executePrint() {
       ctx.putImageData(imageData, 0, 0);
     }
 
+    // Physical page size (mm) + auto-rotate when the page's orientation
+    // doesn't match the chosen paper (e.g. landscape A1 plan on portrait A4)
+    const vp1 = page.getViewport({ scale: 1 });
+    let physW = (vp1.width / 72) * 25.4, physH = (vp1.height / 72) * 25.4;
+    let outCanvas = canvas;
+    if (paperMm && s.autoRotate && ((physW > physH) !== (paperMm[0] > paperMm[1]))) {
+      outCanvas = rotateCanvas90(canvas);
+      [physW, physH] = [physH, physW];
+    }
+
+    // Tile mode: slice the page into paper-sized tiles with a joining overlap
+    if (s.scaleMode === 'tile' && paperMm) {
+      const scaledW = physW * s.customPct / 100, scaledH = physH * s.customPct / 100;
+      const t = computeTiles(scaledW, scaledH, paperMm, s.marginMm);
+      const pxPerMm = outCanvas.width / scaledW; // canvas px per printed mm
+      for (let row = 0; row < t.rows; row++) {
+        for (let col = 0; col < t.cols; col++) {
+          const xMm = col * t.stepW, yMm = row * t.stepH;
+          const wMm = Math.min(t.printW, scaledW - xMm);
+          const hMm = Math.min(t.printH, scaledH - yMm);
+          if (wMm <= 0 || hMm <= 0) continue;
+          const tc = document.createElement('canvas');
+          tc.width = Math.max(1, Math.round(wMm * pxPerMm));
+          tc.height = Math.max(1, Math.round(hMm * pxPerMm));
+          const tctx = tc.getContext('2d');
+          tctx.fillStyle = 'white';
+          tctx.fillRect(0, 0, tc.width, tc.height);
+          tctx.drawImage(outCanvas, xMm * pxPerMm, yMm * pxPerMm, tc.width, tc.height, 0, 0, tc.width, tc.height);
+          const tPx = tc.width * tc.height;
+          const tUrl = tPx > 6000000 ? tc.toDataURL('image/jpeg', 0.92) : tc.toDataURL('image/png');
+          printWin.document.write(`<div class="print-page"><img class="actual" src="${tUrl}" style="width:${wMm.toFixed(2)}mm;height:${hMm.toFixed(2)}mm"></div>`);
+        }
+      }
+      continue;
+    }
+
     // Large canvases (A1 / A0 at 2x) blow past the 25 MB threshold some browsers
     // accept for inline PNG data URLs in a printed window — silently producing
     // a blank/boxed page. Fall back to high-quality JPEG above ~6 megapixels.
-    const px = canvas.width * canvas.height;
+    const px = outCanvas.width * outCanvas.height;
     const useJpeg = px > 6000000;
-    const dataUrl = useJpeg ? canvas.toDataURL('image/jpeg', 0.92) : canvas.toDataURL('image/png');
+    const dataUrl = useJpeg ? outCanvas.toDataURL('image/jpeg', 0.92) : outCanvas.toDataURL('image/png');
 
-    if (scaleMode === 'fit') {
+    if (s.scaleMode === 'fit') {
       // Edge-to-edge: image fills the whole printable area, aspect ratio preserved
       printWin.document.write(`<div class="print-page"><img class="fit" src="${dataUrl}"></div>`);
     } else {
       // Actual / Custom: render at fixed physical size (PDF page mm * pct)
-      const vp1 = page.getViewport({ scale: 1 });
-      const pct = scaleMode === 'actual' ? 100 : customPct;
-      const physWmm = (vp1.width / 72) * 25.4 * (pct / 100);
-      const physHmm = (vp1.height / 72) * 25.4 * (pct / 100);
+      const pct = s.scaleMode === 'actual' ? 100 : s.customPct;
+      const physWmm = physW * (pct / 100);
+      const physHmm = physH * (pct / 100);
       printWin.document.write(`<div class="print-page"><img class="actual" src="${dataUrl}" style="width:${physWmm.toFixed(2)}mm;height:${physHmm.toFixed(2)}mm"></div>`);
     }
   }
@@ -10722,6 +10960,443 @@ async function executePrint() {
   printWin.document.write('</body></html>');
   printWin.document.close();
   setTimeout(() => { printWin.print(); }, 800);
+}
+
+// ============================================================
+// QUANTITY LINK — sync takeoff quantities into an EXISTING Excel
+// workbook (v2.9, Bluebeam "Quantity Link" equivalent).
+// The user's estimate spreadsheet gets a "BDM Quantities" sheet
+// (created or replaced on every sync) plus a named range per item
+// (QTY_Item_Name → the qty cell) so their own formulas keep
+// working wherever the rows move. Everything else in their
+// workbook — sheets, formatting, formulas — is left untouched.
+// ============================================================
+let quantityLinkHandle = null; // FileSystemFileHandle for the linked workbook (per session)
+
+// Minimal zip reader for existing .xlsx files. Handles stored (0) and
+// deflate (8) entries via the browser's native DecompressionStream.
+async function _readZip(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid .xlsx file');
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const dec = new TextDecoder();
+  const files = [];
+  for (let i = 0; i < count; i++) {
+    if (dv.getUint32(off, true) !== 0x02014b50) throw new Error('Corrupt xlsx (central directory)');
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const nameLen = dv.getUint16(off + 28, true);
+    const extraLen = dv.getUint16(off + 30, true);
+    const cmtLen = dv.getUint16(off + 32, true);
+    const lho = dv.getUint32(off + 42, true);
+    const name = dec.decode(bytes.subarray(off + 46, off + 46 + nameLen));
+    const lNameLen = dv.getUint16(lho + 26, true);
+    const lExtraLen = dv.getUint16(lho + 28, true);
+    const dataStart = lho + 30 + lNameLen + lExtraLen;
+    files.push({ name, method, raw: bytes.subarray(dataStart, dataStart + csize) });
+    off += 46 + nameLen + extraLen + cmtLen;
+  }
+  for (const f of files) {
+    if (f.method === 0) f.data = new Uint8Array(f.raw);
+    else if (f.method === 8) {
+      const stream = new Blob([f.raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      f.data = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else throw new Error('Unsupported compression in ' + f.name);
+    delete f.raw; delete f.method;
+  }
+  return files;
+}
+
+// Flat quantity rows in package-tree order (same coding as the Estimate
+// export) + a safe unique Excel defined-name per item.
+function _qlBuildRows() {
+  const tree = buildTakeoffTree();
+  const rows = [];
+  const used = new Set();
+  const mkName = (n) => {
+    let s = 'QTY_' + String(n).replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!/^QTY_[A-Za-z0-9_]/.test(s)) s = 'QTY_Item';
+    s = s.slice(0, 200);
+    let u = s, k = 2;
+    while (used.has(u.toUpperCase())) u = s + '_' + (k++);
+    used.add(u.toUpperCase());
+    return u;
+  };
+  const walk = (node, code, path) => {
+    node.items.forEach((item, ii) => {
+      const r = computeTakeoffQty(item);
+      rows.push({
+        code: code + '.' + (ii + 1), pkg: path, name: item.name,
+        qty: Number((r.qty || 0).toFixed(3)), unit: takeoffItemUnit(item),
+        rate: Number((r.rate || 0).toFixed(2)), defName: mkName(item.name)
+      });
+    });
+    node.children.forEach((c, ci) => walk(c, code + '.' + (node.items.length + ci + 1), path + ' / ' + c.name));
+  };
+  tree.children.forEach((c, i) => walk(c, String(i + 1), c.name));
+  return rows;
+}
+
+// Build the "BDM Quantities" worksheet XML. Row 1 = sync note, row 2 =
+// headers, items from row 3. Uses inline strings and NO style indexes so it
+// can't clash with the host workbook's styles part.
+function _qlSheetXml(rows) {
+  const esc = _xmlEsc;
+  let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<cols><col min="1" max="1" width="9" customWidth="1"/><col min="2" max="2" width="34" customWidth="1"/>` +
+    `<col min="3" max="3" width="34" customWidth="1"/><col min="4" max="4" width="12" customWidth="1"/>` +
+    `<col min="5" max="5" width="8" customWidth="1"/><col min="6" max="6" width="12" customWidth="1"/>` +
+    `<col min="7" max="7" width="28" customWidth="1"/></cols><sheetData>`;
+  const str = (ref, v) => `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+  const num = (ref, v) => `<c r="${ref}"><v>${v}</v></c>`;
+  const when = new Date().toLocaleString();
+  xml += `<row r="1">${str('A1', 'BDM Quantities — synced from ' + (currentFilename || 'BDM PDF Tool') + ' on ' + when + '. This sheet is REPLACED on every sync — reference it, don’t edit it.')}</row>`;
+  xml += `<row r="2">${str('A2','Code')}${str('B2','Package')}${str('C2','Item')}${str('D2','Qty')}${str('E2','Unit')}${str('F2','Rate')}${str('G2','Named range')}</row>`;
+  rows.forEach((r, i) => {
+    const n = i + 3;
+    xml += `<row r="${n}">${str('A'+n, r.code)}${str('B'+n, r.pkg)}${str('C'+n, r.name)}${num('D'+n, r.qty)}${str('E'+n, r.unit || '')}${num('F'+n, r.rate)}${str('G'+n, r.defName)}</row>`;
+  });
+  xml += `</sheetData></worksheet>`;
+  return xml;
+}
+
+async function syncQuantityLink(forcePick) {
+  if (!takeoffItems.length) { showToast('No takeoff items to sync yet'); return; }
+  if (typeof window.showOpenFilePicker !== 'function') {
+    alert('Excel sync needs Chrome or Edge (file access support).'); return;
+  }
+  try {
+    if (!quantityLinkHandle || forcePick) {
+      const [h] = await window.showOpenFilePicker({
+        types: [{ description: 'Excel workbook', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }]
+      });
+      quantityLinkHandle = h;
+    }
+    const file = await quantityLinkHandle.getFile();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const files = await _readZip(bytes);
+    const get = (name) => files.find(f => f.name === name || f.name === name.replace(/^\//, ''));
+    const wbFile = get('xl/workbook.xml');
+    const relsFile = get('xl/_rels/workbook.xml.rels');
+    const ctFile = get('[Content_Types].xml');
+    if (!wbFile || !relsFile || !ctFile) throw new Error('Not a valid Excel workbook');
+    const dec = new TextDecoder(); const enc = new TextEncoder();
+    let wbXml = dec.decode(wbFile.data);
+    let relsXml = dec.decode(relsFile.data);
+    let ctXml = dec.decode(ctFile.data);
+
+    const rows = _qlBuildRows();
+    const sheetXml = _qlSheetXml(rows);
+
+    // Existing "BDM Quantities" sheet? Replace its part; otherwise wire up a new one.
+    const sheetMatch = wbXml.match(/<sheet[^>]*name="BDM Quantities"[^>]*r:id="(rId\d+)"[^>]*\/>/) ||
+                       wbXml.match(/<sheet[^>]*r:id="(rId\d+)"[^>]*name="BDM Quantities"[^>]*\/>/);
+    if (sheetMatch) {
+      const relM = relsXml.match(new RegExp(`<Relationship[^>]*Id="${sheetMatch[1]}"[^>]*Target="([^"]+)"`)) ||
+                   relsXml.match(new RegExp(`<Relationship[^>]*Target="([^"]+)"[^>]*Id="${sheetMatch[1]}"`));
+      if (!relM) throw new Error('Workbook relationships are inconsistent');
+      let target = relM[1].replace(/^\//, '');
+      if (!target.startsWith('xl/')) target = 'xl/' + target;
+      const part = get(target);
+      if (!part) throw new Error('Linked sheet part missing: ' + target);
+      part.data = enc.encode(sheetXml);
+    } else {
+      const partName = 'xl/worksheets/bdmQuantities.xml';
+      const maxRid = Math.max(0, ...[...relsXml.matchAll(/Id="rId(\d+)"/g)].map(m => +m[1]));
+      const maxSheetId = Math.max(0, ...[...wbXml.matchAll(/sheetId="(\d+)"/g)].map(m => +m[1]));
+      const rid = 'rId' + (maxRid + 1);
+      relsXml = relsXml.replace(/<\/Relationships>/,
+        `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/bdmQuantities.xml"/></Relationships>`);
+      wbXml = wbXml.replace(/<\/sheets>/, `<sheet name="BDM Quantities" sheetId="${maxSheetId + 1}" r:id="${rid}"/></sheets>`);
+      if (!ctXml.includes('/' + partName)) {
+        ctXml = ctXml.replace(/<\/Types>/,
+          `<Override PartName="/${partName}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`);
+      }
+      files.push({ name: partName, data: enc.encode(sheetXml) });
+    }
+
+    // Refresh our defined names (QTY_*) — remove old, insert current set.
+    wbXml = wbXml.replace(/<definedName[^>]*name="QTY_[^"]*"[^>]*>[^<]*<\/definedName>/g, '');
+    wbXml = wbXml.replace(/<definedNames\s*\/>/, '<definedNames></definedNames>');
+    const defXml = rows.map((r, i) => `<definedName name="${r.defName}">'BDM Quantities'!$D$${i + 3}</definedName>`).join('');
+    if (/<definedNames>/.test(wbXml)) wbXml = wbXml.replace(/<definedNames>/, '<definedNames>' + defXml);
+    else wbXml = wbXml.replace(/<\/sheets>/, '</sheets><definedNames>' + defXml + '</definedNames>');
+    // Recalculate on open so cells referencing the named ranges refresh.
+    if (!/fullCalcOnLoad/.test(wbXml)) {
+      if (/<calcPr[^>]*\/>/.test(wbXml)) wbXml = wbXml.replace(/<calcPr([^>]*)\/>/, '<calcPr$1 fullCalcOnLoad="1"/>');
+      else wbXml = wbXml.replace(/<\/workbook>/, '<calcPr fullCalcOnLoad="1"/></workbook>');
+    }
+
+    wbFile.data = enc.encode(wbXml);
+    relsFile.data = enc.encode(relsXml);
+    ctFile.data = enc.encode(ctXml);
+
+    const out = _buildZip(files);
+    const w = await quantityLinkHandle.createWritable();
+    await w.write(out); await w.close();
+
+    showToast(`Synced ${rows.length} quantities → ${file.name}`);
+    const listRows = rows.map(r =>
+      `<tr><td style="padding:3px 8px;border-bottom:1px solid var(--border-color)">${_xmlEsc(r.name)}</td>` +
+      `<td style="padding:3px 8px;border-bottom:1px solid var(--border-color);text-align:right;font-family:monospace">${r.qty}</td>` +
+      `<td style="padding:3px 8px;border-bottom:1px solid var(--border-color);font-family:monospace;color:var(--accent)">=${r.defName}</td></tr>`).join('');
+    showModal('Excel Quantity Link', `
+      <div style="max-width:560px;font-size:12px;color:var(--text-secondary);line-height:1.5">
+        <p style="margin:0 0 8px"><b>${rows.length} quantities</b> written to the <b>BDM Quantities</b> sheet in <b>${_xmlEsc(file.name)}</b>.</p>
+        <p style="margin:0 0 8px">Use the named range in any cell of your own sheets — it always points at the live quantity, wherever the row moves. Click <b>Sync Excel</b> again after measuring to update (close the file in Excel first, then reopen it).</p>
+        <div style="max-height:240px;overflow:auto;border:1px solid var(--border-color);border-radius:4px">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <tr><th style="text-align:left;padding:4px 8px;background:var(--bg-tertiary)">Item</th><th style="text-align:right;padding:4px 8px;background:var(--bg-tertiary)">Qty</th><th style="text-align:left;padding:4px 8px;background:var(--bg-tertiary)">Use in Excel</th></tr>
+          ${listRows}
+        </table></div>
+      </div>`, [{ text: 'Done', class: 'primary', onclick: 'closeCurrentModal()' }]);
+  } catch (e) {
+    if (e && (e.name === 'AbortError')) return;
+    console.error('Quantity link failed:', e);
+    alert('Excel sync failed: ' + (e.message || e) + '\n\nIf the file is open in Excel, close it and try again.');
+  }
+}
+
+// ============================================================
+// MARKUP REPORT — Bluebeam-style summary of every markup with a
+// context thumbnail, grouped by page, exported as a PDF (v2.9).
+// ============================================================
+const ANNOTATION_TYPE_LABELS = {
+  measure: 'Length', polyline: 'Polyline measure', area: 'Area', dimension: 'Dimension',
+  count: 'Count', line: 'Line', arrow: 'Arrow', polyshape: 'Polyline shape',
+  rectangle: 'Rectangle', ellipse: 'Ellipse', polygon: 'Polygon', cloud: 'Revision cloud',
+  text: 'Text', callout: 'Callout', stamp: 'Stamp', tick: 'Tick', signature: 'Signature',
+  pen: 'Pen', highlight: 'Highlight', cutcontent: 'Cut content', image: 'Image'
+};
+function _annTypeLabel(a) {
+  if (a.type === 'polyline' && a.isShape) return 'Polyline shape';
+  if (String(a.type).toLowerCase().includes('legend') || String(a.type).toLowerCase().includes('takeoff')) return 'Takeoff table';
+  return ANNOTATION_TYPE_LABELS[a.type] || (String(a.type).charAt(0).toUpperCase() + String(a.type).slice(1));
+}
+function _annDescription(a) {
+  const bits = [];
+  if (a.measLabel) bits.push(a.measLabel);
+  if (a.label) bits.push(a.label);
+  if (a.text) bits.push(a.text);
+  if (a.type === 'count') bits.push('Group: ' + (a.group || 'Default'));
+  if (a.isDeduction) bits.push('(deduction)');
+  return bits.join(' — ') || '—';
+}
+function _annBounds(a) {
+  const xs = [], ys = [];
+  const add = (p) => { if (p && isFinite(p.x) && isFinite(p.y)) { xs.push(p.x); ys.push(p.y); } };
+  (a.points || []).forEach(add);
+  add(a.textPos);
+  if (a._annBox) { xs.push(a._annBox.x, a._annBox.x + a._annBox.w); ys.push(a._annBox.y, a._annBox.y + a._annBox.h); }
+  if (!xs.length) return null;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+}
+// pdf-lib's standard fonts are WinAnsi — swap common typography for ASCII
+// equivalents, then strip anything else they can't encode.
+function _winAnsiSafe(s) {
+  return String(s)
+    .replace(/[–—]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+    .replace(/…/g, '...').replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
+}
+
+function openMarkupReport() {
+  if (!pdfDoc) { alert('Open a PDF first'); return; }
+  if (!annotations.length) { showToast('No markups in this document yet'); return; }
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:12px;min-width:380px">
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Pages</label>
+        <select id="mr-pages" class="select-input" style="margin-top:4px">
+          <option value="all" selected>All pages</option>
+          <option value="current">Current page (${currentPage + 1})</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Include</label>
+        <select id="mr-kind" class="select-input" style="margin-top:4px">
+          <option value="all" selected>All markups</option>
+          <option value="meas">Measurements only</option>
+          <option value="marks">Markups only (no measurements)</option>
+        </select>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer">
+        <input type="checkbox" id="mr-thumbs" checked style="margin:0">
+        Thumbnail of each markup (like Bluebeam summary reports)
+      </label>
+      <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
+        Produces a PDF report grouped by page: thumbnail, type, content and measurement for every markup. Big documents with thumbnails can take a little while.
+      </div>
+    </div>`;
+  showModal('Markup Report', body, [
+    { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
+    { text: 'Generate PDF', class: 'primary', onclick: 'executeMarkupReport()' }
+  ]);
+}
+
+async function executeMarkupReport() {
+  const scope = document.getElementById('mr-pages').value;
+  const kind = document.getElementById('mr-kind').value;
+  const withThumbs = document.getElementById('mr-thumbs').checked;
+  closeCurrentModal();
+  showToast('Building markup report…');
+  try {
+    const measTypes = ['measure', 'polyline', 'area', 'dimension', 'count'];
+    const isMeas = (a) => measTypes.includes(a.type) && !a.isShape;
+    let list = annotations.filter(a =>
+      (scope === 'all' || a.page === currentPage) &&
+      (kind === 'all' || (kind === 'meas' ? isMeas(a) : !isMeas(a))));
+    if (!list.length) { showToast('Nothing matches those filters'); return; }
+
+    const byPage = {};
+    list.forEach(a => { (byPage[a.page] = byPage[a.page] || []).push(a); });
+    const pages = Object.keys(byPage).map(Number).sort((x, y) => x - y);
+    pages.forEach(p => byPage[p].sort((a, b) => {
+      const ba = _annBounds(a), bb = _annBounds(b);
+      return (ba ? ba.y : 0) - (bb ? bb.y : 0);
+    }));
+
+    // ---- thumbnails: render each page once (markups baked), crop per markup
+    const thumbMap = {};
+    if (withThumbs) {
+      for (const pg of pages) {
+        const page = await pdfDoc.getPage(pg + 1);
+        const vp1 = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, 3600 / Math.max(vp1.width, vp1.height));
+        const vp = page.getViewport({ scale });
+        const c = document.createElement('canvas');
+        c.width = vp.width; c.height = vp.height;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 0 }).promise;
+        isBakingAnnotations = true;
+        try {
+          annotations.filter(a => a.page === pg).forEach(a => {
+            ctx.save(); ctx.setTransform(scale, 0, 0, scale, 0, 0);
+            drawAnnotation(ctx, a, false); ctx.restore();
+          });
+        } finally { isBakingAnnotations = false; }
+        for (const a of byPage[pg]) {
+          const b = _annBounds(a); if (!b) continue;
+          const padPts = 30;
+          let x0 = (b.x - padPts) * scale, y0 = (b.y - padPts) * scale;
+          let w = (b.w + padPts * 2) * scale, h = (b.h + padPts * 2) * scale;
+          const minPx = 260; // always show some context
+          if (w < minPx) { x0 -= (minPx - w) / 2; w = minPx; }
+          if (h < minPx * 0.7) { y0 -= (minPx * 0.7 - h) / 2; h = minPx * 0.7; }
+          x0 = Math.max(0, Math.min(x0, c.width - 10)); y0 = Math.max(0, Math.min(y0, c.height - 10));
+          w = Math.min(w, c.width - x0); h = Math.min(h, c.height - y0);
+          const maxW = 480, maxH = 330;
+          const s2 = Math.min(maxW / w, maxH / h, 1);
+          const tc = document.createElement('canvas');
+          tc.width = Math.max(1, Math.round(w * s2)); tc.height = Math.max(1, Math.round(h * s2));
+          const tctx = tc.getContext('2d');
+          tctx.fillStyle = 'white'; tctx.fillRect(0, 0, tc.width, tc.height);
+          tctx.drawImage(c, x0, y0, w, h, 0, 0, tc.width, tc.height);
+          thumbMap[a.id] = tc.toDataURL('image/jpeg', 0.8);
+        }
+      }
+    }
+
+    // ---- build the report PDF
+    const out = await PDFLib.PDFDocument.create();
+    const helv = await out.embedFont(PDFLib.StandardFonts.Helvetica);
+    const bold = await out.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const navy = PDFLib.rgb(15/255, 23/255, 33/255);
+    const gold = PDFLib.rgb(157/255, 123/255, 91/255);
+    const grey = PDFLib.rgb(0.42, 0.44, 0.47);
+    const lineGrey = PDFLib.rgb(0.85, 0.85, 0.85);
+    const PW = 595.28, PH = 841.89, M = 40;
+    let page = out.addPage([PW, PH]);
+    let y = PH - M;
+
+    const wrap = (txt, font, size, width, maxLines) => {
+      const words = _winAnsiSafe(txt).split(/\s+/);
+      const lines = []; let cur = '';
+      for (const wd of words) {
+        const trial = cur ? cur + ' ' + wd : wd;
+        if (font.widthOfTextAtSize(trial, size) <= width) cur = trial;
+        else {
+          if (cur) lines.push(cur);
+          cur = wd;
+          while (font.widthOfTextAtSize(cur, size) > width) cur = cur.slice(0, -1);
+          if (lines.length >= maxLines - 1) break;
+        }
+      }
+      if (cur && lines.length < maxLines) lines.push(cur);
+      if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
+        lines[maxLines - 1] = lines[maxLines - 1].replace(/.{3}$/, '') + '…';
+      }
+      return lines;
+    };
+    const newPage = () => { page = out.addPage([PW, PH]); y = PH - M; };
+
+    // header
+    page.drawText('MARKUP REPORT', { x: M, y: y - 14, size: 16, font: bold, color: navy });
+    page.drawText(_winAnsiSafe((currentFilename || 'Document') + '  ·  ' + new Date().toLocaleDateString() + '  ·  ' + list.length + ' markup' + (list.length === 1 ? '' : 's')), { x: M, y: y - 30, size: 9, font: helv, color: grey });
+    page.drawLine({ start: { x: M, y: y - 40 }, end: { x: PW - M, y: y - 40 }, thickness: 1.5, color: navy });
+    y -= 56;
+
+    let no = 0;
+    for (const pg of pages) {
+      if (y < M + 60) newPage();
+      page.drawText('PAGE ' + (pg + 1), { x: M, y: y - 10, size: 10, font: bold, color: gold });
+      page.drawLine({ start: { x: M, y: y - 16 }, end: { x: PW - M, y: y - 16 }, thickness: 0.75, color: lineGrey });
+      y -= 26;
+      for (const a of byPage[pg]) {
+        no++;
+        const thumb = thumbMap[a.id];
+        const rowH = thumb ? 76 : 24;
+        if (y - rowH < M) { newPage(); }
+        const top = y;
+        let tx = M;
+        if (withThumbs) {
+          const boxW = 96, boxH = 66;
+          if (thumb) {
+            const img = await out.embedJpg(thumb);
+            const s3 = Math.min(boxW / img.width, boxH / img.height);
+            const iw = img.width * s3, ih = img.height * s3;
+            page.drawImage(img, { x: M + (boxW - iw) / 2, y: top - 5 - ih - (boxH - ih) / 2 + (boxH - ih) / 2, width: iw, height: ih });
+            page.drawRectangle({ x: M, y: top - 5 - boxH, width: boxW, height: boxH, borderColor: lineGrey, borderWidth: 0.75 });
+          }
+          tx = M + boxW + 12;
+        }
+        page.drawText(String(no), { x: tx, y: top - 14, size: 8, font: bold, color: navy });
+        // colour swatch
+        try {
+          const hex = String(a.color || '#888888').replace('#', '');
+          const cr = parseInt(hex.slice(0, 2), 16) / 255, cg = parseInt(hex.slice(2, 4), 16) / 255, cb = parseInt(hex.slice(4, 6), 16) / 255;
+          if (isFinite(cr) && isFinite(cg) && isFinite(cb)) page.drawRectangle({ x: tx + 18, y: top - 15, width: 7, height: 7, color: PDFLib.rgb(cr, cg, cb) });
+        } catch (e) {}
+        page.drawText(_winAnsiSafe(_annTypeLabel(a)), { x: tx + 32, y: top - 14, size: 8, font: bold, color: navy });
+        const descLines = wrap(_annDescription(a), helv, 8, PW - M - tx - 32, withThumbs ? 4 : 1);
+        descLines.forEach((ln, li) => page.drawText(ln, { x: tx + 32, y: top - 26 - li * 10, size: 8, font: helv, color: grey }));
+        page.drawLine({ start: { x: M, y: top - rowH + 4 }, end: { x: PW - M, y: top - rowH + 4 }, thickness: 0.5, color: lineGrey });
+        y = top - rowH;
+      }
+      y -= 8;
+    }
+    // footer on each page
+    const pgs = out.getPages();
+    pgs.forEach((p, i) => {
+      p.drawText('BDM PDF Tool — Markup Report', { x: M, y: 22, size: 7, font: helv, color: grey });
+      p.drawText((i + 1) + ' / ' + pgs.length, { x: PW - M - 30, y: 22, size: 7, font: helv, color: grey });
+    });
+
+    const bytesOut = await out.save();
+    const base = (currentFilename || 'document').replace(/\.pdf$/i, '');
+    downloadBlob(bytesOut, 'application/pdf', base + '-Markup-Report.pdf');
+    showToast('Markup report downloaded — ' + list.length + ' markups');
+  } catch (e) {
+    console.error('Markup report failed:', e);
+    alert('Markup report failed: ' + (e.message || e));
+  }
 }
 
 // ============================================================
