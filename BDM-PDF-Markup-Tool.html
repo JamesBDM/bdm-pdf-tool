@@ -920,6 +920,7 @@ canvas { display: block; }
       <span id="wb-status" style="font-size:10px;color:var(--text-muted)"></span>
       <span class="topbar-spacer"></span>
       <button class="topbar-btn" onclick="wbAddHeading(null)" title="Add a heading — use / to nest, e.g. Prelims or Concrete / Substructure">+ Heading</button>
+      <button class="topbar-btn" onclick="wbAddMeasuredItem(null)" title="Add a measured line — creates the item and arms it so you can start measuring on the plan straight away">+ Measured line</button>
       <button class="topbar-btn" onclick="wbAddManualItem(null)" title="Add a manual line — typed quantity, not measured from the drawings (prelims, PC sums, allowances)">+ Manual line</button>
       <div class="separator"></div>
       <button class="topbar-btn" onclick="wbSetAll(false)" title="Expand every package">Expand all</button>
@@ -1122,7 +1123,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v2.9';
+const APP_VERSION = 'v2.9.1';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -6580,6 +6581,51 @@ function wbAddManualItem(pkgKey) {
   refreshTakeoffPanel();
   showToast('Manual line added — type its qty, unit and rate in the row');
 }
+// Measured line straight from the workbook (v2.9.1) — creates the item in
+// this package and ARMS it so you can start measuring immediately.
+function wbAddMeasuredItem(pkgKey) {
+  const name = prompt('Measured item description (e.g. "Slab", "Wall render", "Downlights"):');
+  if (!name || !name.trim()) return;
+  const usedColors = takeoffItems.map(t => t.color);
+  const color = TAKEOFF_COLORS.find(c => !usedColors.includes(c)) || TAKEOFF_COLORS[takeoffItems.length % TAKEOFF_COLORS.length];
+  const item = { id: generateId(), name: name.trim(), resultType: 'area', color, trade: pkgKey || 'General', rate: 0, factor: 0, markup: 0 };
+  takeoffItems.push(item);
+  if (pkgKey) wbCollapsed[pkgKey] = false;
+  saveToHistory();
+  setActiveTakeoffItem(item.id); // arms the drawing tool straight away
+  showToast('Measuring: ' + item.name + ' (Area) — draw on the plan. Switch its type with the tag dropdown on the row.');
+}
+// Convert an item between MANUAL and MEASURED, either direction (v2.9.1).
+// measured → manual: the current measured qty becomes the typed value;
+// linked shapes stay on the drawings but stop driving the quantity.
+// manual → measured: shapes drive the qty again — draw or link them.
+function convertTakeoffItem(itemId, newType) {
+  const item = getTakeoffItem(itemId);
+  if (!item || !newType) return;
+  if (newType === 'manual') {
+    if (item.manual) return;
+    const r = computeTakeoffQty(item);
+    const u = takeoffItemUnit(item);
+    item.manual = true;
+    item.manualQty = Number((r.qty || 0).toFixed(3));
+    item.unit = u || 'item';
+    showToast('"' + item.name + '" is now a manual line — its measured qty was kept as the typed value');
+  } else {
+    if (!item.manual && item.resultType === newType) return;
+    const wasManual = !!item.manual;
+    delete item.manual;
+    item.resultType = newType;
+    if (!(parseFloat(item.factor) >= 0)) item.factor = 0;
+    if ((newType === 'vertical' || newType === 'volume') && !(parseFloat(item.factor) > 0)) {
+      const what = newType === 'vertical' ? 'height' : 'depth';
+      item.factor = parseFloat(prompt('Item ' + what + ' in mm (e.g. 2700 for a 2.7m wall):', newType === 'vertical' ? '2700' : '200')) || 0;
+    }
+    showToast('"' + item.name + '" is now measured — ' + (TAKEOFF_TYPE_LABELS[newType] || newType) + (wasManual ? '. Draw shapes or use ＋ Add existing shapes.' : ''));
+  }
+  saveToHistory();
+  redrawAnnotations();
+  refreshTakeoffPanel();
+}
 // Rename a heading's LAST segment; every item and sub-heading under it follows.
 function wbRenameHeading(key) {
   const segs = key.split(' / ');
@@ -6669,7 +6715,7 @@ function getWorkbookHTML() {
   const measRows = (item, depth) => {
     const entries = allTakeoffShapes(item.id);
     if (!entries.length) {
-      return `<tr class="wb-meas"><td></td><td colspan="6" style="padding-left:${22 + (depth + 1) * 14}px;color:var(--text-muted)">no shapes measured yet</td><td></td></tr>`;
+      return `<tr class="wb-meas"><td></td><td colspan="7" style="padding-left:${22 + (depth + 1) * 14}px;color:var(--text-muted)">no shapes measured yet</td><td></td></tr>`;
     }
     return entries.map(({ a, docIdx }) => {
       const zone = a.zoneId && getTakeoffZone(a.zoneId);
@@ -6679,7 +6725,7 @@ function getWorkbookHTML() {
         <td></td>
         <td colspan="2" style="padding-left:${22 + (depth + 1) * 14}px">${multiDoc ? escapeHtml(_docShortLabel(docIdx)) + ' · ' : ''}p${a.page + 1}${zone ? ' · ' + escapeHtml(zone.name) : ''}${a.isDeduction ? ' · <span style="color:#e74c3c">deduct</span>' : ''}${shared ? ' <span title="Shared with other items">⇄</span>' : ''}</td>
         <td class="wb-num">${escapeHtml((a.label || a.type))}</td>
-        <td></td><td></td><td></td>
+        <td></td><td></td><td></td><td></td>
         <td class="wb-act">${local
           ? `<button onclick="event.stopPropagation();toggleShapeDeduction('${a.id}')" title="Flip deduction">±</button><button onclick="event.stopPropagation();unassignTakeoffShape('${a.id}','${item.id}')" title="Unlink from this item">⤴</button>`
           : `<span title="In ${escapeHtml(_docLabel(docIdx))} — click the row to jump there">↗</span>`}</td>
@@ -6704,7 +6750,16 @@ function getWorkbookHTML() {
           : `<button class="wb-exp" onclick="wbToggleItem('${item.id}')" title="${exp ? 'Hide' : 'Show'} this item's measurements (${r.shapes})">${exp ? '▾' : '▸'}</button>`}
         <input type="color" value="${item.color}" title="Item colour" onchange="setTakeoffItemColor('${item.id}', this.value)" style="width:13px;height:13px;padding:0;border:none;background:none;cursor:pointer;flex:none">
         <input class="wb-input" style="flex:1;min-width:70px" value="${escapeHtml(item.name)}" title="Item description — edit inline" onchange="updateTakeoffItemField('${item.id}','name',this.value)">
-        <span class="wb-tag" title="${isMan ? 'Manual entry — typed quantity' : TAKEOFF_TYPE_LABELS[item.resultType]}">${typeTag}</span>
+        <select class="wb-tag" style="cursor:pointer;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border-color);border-radius:3px;font-size:9px;font-weight:700;padding:0 1px"
+                title="${isMan ? 'Manual entry — typed quantity' : TAKEOFF_TYPE_LABELS[item.resultType]} — change the line type here: switch between Manual and any Measured type at any time"
+                onclick="event.stopPropagation()" onchange="convertTakeoffItem('${item.id}', this.value)">
+          <option value="length" ${!isMan && item.resultType === 'length' ? 'selected' : ''}>L</option>
+          <option value="area" ${!isMan && item.resultType === 'area' ? 'selected' : ''}>A</option>
+          <option value="vertical" ${!isMan && item.resultType === 'vertical' ? 'selected' : ''}>V</option>
+          <option value="volume" ${!isMan && item.resultType === 'volume' ? 'selected' : ''}>V³</option>
+          <option value="count" ${!isMan && item.resultType === 'count' ? 'selected' : ''}>C</option>
+          <option value="manual" ${isMan ? 'selected' : ''}>M</option>
+        </select>
         <button class="wb-exp" style="width:auto" onclick="wbEditPackage('${item.id}')" title="Move to another package — current: ${escapeHtml(item.trade || 'General')}">✎</button>
       </div></td>
       <td class="wb-num" style="color:var(--text-secondary)">${isMan
@@ -6720,7 +6775,11 @@ function getWorkbookHTML() {
           : `<input class="wb-input wb-num-input" type="number" step="0.01" value="${item.rate || ''}" placeholder="rate" onchange="updateTakeoffItemField('${item.id}','rate',this.value)">`}</td>
       <td class="wb-num"><input class="wb-input wb-num-input" style="width:44px" type="number" step="0.5" value="${item.markup || ''}" placeholder="0" title="Markup %" onchange="updateTakeoffItemField('${item.id}','markup',this.value)"></td>
       <td class="wb-num" style="color:var(--success, #4ade80)">${r.amount > 0 ? formatMoney(r.amount) : ''}</td>
+      <td><input class="wb-input" style="font-size:10.5px" value="${escapeHtml(item.comment || '')}" placeholder="…"
+           title="Comment / note for this line — saved with the estimate and included in the Excel export"
+           onchange="updateTakeoffItemField('${item.id}','comment',this.value)"></td>
       <td class="wb-act">
+        ${isMan ? '' : `<button onclick="setActiveTakeoffItem('${item.id}')" title="${activeTakeoffItemId === item.id ? 'Measuring this item now — click to stop' : 'Measure — arm this item and draw its quantity straight onto the plan'}" style="color:${activeTakeoffItemId === item.id ? item.color : 'var(--text-muted)'};font-weight:${activeTakeoffItemId === item.id ? '700' : '400'}">${activeTakeoffItemId === item.id ? '■' : '✏'}</button>`}
         ${isMan ? '' : `<button onclick="toggleTakeoffHighlight('${item.id}')" title="Highlight this item's shapes on the drawing" style="color:${isLit ? item.color : 'var(--text-muted)'}">${isLit ? '◉' : '◎'}</button>`}
         <button onclick="deleteTakeoffItem('${item.id}')" title="Delete this line${isMan ? '' : ' (shapes stay on the drawings)'}">×</button>
       </td>
@@ -6735,6 +6794,7 @@ function getWorkbookHTML() {
           <td class="wb-num">${s.rate > 0 ? formatMoney(s.rate) : ''}</td>
           <td></td>
           <td class="wb-num">${s.rate > 0 ? formatMoney(s.amount) : ''}</td>
+          <td></td>
           <td></td>
         </tr>`;
       });
@@ -6751,9 +6811,11 @@ function getWorkbookHTML() {
       <td class="wb-code">${code}</td>
       <td colspan="5" style="padding-left:${8 + depth * 14}px">${collapsed ? '▸' : '▾'} ${escapeHtml(node.name.toUpperCase())} <span style="color:var(--text-muted);font-weight:400;font-size:10px">(${node.items.length + node.children.length ? countPkgItems(node) + ' items' : 'empty'})</span></td>
       <td class="wb-num">${amt > 0 ? formatMoney(amt) : ''}</td>
+      <td></td>
       <td class="wb-act" onclick="event.stopPropagation()">
-        <button onclick="wbAddManualItem(_wbPkgKeys[${idx}])" title="Add a manual line in this package">＋</button>
-        <button onclick="wbAddHeading(_wbPkgKeys[${idx}])" title="Add a sub-heading under this heading">＋§</button>
+        <button onclick="wbAddMeasuredItem(_wbPkgKeys[${idx}])" title="Add a MEASURED line in this package — arms it so you can draw on the plan straight away">＋▱</button>
+        <button onclick="wbAddManualItem(_wbPkgKeys[${idx}])" title="Add a MANUAL line in this package (typed qty)">＋</button>
+        <button onclick="wbAddHeading(_wbPkgKeys[${idx}])" title="Add a sub-heading under this heading — works at any depth (sub-sub-headings too)">＋§</button>
         <button onclick="wbRenameHeading(_wbPkgKeys[${idx}])" title="Rename this heading (items and sub-headings follow)">✎</button>
         <button onclick="wbDeleteHeading(_wbPkgKeys[${idx}])" title="Delete this heading (only when empty)">×</button>
       </td>
@@ -6775,11 +6837,12 @@ function getWorkbookHTML() {
       <th style="width:84px">Rate</th>
       <th style="width:52px" title="Markup %">MU %</th>
       <th style="width:104px">Amount</th>
-      <th style="width:56px"></th>
+      <th class="wb-left" style="width:150px" title="Notes per line — saved with the estimate and included in the Excel export">Comments</th>
+      <th style="width:66px"></th>
     </tr></thead>
     <tbody>${rows}
       <tr class="wb-total"><td></td><td>ESTIMATE TOTAL</td><td></td><td></td><td></td><td></td>
-        <td class="wb-num" style="color:var(--success, #4ade80)">${grand > 0 ? formatMoney(grand) : '—'}</td><td></td></tr>
+        <td class="wb-num" style="color:var(--success, #4ade80)">${grand > 0 ? formatMoney(grand) : '—'}</td><td></td><td></td></tr>
     </tbody></table>`;
 }
 
@@ -6958,6 +7021,13 @@ function getTakeoffPanelHTML() {
             <input type="text" class="property-input" style="width:64px;font-size:11px" value="${escapeHtml(item.unit || '')}" placeholder="item"
                    onchange="updateTakeoffItemField('${item.id}','unit',this.value)">
           </div>` : ''}
+          <div style="display:flex;gap:4px;align-items:center">
+            <label style="font-size:10px;color:var(--text-muted);width:62px" title="Switch this line between Manual (typed qty) and any Measured type at any time. Measured → Manual keeps the measured qty as the typed value; Manual → Measured lets drawn shapes drive the qty again.">Type</label>
+            <select class="select-input" style="flex:1;font-size:11px" onchange="convertTakeoffItem('${item.id}', this.value)">
+              ${['length','area','vertical','volume','count'].map(t => `<option value="${t}" ${!item.manual && item.resultType === t ? 'selected' : ''}>${TAKEOFF_TYPE_LABELS[t]}</option>`).join('')}
+              <option value="manual" ${item.manual ? 'selected' : ''}>Manual entry (typed qty)</option>
+            </select>
+          </div>
           <div style="display:flex;gap:4px;align-items:center">
             <label style="font-size:10px;color:var(--text-muted);width:62px" title="Trade package — use / to nest sub-packages in the workbook, e.g. Concrete / Substructure / Footings">Trade</label>
             <input type="text" class="property-input" style="flex:1;font-size:11px" value="${escapeHtml(item.trade || '')}" placeholder="e.g. Concrete / Substructure"
@@ -7472,7 +7542,7 @@ function _buildEstimateSheet() {
   takeoffItems.forEach(it => { R[it.id] = computeTakeoffQty(it); });
   const tree = buildTakeoffTree();
   const rows = [];
-  rows.push([{ v: 'Code', s: 2 }, { v: 'Description', s: 2 }, { v: 'Unit', s: 2 }, { v: 'Qty', s: 2 }, { v: 'Rate', s: 2 }, { v: 'MU %', s: 2 }, { v: 'Amount', s: 2 }]);
+  rows.push([{ v: 'Code', s: 2 }, { v: 'Description', s: 2 }, { v: 'Unit', s: 2 }, { v: 'Qty', s: 2 }, { v: 'Rate', s: 2 }, { v: 'MU %', s: 2 }, { v: 'Amount', s: 2 }, { v: 'Comments', s: 2 }]);
   const topRefs = [];
   let grand = 0;
 
@@ -7490,7 +7560,7 @@ function _buildEstimateSheet() {
       if (r.subRows) {
         const itemRowNum = rows.length + 1;
         rows.push([icode, '  '.repeat(depth + 1) + item.name + '  (assembly)', unit,
-          { v: Number(r.qty.toFixed(3)), s: 4 }, '', mu || '', null]);
+          { v: Number(r.qty.toFixed(3)), s: 4 }, '', mu || '', null, item.comment || '']);
         const partRefs = [];
         r.subRows.forEach(s2 => {
           const pn = rows.length + 1;
@@ -7507,7 +7577,7 @@ function _buildEstimateSheet() {
         const rn = rows.length + 1;
         rows.push([icode, '  '.repeat(depth + 1) + item.name, unit,
           { v: Number(r.qty.toFixed(3)), s: 4 }, { v: Number((r.rate || 0).toFixed(2)), s: 5 }, mu || '',
-          { f: `D${rn}*E${rn}*(1+F${rn}/100)`, v: Number(r.amount.toFixed(2)), s: 5 }]);
+          { f: `D${rn}*E${rn}*(1+F${rn}/100)`, v: Number(r.amount.toFixed(2)), s: 5 }, item.comment || '']);
         amountRefs.push('G' + rn);
       }
     });
@@ -7532,7 +7602,7 @@ function _buildEstimateSheet() {
     topRefs.length ? { f: `SUM(${topRefs.join(',')})`, v: Number(grand.toFixed(2)), s: 6 } : { s: 6 }]);
   rows.push([]);
   rows.push(['', { v: 'Quantities measured in the BDM PDF tool' + (openDocs.length > 1 ? ' across ' + openDocs.length + ' documents' : '') + ' — see Shape Breakdown for every measurement\'s drawing, page and scale.', s: 7 }]);
-  return { name: 'Estimate', rows, cols: [8, 48, 7, 12, 12, 8, 14] };
+  return { name: 'Estimate', rows, cols: [8, 48, 7, 12, 12, 8, 14, 32] };
 }
 
 function exportTakeoffXLSX() {
@@ -11033,7 +11103,8 @@ function _qlBuildRows() {
       rows.push({
         code: code + '.' + (ii + 1), pkg: path, name: item.name,
         qty: Number((r.qty || 0).toFixed(3)), unit: takeoffItemUnit(item),
-        rate: Number((r.rate || 0).toFixed(2)), defName: mkName(item.name)
+        rate: Number((r.rate || 0).toFixed(2)), defName: mkName(item.name),
+        comment: item.comment || ''
       });
     });
     node.children.forEach((c, ci) => walk(c, code + '.' + (node.items.length + ci + 1), path + ' / ' + c.name));
@@ -11057,10 +11128,10 @@ function _qlSheetXml(rows) {
   const num = (ref, v) => `<c r="${ref}"><v>${v}</v></c>`;
   const when = new Date().toLocaleString();
   xml += `<row r="1">${str('A1', 'BDM Quantities — synced from ' + (currentFilename || 'BDM PDF Tool') + ' on ' + when + '. This sheet is REPLACED on every sync — reference it, don’t edit it.')}</row>`;
-  xml += `<row r="2">${str('A2','Code')}${str('B2','Package')}${str('C2','Item')}${str('D2','Qty')}${str('E2','Unit')}${str('F2','Rate')}${str('G2','Named range')}</row>`;
+  xml += `<row r="2">${str('A2','Code')}${str('B2','Package')}${str('C2','Item')}${str('D2','Qty')}${str('E2','Unit')}${str('F2','Rate')}${str('G2','Named range')}${str('H2','Comment')}</row>`;
   rows.forEach((r, i) => {
     const n = i + 3;
-    xml += `<row r="${n}">${str('A'+n, r.code)}${str('B'+n, r.pkg)}${str('C'+n, r.name)}${num('D'+n, r.qty)}${str('E'+n, r.unit || '')}${num('F'+n, r.rate)}${str('G'+n, r.defName)}</row>`;
+    xml += `<row r="${n}">${str('A'+n, r.code)}${str('B'+n, r.pkg)}${str('C'+n, r.name)}${num('D'+n, r.qty)}${str('E'+n, r.unit || '')}${num('F'+n, r.rate)}${str('G'+n, r.defName)}${r.comment ? str('H'+n, r.comment) : ''}</row>`;
   });
   xml += `</sheetData></worksheet>`;
   return xml;
