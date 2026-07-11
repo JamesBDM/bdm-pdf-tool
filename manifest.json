@@ -1,25 +1,29 @@
 {
-  "name": "BDM PDF Markup & Measurement Tool",
-  "short_name": "BDM PDF Tool",
-  "description": "Markups and measurements for QS takeoffs — Bentley Development Management.",
+  "name": "Datum — PDF Markup & Measurement",
+  "short_name": "Datum",
+  "description": "PDF markup & measurement for construction quantity-surveying and project-management teams.",
   "start_url": "./BDM-PDF-Markup-Tool.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#12131a",
-  "theme_color": "#12131a",
+  "background_color": "#0E1830",
+  "theme_color": "#0E1830",
   "orientation": "any",
   "icons": [
     {
       "src": "icon-192.png",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     },
     {
       "src": "icon-512.png",
       "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-maskable-512.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     }
   ],
   "file_handlers": [
