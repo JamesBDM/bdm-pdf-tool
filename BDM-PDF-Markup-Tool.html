@@ -1086,6 +1086,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <button class="topbar-btn" id="wbfile-save" onclick="saveWorkbookFile()" title="Save the estimate to the workbook file">Save</button>
       <button class="topbar-btn" onclick="closeWorkbookFile()" title="Close the workbook — the estimate stays in the file; the session returns to embed-in-PDF mode">Close</button>
       <span class="topbar-spacer"></span>
+      <button class="topbar-btn" id="wb-showall" style="display:none;color:var(--warning)" onclick="showAllTakeoffShapes()" title="Some items' shapes are hidden (👁 buttons) — click to show everything again">⊘ Show all shapes</button>
       <button class="topbar-btn" onclick="wbAddHeading(null)" title="Add a heading — use / to nest, e.g. Prelims or Concrete / Substructure">+ Heading</button>
       <button class="topbar-btn" onclick="wbAddMeasuredItem(null)" title="Add a measured line — creates the item and arms it so you can start measuring on the plan straight away">+ Measured line</button>
       <button class="topbar-btn" onclick="wbAddManualItem(null)" title="Add a manual line — typed quantity, not measured from the drawings (prelims, PC sums, allowances)">+ Manual line</button>
@@ -1313,7 +1314,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.2.2';
+const APP_VERSION = 'v3.3';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3335,13 +3336,16 @@ function drawArrowShape(ctx, ann) {
 // Manual line breaks (\n) are kept; over-long single words overflow gracefully.
 function _wrapTextLines(ctx, text, maxW) {
   const out = [];
+  // v3.2.2: hard-break a single word wider than the box (long codes, URLs,
+  // or a run of characters with no spaces) — previously such words never
+  // wrapped because breaking only happened at spaces.
   const breakWord = (word) => {
     let chunk = '';
     for (const ch of word) {
       if (chunk && ctx.measureText(chunk + ch).width > maxW) { out.push(chunk); chunk = ch; }
       else chunk += ch;
     }
-    return chunk;
+    return chunk; // remainder fits on the (new) current line
   };
   String(text || '').split('\n').forEach(raw => {
     if (!maxW || ctx.measureText(raw).width <= maxW) { out.push(raw); return; }
@@ -6958,10 +6962,63 @@ function cycleRailDock() {
   showToast('Tool rail docked ' + next.toUpperCase());
 }
 
+// ---- Branded alert (v3.3) — replaces the browser's native alert() box.
+// Its own overlay (NOT the showModal system) so an alert fired while a
+// dialog is open leaves that dialog intact. Non-blocking: callers of
+// alert() in this app never rely on it pausing execution.
+function datumAlert(message) {
+  const old = document.getElementById('datum-alert');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'datum-alert';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(10,18,40,.45);display:flex;align-items:center;justify-content:center;z-index:5000';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface-2);border:1px solid var(--line);border-radius:12px;box-shadow:0 24px 60px -24px rgba(10,18,40,.55);max-width:440px;width:88%;padding:18px 20px 14px';
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+      <svg width="17" height="17" viewBox="0 0 100 100"><polygon points="16,24 84,24 50,72" fill="#E5432E"/><line x1="8" y1="85" x2="92" y2="85" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+      <span style="font-family:var(--font-display);font-weight:600;font-size:15px;color:var(--text)">Datum</span>
+    </div>
+    <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.55;white-space:pre-wrap;max-height:50vh;overflow:auto">${escapeHtml(String(message))}</div>
+    <div style="text-align:right;margin-top:14px">
+      <button class="modal-btn primary" style="padding:7px 18px">OK</button>
+    </div>`;
+  ov.appendChild(box);
+  const close = () => ov.remove();
+  box.querySelector('button').onclick = close;
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape' || e.key === 'Enter') { close(); document.removeEventListener('keydown', esc); } });
+  document.body.appendChild(ov);
+  box.querySelector('button').focus();
+}
+window.alert = datumAlert;
+
 // ---- Layers ----
 let hiddenLayers = new Set();
+// v3.3: per-takeoff-item shape visibility — hide one trade's measurement
+// shapes while measuring another (eye buttons on the workbook rows)
+let hiddenTakeoffItemIds = new Set();
+function toggleTakeoffItemShapes(itemId) {
+  if (hiddenTakeoffItemIds.has(itemId)) hiddenTakeoffItemIds.delete(itemId);
+  else hiddenTakeoffItemIds.add(itemId);
+  redrawAnnotations(); refreshTakeoffPanel();
+  if (typeof refreshMarkupsList === 'function' && markupsListOpen) refreshMarkupsList();
+}
+function showAllTakeoffShapes() {
+  hiddenTakeoffItemIds.clear();
+  redrawAnnotations(); refreshTakeoffPanel();
+  if (typeof refreshMarkupsList === 'function' && markupsListOpen) refreshMarkupsList();
+}
 function annLayer(a) { return a.layer || 'Markups'; }
-function annVisible(a) { return !hiddenLayers.has(annLayer(a)); }
+function annVisible(a) {
+  if (hiddenLayers.has(annLayer(a))) return false;
+  if (hiddenTakeoffItemIds.size) {
+    const ids = annTakeoffIds(a);
+    // hidden only when EVERY item this shape feeds is hidden
+    if (ids.length && ids.every(id => hiddenTakeoffItemIds.has(id))) return false;
+  }
+  return true;
+}
 function knownLayers() {
   const s = new Set(['Markups']);
   annotations.forEach(a => s.add(annLayer(a)));
@@ -7294,6 +7351,8 @@ function wbEditPackage(itemId) {
 
 function refreshWorkbook() {
   _wbFileChipRefresh(); // workbook-file mode chip (v3.2)
+  const sa = document.getElementById('wb-showall'); // v3.3 hidden-shapes chip
+  if (sa) sa.style.display = hiddenTakeoffItemIds.size ? '' : 'none';
   const body = document.getElementById('workbook-body');
   if (!body || !workbookOpen) return;
   body.innerHTML = getWorkbookHTML();
@@ -7388,6 +7447,7 @@ function getWorkbookHTML() {
            onchange="updateTakeoffItemField('${item.id}','comment',this.value)"></td>
       <td class="wb-act">
         ${isMan ? '' : `<button onclick="setActiveTakeoffItem('${item.id}')" title="${activeTakeoffItemId === item.id ? 'Measuring this item now — click to stop' : 'Measure — arm this item and draw its quantity straight onto the plan'}" style="color:${activeTakeoffItemId === item.id ? item.color : 'var(--text-muted)'};font-weight:${activeTakeoffItemId === item.id ? '700' : '400'}">${activeTakeoffItemId === item.id ? '■' : '✏'}</button>`}
+        ${isMan ? '' : `<button onclick="toggleTakeoffItemShapes('${item.id}')" title="${hiddenTakeoffItemIds.has(item.id) ? 'Shapes HIDDEN — click to show this item’s shapes again' : 'Hide this item’s shapes on the drawings — declutter while measuring another trade'}" style="color:${hiddenTakeoffItemIds.has(item.id) ? 'var(--warning)' : 'var(--text-muted)'}">${hiddenTakeoffItemIds.has(item.id) ? '⊘' : '👁'}</button>`}
         ${isMan ? '' : `<button onclick="toggleTakeoffHighlight('${item.id}')" title="Highlight this item's shapes on the drawing" style="color:${isLit ? item.color : 'var(--text-muted)'}">${isLit ? '◉' : '◎'}</button>`}
         <button onclick="deleteTakeoffItem('${item.id}')" title="Delete this line${isMan ? '' : ' (shapes stay on the drawings)'}">×</button>
       </td>
