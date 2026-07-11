@@ -780,6 +780,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();saveProjectAs()">Save As… <span class="k">Ctrl+Shift+S</span></div>
       <div class="ami" onclick="amClose();closeActiveDoc()">Close Document</div>
       <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openWorkbookFile()">Open Workbook… <span class="k">.datumwb</span></div>
+      <div class="ami" onclick="amClose();newWorkbookFile()">New Workbook (from current estimate)</div>
+      <div class="ami" onclick="amClose();saveWorkbookFile()">Save Workbook</div>
+      <div class="ami" onclick="amClose();closeWorkbookFile()">Close Workbook</div>
+      <div class="am-sep"></div>
       <div class="ami" onclick="amClose();openMergeDialog()">Combine / Split PDFs…</div>
       <div class="ami" onclick="amClose();openCompressDialog()">Compress…</div>
       <div class="ami" onclick="amClose();flattenAndDownload()">Flatten Markups</div>
@@ -1071,6 +1076,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <div id="workbook-toolbar">
       <span style="font-weight:700;font-size:11.5px;color:var(--accent);letter-spacing:.4px">ESTIMATE WORKBOOK</span>
       <span id="wb-status" style="font-size:10px;color:var(--text-muted)"></span>
+      <div class="separator"></div>
+      <span id="wbfile-chip" style="font-size:10.5px;font-family:var(--font-mono)"></span>
+      <button class="topbar-btn" onclick="openWorkbookFile()" title="Open a saved workbook (.datumwb) — it becomes the estimate master for this session">Open</button>
+      <button class="topbar-btn" onclick="newWorkbookFile()" title="Create a standalone workbook file from the current estimate (or empty) — for big multi-drawing jobs. The file becomes the estimate master.">New</button>
+      <button class="topbar-btn" id="wbfile-save" onclick="saveWorkbookFile()" title="Save the estimate to the workbook file">Save</button>
+      <button class="topbar-btn" onclick="closeWorkbookFile()" title="Close the workbook — the estimate stays in the file; the session returns to embed-in-PDF mode">Close</button>
       <span class="topbar-spacer"></span>
       <button class="topbar-btn" onclick="wbAddHeading(null)" title="Add a heading — use / to nest, e.g. Prelims or Concrete / Substructure">+ Heading</button>
       <button class="topbar-btn" onclick="wbAddMeasuredItem(null)" title="Add a measured line — creates the item and arms it so you can start measuring on the plan straight away">+ Measured line</button>
@@ -1299,7 +1310,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.1';
+const APP_VERSION = 'v3.2';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2024,7 +2035,8 @@ async function saveThenCloseDoc(idx) {
 // Closing the browser tab/window with unsaved markups in ANY open document
 // triggers the browser's own "leave site?" confirmation.
 window.addEventListener('beforeunload', (e) => {
-  const anyDirty = docModified || openDocs.some((d, i) => i !== activeDocIndex && d.docModified);
+  const anyDirty = docModified || openDocs.some((d, i) => i !== activeDocIndex && d.docModified)
+    || (typeof workbookFileDirty !== 'undefined' && workbookFileDirty);
   if (anyDirty) { e.preventDefault(); e.returnValue = ''; }
 });
 
@@ -2436,8 +2448,9 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     calBannerDismissed = {};
     viewports = [];
     // Takeoff is JOB-level (v2.8): opening ANOTHER document keeps the running
-    // estimate. Only a first document (fresh session) starts a fresh job.
-    if (openDocs.length === 0) {
+    // estimate. Only a first document (fresh session) starts a fresh job —
+    // and NEVER while a standalone workbook is the master (v3.2).
+    if (openDocs.length === 0 && !workbookFileHandle) {
       takeoffItems = [];
       takeoffZones = [];
       takeoffHeadings = [];
@@ -2458,8 +2471,23 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       if (restoredProject.countGroups) countGroups = restoredProject.countGroups;
       if (Array.isArray(restoredProject.measurements)) measurements = restoredProject.measurements;
       // Merge the file's takeoff into the JOB estimate (adopts wholesale when
-      // the job is empty; otherwise appends items/zones it doesn't have yet)
-      mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings);
+      // the job is empty; otherwise appends items/zones it doesn't have yet).
+      // v3.2: with a standalone WORKBOOK open, the workbook is the single
+      // master — the PDF's embedded copy is ignored, with a one-time offer
+      // to import any items the workbook doesn't already have.
+      if (workbookFileHandle) {
+        const embedded = restoredProject.takeoffItems;
+        if (Array.isArray(embedded) && embedded.length) {
+          const known = new Set(takeoffItems.map(i => i.id));
+          const newOnes = embedded.filter(i => i && !known.has(i.id));
+          if (newOnes.length && confirm('"' + (filename || 'This PDF') + '" carries its own embedded estimate (' + newOnes.length + ' item(s) not in your workbook).\n\nImport them into the workbook "' + workbookFileName + '"?\n\n(Cancel ignores the embedded copy — the workbook stays as-is.)')) {
+            mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings);
+            markWorkbookFileDirty();
+          }
+        }
+      } else {
+        mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings);
+      }
       if (Array.isArray(restoredProject.viewports)) viewports = restoredProject.viewports;
       // Intentionally NOT restoring toolPresets — user's local presets take priority
     }
@@ -3098,14 +3126,16 @@ function drawViewportOverlays(ctx) {
 
 function getCalibratedLabel(pixelDist, page, pt) {
   const cal = _calFor(page, pt);
-  if (!cal) return pixelDist.toFixed(1) + 'px';
+  // v3.2: never show raw pixel values — an uncalibrated page shows a prompt
+  // instead, so nobody mistakes px readouts for real dimensions.
+  if (!cal) return 'Not calibrated';
   const mm = pixelDist / cal.pixelsPerMm;
   if (mm >= 1000) return (mm / 1000).toFixed(2) + 'm';
   return mm.toFixed(0) + 'mm';
 }
 function getCalibratedArea(pixelArea, page, pt) {
   const cal = _calFor(page, pt);
-  if (!cal) return pixelArea.toFixed(0) + 'px²';
+  if (!cal) return 'Not calibrated';
   const mmSq = pixelArea / (cal.pixelsPerMm * cal.pixelsPerMm);
   if (mmSq >= 1000000) return (mmSq / 1000000).toFixed(2) + 'm²';
   return mmSq.toFixed(0) + 'mm²';
@@ -7102,6 +7132,117 @@ function toggleDatumTheme() {
   try { localStorage.setItem('datum-theme', light ? 'dark' : 'light'); } catch (e) {}
 }
 
+// ============================================================
+// STANDALONE WORKBOOK FILE (v3.2) — dual-mode estimating.
+// NO workbook open  → estimate embeds inside each saved PDF (original
+//                     behaviour, ideal for quick one-off measures).
+// Workbook open     → the .datumwb file is the SINGLE MASTER: PDFs stop
+//                     embedding the estimate (shapes stay in the PDFs and
+//                     keep their item tags), estimates saved/opened from
+//                     the workbook file, embedded copies in opened PDFs
+//                     are ignored (one-time offer to import).
+// Shared use: file-based like Excel — one editor at a time; last save wins.
+// ============================================================
+let workbookFileHandle = null;   // non-null = workbook mode
+let workbookFileName = '';
+let workbookFileDirty = false;
+
+function _workbookPayload() {
+  return JSON.stringify({
+    app: 'Datum', kind: 'workbook', version: 1,
+    savedAt: new Date().toISOString(),
+    takeoffItems, takeoffZones, takeoffHeadings
+  }, null, 1);
+}
+function _wbFileChipRefresh() {
+  const chip = document.getElementById('wbfile-chip');
+  if (!chip) return;
+  if (workbookFileHandle) {
+    chip.innerHTML = `<span style="color:var(--accent-text);font-weight:700">▣ ${escapeHtml(workbookFileName)}${workbookFileDirty ? ' ●' : ''}</span>`;
+    chip.title = 'Workbook mode — this file is the estimate master. PDFs saved now carry only their shapes; the estimate saves here.' + (workbookFileDirty ? ' UNSAVED CHANGES.' : '');
+  } else {
+    chip.innerHTML = `<span style="color:var(--text-muted)">▢ No workbook — estimate saves inside each PDF</span>`;
+    chip.title = 'Quick-measure mode: the estimate embeds in each PDF you save. Open or create a workbook file for big multi-drawing jobs.';
+  }
+}
+function markWorkbookFileDirty() {
+  if (!workbookFileHandle || workbookFileDirty) { return; }
+  workbookFileDirty = true;
+  _wbFileChipRefresh();
+}
+async function _writeWorkbookFile() {
+  const w = await workbookFileHandle.createWritable();
+  await w.write(_workbookPayload());
+  await w.close();
+  workbookFileDirty = false;
+  _wbFileChipRefresh();
+}
+// New workbook / "Start workbook from this estimate" — captures whatever
+// estimate is currently in the session (possibly empty) into a new file.
+async function newWorkbookFile() {
+  if (typeof window.showSaveFilePicker !== 'function') { alert('Workbook files need Chrome or Edge.'); return; }
+  try {
+    const h = await window.showSaveFilePicker({
+      suggestedName: (takeoffItems.length ? 'Estimate' : 'New Estimate') + '.datumwb',
+      types: [{ description: 'Datum workbook', accept: { 'application/json': ['.datumwb'] } }]
+    });
+    workbookFileHandle = h;
+    workbookFileName = h.name;
+    await _writeWorkbookFile();
+    refreshTakeoffPanel();
+    showToast('Workbook created — it is now the estimate master' + (takeoffItems.length ? ' (current estimate moved in)' : ''));
+  } catch (e) { if (e && e.name !== 'AbortError') alert('Could not create workbook: ' + (e.message || e)); }
+}
+async function openWorkbookFile() {
+  if (typeof window.showOpenFilePicker !== 'function') { alert('Workbook files need Chrome or Edge.'); return; }
+  try {
+    if (takeoffItems.length && !workbookFileHandle &&
+        !confirm('Opening a workbook replaces the estimate currently in this session.\n\n(To keep it, Cancel and use "New workbook" first — that lifts the current estimate into its own file.)\n\nContinue?')) return;
+    if (workbookFileHandle && workbookFileDirty &&
+        !confirm('The open workbook "' + workbookFileName + '" has unsaved changes that will be lost. Continue?')) return;
+    const [h] = await window.showOpenFilePicker({
+      types: [{ description: 'Datum workbook', accept: { 'application/json': ['.datumwb', '.json'] } }]
+    });
+    const file = await h.getFile();
+    const data = JSON.parse(await file.text());
+    if (!data || data.kind !== 'workbook' || !Array.isArray(data.takeoffItems)) throw new Error('Not a Datum workbook file');
+    takeoffItems = data.takeoffItems;
+    takeoffZones = Array.isArray(data.takeoffZones) ? data.takeoffZones : [];
+    takeoffHeadings = Array.isArray(data.takeoffHeadings) ? data.takeoffHeadings : [];
+    activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null;
+    workbookFileHandle = h;
+    workbookFileName = file.name;
+    saveToHistory();              // snapshot for undo (marks dirty)…
+    workbookFileDirty = false;    // …but a freshly opened workbook is clean
+    _wbFileChipRefresh();
+    refreshTakeoffPanel();
+    toggleWorkbook(true);
+    showToast('Workbook "' + file.name + '" open — ' + takeoffItems.length + ' item(s). It is now the estimate master.');
+  } catch (e) { if (e && e.name !== 'AbortError') alert('Could not open workbook: ' + (e.message || e)); }
+}
+async function saveWorkbookFile() {
+  if (!workbookFileHandle) { return newWorkbookFile(); }
+  try {
+    await _writeWorkbookFile();
+    showToast('Workbook saved — ' + workbookFileName);
+  } catch (e) { alert('Could not save workbook: ' + (e.message || e) + '\n\nIf a teammate has it open, close it there and try again.'); }
+}
+async function closeWorkbookFile() {
+  if (!workbookFileHandle) return;
+  if (workbookFileDirty) {
+    const save = confirm('Save "' + workbookFileName + '" before closing? (Cancel keeps it open.)\n\nOK = save & close.');
+    if (!save) return;
+    try { await _writeWorkbookFile(); } catch (e) { alert('Save failed — workbook stays open. ' + (e.message || e)); return; }
+  }
+  workbookFileHandle = null; workbookFileName = ''; workbookFileDirty = false;
+  // The estimate leaves the session with the file — back to embedded mode with a clean slate
+  takeoffItems = []; takeoffZones = []; takeoffHeadings = [];
+  activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null;
+  saveToHistory();
+  refreshTakeoffPanel();
+  showToast('Workbook closed — estimate stays in the file. PDFs saved from now embed their own estimate again.');
+}
+
 function toggleWorkbook(force) {
   workbookOpen = (force !== undefined) ? !!force : !workbookOpen;
   const dock = document.getElementById('workbook-dock');
@@ -7136,6 +7277,7 @@ function wbEditPackage(itemId) {
 }
 
 function refreshWorkbook() {
+  _wbFileChipRefresh(); // workbook-file mode chip (v3.2)
   const body = document.getElementById('workbook-body');
   if (!body || !workbookOpen) return;
   body.innerHTML = getWorkbookHTML();
@@ -8862,6 +9004,8 @@ function saveToHistory() {
   }
   // v3.1: keep the Markups List live (no-op while the dock is closed)
   if (typeof refreshMarkupsList === 'function' && markupsListOpen) setTimeout(refreshMarkupsList, 0);
+  // v3.2: any edit may touch the estimate — flag the standalone workbook dirty
+  if (typeof markWorkbookFileDirty === 'function') markWorkbookFileDirty();
   historyIndex++;
   history = history.slice(0, historyIndex);
   // Snapshot measurements + countGroups + takeoffItems alongside annotations
@@ -10926,9 +11070,13 @@ async function saveProject() {
       defaultCalibration: defaultCalibration,
       countGroups: countGroups,
       measurements: measurements,
-      takeoffItems: takeoffItems,
-      takeoffZones: takeoffZones,
-      takeoffHeadings: takeoffHeadings,
+      // v3.2: with a standalone workbook open, the PDF carries only its
+      // shapes (which keep their item tags) — the ESTIMATE lives in the
+      // workbook file, so no stale copy can ever ride along in a drawing.
+      takeoffItems: workbookFileHandle ? [] : takeoffItems,
+      takeoffZones: workbookFileHandle ? [] : takeoffZones,
+      takeoffHeadings: workbookFileHandle ? [] : takeoffHeadings,
+      workbookManaged: workbookFileHandle ? (workbookFileName || true) : undefined,
       viewports: viewports,
       toolPresets: toolPresets,
       savedAt: new Date().toISOString()
