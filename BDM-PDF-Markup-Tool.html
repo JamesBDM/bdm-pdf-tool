@@ -700,55 +700,165 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 
 /* Subtle motion, as per brand: 120ms ease on interactive surfaces */
 .topbar-btn, .tool-btn, .panel-tab, .sb-btn, .modal-btn { transition: background .12s ease, color .12s ease; }
+
+/* ============================================================
+   v3.1 — BLUEBEAM-STYLE SHELL
+   Menu bar · movable tool rail · Markups List dock
+   ============================================================ */
+/* Menu bar */
+#menubar { display: flex; align-items: center; height: 34px; background: var(--surface); border-bottom: 1px solid var(--line); padding: 0 10px; gap: 2px; z-index: 300; position: relative; }
+#menubar .logo { display: flex; align-items: center; gap: 7px; color: var(--text); margin-right: 12px; }
+#menubar .logo .logo-mark { width: 18px; height: 18px; }
+#menubar .logo .logo-word { font-family: var(--font-display); font-weight: 600; font-size: 16.5px; letter-spacing: -0.02em; }
+#menubar .logo .logo-word i { font-style: normal; color: var(--accent); }
+#menubar .logo #app-version { color: var(--accent-text); font-weight: 700; font-size: 10px; border: 1px solid var(--accent-text); border-radius: 3px; padding: 0 4px; margin-left: 4px; opacity: .85; font-family: var(--font-mono); }
+.am { position: relative; }
+.am > button { padding: 6px 11px; border-radius: 5px; color: var(--text-secondary); font-size: 12.5px; }
+.am > button:hover, .am.open > button { background: var(--bg-hover); color: var(--text-primary); }
+.am-drop { display: none; position: absolute; top: 32px; left: 0; min-width: 230px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 24px 60px -24px rgba(10,18,40,.55); padding: 5px; z-index: 400; }
+.am.open .am-drop { display: block; }
+.ami { display: flex; justify-content: space-between; align-items: center; gap: 18px; width: 100%; text-align: left; padding: 6px 10px; border-radius: 5px; color: var(--text-primary); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.ami:hover { background: var(--accent); color: var(--accent-on); }
+.ami .k { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+.ami:hover .k { color: var(--accent-on); }
+.am-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+#menubar .m-spring { flex: 1; }
+#menubar .m-file { color: var(--text-muted); font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+
+/* Movable tool rail: right dock + top dock */
+#toolbar.dock-right { order: 99; border-right: none; border-left: 1px solid var(--line); }
+#toolbar.dock-top { flex-direction: row; width: 100%; min-width: 0; height: auto; min-height: 46px; border-right: none; border-bottom: 1px solid var(--line); padding: 4px 8px; overflow-y: visible; overflow-x: auto; align-items: center; }
+#toolbar.dock-top .tool-group, #toolbar.dock-top .tool-group-body { flex-direction: row; width: auto; padding: 0; }
+#toolbar.dock-top .tool-group-label { width: auto; padding: 0 6px; }
+#toolbar.dock-top .tool-group-label .tg-chevron { display: none; }
+#toolbar.dock-top .tool-divider { width: 1px; height: 26px; margin: 0 4px; }
+#rail-grip { width: 40px; height: 14px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer; font-size: 10px; letter-spacing: 2px; flex-shrink: 0; border-radius: 4px; }
+#rail-grip:hover { background: var(--bg-hover); color: var(--text-primary); }
+#toolbar.dock-top #rail-grip { height: 30px; width: 16px; }
+
+/* Markups List dock */
+#markups-dock { display: none; flex-direction: column; height: 210px; min-height: 90px; max-height: 60vh; background: var(--surface); border-top: 1px solid var(--line); flex-shrink: 0; }
+#markups-dock.open { display: flex; }
+#markups-bar { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+#markups-bar .ml-title { font-family: var(--font-display); font-weight: 600; font-size: 13px; }
+#markups-bar .ml-count { font-family: var(--font-mono); font-size: 9px; color: var(--text-muted); }
+#ml-search { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; color: var(--text-primary); font-size: 11px; padding: 4px 10px; width: 200px; }
+#markups-bar select, #markups-bar .ml-btn { padding: 3px 9px; border-radius: 5px; color: var(--text-secondary); font-size: 11px; border: 1px solid var(--line); background: none; cursor: pointer; }
+#markups-bar .ml-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+#ml-scroll { flex: 1; overflow: auto; }
+#ml-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+#ml-table th { position: sticky; top: 0; background: var(--surface-2); font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; white-space: nowrap; }
+#ml-table td { padding: 4px 10px; border-bottom: 1px solid var(--line); color: var(--text-secondary); }
+#ml-table tr.ml-row { cursor: pointer; }
+#ml-table tr.ml-row:hover td { background: var(--bg-hover); }
+#ml-table tr.ml-sel td { background: rgba(229,67,46,0.13); }
+#ml-table td.ml-subj { color: var(--text-primary); font-weight: 500; }
+#ml-table td.ml-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ml-sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.ml-layer-input { width: 92px; background: none; border: 1px solid transparent; border-radius: 3px; color: var(--text-secondary); font-size: 10.5px; padding: 1px 4px; }
+.ml-layer-input:hover { border-color: var(--line); }
+.ml-layer-input:focus { border-color: var(--accent); outline: none; background: var(--bg); }
+#ml-layers-drop { position: absolute; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 24px 60px -24px rgba(10,18,40,.55); padding: 8px; z-index: 500; display: none; min-width: 180px; }
+#ml-layers-drop label { display: flex; gap: 8px; align-items: center; padding: 4px 6px; font-size: 12px; color: var(--text-primary); border-radius: 4px; cursor: pointer; }
+#ml-layers-drop label:hover { background: var(--bg-hover); }
 </style>
 </head>
 <body>
 <div id="app">
-  <!-- TOP BAR -->
-  <div id="topbar">
+  <!-- MENU BAR (v3.1 Bluebeam-style shell) -->
+  <div id="menubar">
     <div class="logo" title="Datum — PDF markup &amp; measurement">
       <svg class="logo-mark" viewBox="0 0 100 100" aria-label="Datum symbol"><polygon points="16,24 84,24 50,72" fill="#E5432E"></polygon><line x1="8" y1="85" x2="92" y2="85" stroke="currentColor" stroke-width="6" stroke-linecap="round"></line><line x1="50" y1="72" x2="50" y2="85" stroke="currentColor" stroke-width="4"></line></svg>
       <span class="logo-word">Datum<i>.</i></span><span id="app-version" title="App version — check this matches the latest release after a redeploy"></span></div>
-    <div class="separator"></div>
-    <div style="position:relative; display:inline-block;">
-      <button class="topbar-btn" id="btn-new" onclick="toggleNewMenu(event)" title="Create new document or add a blank page">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
-        New
-      </button>
-      <div id="new-menu" class="view-dropdown">
-        <div class="thumb-ctx-label">New document</div>
-        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a4-portrait')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="1"/></svg>
-          Blank — A4 Portrait
-        </div>
-        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a4-landscape')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="1"/></svg>
-          Blank — A4 Landscape
-        </div>
-        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a3-portrait')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="1"/></svg>
-          Blank — A3 Portrait
-        </div>
-        <div class="thumb-ctx-item" onclick="createNewBlankDoc('a3-landscape')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="1"/></svg>
-          Blank — A3 Landscape
-        </div>
-        <div class="thumb-ctx-sep"></div>
-        <div class="thumb-ctx-label">Add to current document</div>
-        <div class="thumb-ctx-item" onclick="addBlankPageAfterCurrent('same')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-          Add Blank Page (same size)
-        </div>
-        <div class="thumb-ctx-item" onclick="addBlankPageAfterCurrent('a4-portrait')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="1"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
-          Add Blank Page — A4 Portrait
-        </div>
-        <div class="thumb-ctx-item" onclick="addBlankPageAfterCurrent('a4-landscape')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="1"/><line x1="12" y1="9" x2="12" y2="15"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
-          Add Blank Page — A4 Landscape
-        </div>
-      </div>
-    </div>
+    <div class="am"><button onclick="amToggle(this)">File</button><div class="am-drop">
+      <div class="ami" onclick="amClose();createNewBlankDoc('a4-portrait')">New Document (A4)</div>
+      <div class="ami" onclick="amClose();createNewBlankDoc('a3-landscape')">New Document (A3 Landscape)</div>
+      <div class="ami" onclick="amClose();addBlankPageAfterCurrent('same')">Add Blank Page After Current</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openFile()">Open… <span class="k">Ctrl+O</span></div>
+      <div class="ami" onclick="amClose();saveProject()">Save <span class="k">Ctrl+S</span></div>
+      <div class="ami" onclick="amClose();saveProjectAs()">Save As… <span class="k">Ctrl+Shift+S</span></div>
+      <div class="ami" onclick="amClose();closeActiveDoc()">Close Document</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openMergeDialog()">Combine / Split PDFs…</div>
+      <div class="ami" onclick="amClose();openCompressDialog()">Compress…</div>
+      <div class="ami" onclick="amClose();flattenAndDownload()">Flatten Markups</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openPrintDialog()">Print… <span class="k">Ctrl+P</span></div>
+    </div></div>
+    <div class="am"><button onclick="amToggle(this)">Edit</button><div class="am-drop">
+      <div class="ami" onclick="amClose();undo()">Undo <span class="k">Ctrl+Z</span></div>
+      <div class="ami" onclick="amClose();redo()">Redo <span class="k">Ctrl+Y</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();copySelectedMarkup()">Copy Markup <span class="k">Ctrl+C</span></div>
+      <div class="ami" onclick="amClose();pasteMarkup()">Paste Markup <span class="k">Ctrl+V</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();setTool('selecttext')">Select Text (copy to clipboard)</div>
+      <div class="ami" onclick="amClose();setTool('snipregion')">Snip Region as Image</div>
+      <div class="ami" onclick="amClose();setTool('eraser')">Delete Markups <span class="k">X</span></div>
+    </div></div>
+    <div class="am"><button onclick="amToggle(this)">View</button><div class="am-drop">
+      <div class="ami" onclick="amClose();rotateCurrentPageCW()">Rotate Page Right</div>
+      <div class="ami" onclick="amClose();rotateCurrentPageCCW()">Rotate Page Left</div>
+      <div class="ami" onclick="amClose();rotateAllPagesCW()">Rotate All Pages Right</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();zoomFit()">Fit to Width</div>
+      <div class="ami" onclick="amClose();resetZoom()">Actual Size (100%) <span class="k">Ctrl+0</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();toggleThumbnails()">Thumbnails Panel</div>
+      <div class="ami" onclick="amClose();toggleSplitView()">Split View</div>
+      <div class="ami" onclick="amClose();openPopoutWindow()">New Window (second screen)</div>
+      <div class="ami" onclick="amClose();togglePanelVisible()">Right Panel <span class="k">F4</span></div>
+      <div class="ami" onclick="amClose();toggleMarkupsList()">Markups List</div>
+      <div class="ami" onclick="amClose();toggleWorkbook()">Estimate Workbook</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();cycleRailDock()">Move Tool Rail (left / top / right)</div>
+      <div class="ami" onclick="amClose();toggleTopbarCompact()">Compact Toolbar</div>
+      <div class="ami" onclick="amClose();toggleDatumTheme()">Light / Dark Theme</div>
+    </div></div>
+    <div class="am"><button onclick="amToggle(this)">Document</button><div class="am-drop">
+      <div class="ami" onclick="amClose();openMergeDialog()">Combine / Split PDFs…</div>
+      <div class="ami" onclick="amClose();addBlankPageAfterCurrent('same')">Insert Blank Page</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openCompareDialog()">Compare Drawings…</div>
+      <div class="ami" onclick="amClose();openCompressDialog()">Compress…</div>
+      <div class="ami" onclick="amClose();flattenAndDownload()">Flatten Markups</div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openMeasurementSummary()">Measurement Summary</div>
+      <div class="ami" onclick="amClose();openMarkupReport()">Markup Report… <span class="k">PDF</span></div>
+      <div class="ami" onclick="amClose();syncQuantityLink()">Sync Excel (Quantity Link)</div>
+    </div></div>
+    <div class="am"><button onclick="amToggle(this)">Tools</button><div class="am-drop">
+      <div class="ami" onclick="amClose();setTool('calibrate')">Calibrate <span class="k">K</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();setTool('measure')">Measure Length <span class="k">M</span></div>
+      <div class="ami" onclick="amClose();setTool('polyline')">Polyline Measure <span class="k">L</span></div>
+      <div class="ami" onclick="amClose();setTool('area')">Measure Area <span class="k">A</span></div>
+      <div class="ami" onclick="amClose();setTool('magicarea')">Room Fill <span class="k">F</span></div>
+      <div class="ami" onclick="amClose();setTool('dimension')">Dimension Line <span class="k">I</span></div>
+      <div class="ami" onclick="amClose();setTool('count')">Count <span class="k">C</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();setTool('text')">Text <span class="k">T</span></div>
+      <div class="ami" onclick="amClose();setTool('callout')">Callout <span class="k">B</span></div>
+      <div class="ami" onclick="amClose();setTool('stamp')">Stamp <span class="k">S</span></div>
+      <div class="ami" onclick="amClose();armSequenceTool()">Sequence (numbered labels)</div>
+      <div class="ami" onclick="amClose();setTool('pen')">Pen <span class="k">P</span></div>
+      <div class="ami" onclick="amClose();setTool('highlight')">Highlight <span class="k">G</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openToolChest()">Tool Chest (saved presets)…</div>
+    </div></div>
+    <div class="am"><button onclick="amToggle(this)">Window</button><div class="am-drop" id="am-window-drop">
+      <div class="ami" onclick="amClose()">No documents open</div>
+    </div></div>
+    <div class="am"><button onclick="amToggle(this)">Help</button><div class="am-drop">
+      <div class="ami" onclick="amClose();showShortcutsHelp()">Keyboard Shortcuts…</div>
+      <div class="ami" onclick="amClose();alert('Datum ' + APP_VERSION + ' — PDF markup & measurement for construction teams.\nBuilt in-house at BDM.')">About Datum</div>
+    </div></div>
+    <div class="m-spring"></div>
+    <span class="m-file" id="menubar-file"></span>
+  </div>
+  <!-- TOP BAR -->
+  <div id="topbar">
     <button class="topbar-btn" onclick="openFile()" title="Open PDF (Ctrl+O)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Open
@@ -756,23 +866,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <button class="topbar-btn" onclick="saveProject()" title="Save (Ctrl+S) — overwrites the original file when opened via the app, otherwise downloads a copy">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
       Save
-    </button>
-    <button class="topbar-btn" onclick="saveProjectAs()" title="Save As… (Ctrl+Shift+S) — choose a new location/filename">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/><line x1="20" y1="3" x2="20" y2="9"/><line x1="17" y1="6" x2="23" y2="6"/></svg>
-      Save As
-    </button>
-    <button class="topbar-btn" onclick="closeActiveDoc()" title="Close current PDF">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9.5" y1="13" x2="14.5" y2="18"/><line x1="14.5" y1="13" x2="9.5" y2="18"/></svg>
-      Close
-    </button>
-    <div class="separator"></div>
-    <button class="topbar-btn" onclick="openMergeDialog()" title="Combine PDFs">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-      Combine
-    </button>
-    <button class="topbar-btn" onclick="openCompareDialog()" title="Compare Drawings">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="8" height="14" rx="1"/><rect x="14" y="3" width="8" height="14" rx="1"/><path d="M12 7v6"/></svg>
-      Compare
     </button>
     <div class="separator"></div>
     <button class="topbar-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)">
@@ -795,53 +888,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       Search
     </button>
-    <div style="position:relative; display:inline-block;">
-      <button class="topbar-btn" id="btn-view" onclick="toggleViewMenu(event)" title="View options — rotate pages, fit to screen">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-        View
-      </button>
-      <div id="view-menu" class="view-dropdown">
-        <div class="thumb-ctx-label">Current page</div>
-        <div class="thumb-ctx-item" onclick="rotateCurrentPageCW()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
-          Rotate Right (90°)
-        </div>
-        <div class="thumb-ctx-item" onclick="rotateCurrentPageCCW()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 103-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
-          Rotate Left (90°)
-        </div>
-        <div class="thumb-ctx-sep"></div>
-        <div class="thumb-ctx-label">All pages</div>
-        <div class="thumb-ctx-item" onclick="rotateAllPagesCW()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
-          Rotate All Right (90°)
-        </div>
-        <div class="thumb-ctx-item" onclick="rotateAllPagesCCW()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 103-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
-          Rotate All Left (90°)
-        </div>
-        <div class="thumb-ctx-sep"></div>
-        <div class="thumb-ctx-label">Zoom</div>
-        <div class="thumb-ctx-item" onclick="hideViewMenu(); zoomFit()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 8 4 4 8 4"/><polyline points="20 8 20 4 16 4"/><polyline points="4 16 4 20 8 20"/><polyline points="20 16 20 20 16 20"/></svg>
-          Fit to Width
-        </div>
-        <div class="thumb-ctx-item" onclick="hideViewMenu(); resetZoom()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-          100% (Ctrl+0)
-        </div>
-        <div class="thumb-ctx-sep"></div>
-        <div class="thumb-ctx-label">Two documents</div>
-        <div class="thumb-ctx-item" onclick="hideViewMenu(); toggleSplitView()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-          Split View (side by side)
-        </div>
-        <div class="thumb-ctx-item" onclick="hideViewMenu(); openPopoutWindow()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          New Window (second screen)
-        </div>
-      </div>
-    </div>
     <button class="topbar-btn" onclick="toggleSplitView()" title="Split view — show a second document (or another page of this one) beside the editor">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
       Split
@@ -851,18 +897,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       Workbook
     </button>
     <div class="separator"></div>
-    <button class="topbar-btn" onclick="setTool('snipregion')" title="Snip a region — drag a rectangle on the page to capture it as an image. (You can also press Ctrl+V to paste a screenshot from the clipboard.)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4l3-3 3 3"/><path d="M8 1v8"/><rect x="3" y="9" width="18" height="13" rx="2"/><line x1="3" y1="14" x2="21" y2="14"/></svg>
-      Snip
-    </button>
-    <button class="topbar-btn" onclick="openCompressDialog()" title="Compress PDF — re-encode pages at lower resolution / quality to shrink file size">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9l4-4 4 4"/><path d="M20 15l-4 4-4-4"/><line x1="8" y1="5" x2="8" y2="11"/><line x1="16" y1="13" x2="16" y2="19"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
-      Compress
-    </button>
-    <button class="topbar-btn" onclick="flattenAndDownload()" title="Flatten markups into PDF and download">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Flatten
-    </button>
     <button class="topbar-btn" onclick="openPrintDialog()" title="Print">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
       Print
@@ -876,9 +910,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
       Report
     </button>
-    <button class="topbar-btn" onclick="openToolChest()" title="Tool Chest - Saved Presets">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
-      Presets
+    <button class="topbar-btn" id="btn-markups-list" onclick="toggleMarkupsList()" title="Markups List — table of every markup: search, sort, jump-to, layers, CSV export">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Markups
     </button>
     <div class="topbar-spacer"></div>
     <button class="topbar-btn" id="btn-panel" onclick="togglePanelVisible()" title="Show / hide the right panel (Properties · Takeoff · Measurements) — F4">
@@ -899,8 +933,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 
   <!-- MAIN AREA -->
   <div id="main">
-    <!-- LEFT TOOLBAR -->
+    <!-- TOOL RAIL (dockable: left / top / right — drag grip cycles position) -->
     <div id="toolbar">
+      <div id="rail-grip" onclick="cycleRailDock()" title="Move the tool rail — click to cycle left → top → right">⠿</div>
       <button class="tool-btn" data-tool="select" onclick="setTool('select')" title="Select (V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg><span class="shortcut">V</span></button>
       <button class="tool-btn" data-tool="pan" onclick="setTool('pan')" title="Pan (hold Space)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 00-4 0v5m0 0V4a2 2 0 00-4 0v7m0 0V6a2 2 0 00-4 0v7m12-1v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3"/></svg><span class="shortcut">Spc</span></button>
       <div class="tool-divider"></div>
@@ -935,6 +970,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
           <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
           <button class="tool-btn" data-tool="stamp" onclick="setTool('stamp')" title="Stamp (S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 10h8M8 14h8"/></svg><span class="shortcut">S</span></button>
           <button class="tool-btn" data-tool="tick" onclick="setTool('tick')" title="Tick / Check Mark (J)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,13 10,18 20,6"/></svg><span class="shortcut">J</span></button>
+          <button class="tool-btn" data-tool="sequence" onclick="armSequenceTool()" title="Sequence — auto-numbered labels (Door 01, Door 02…). Click to place each one; set the prefix and starting number on first click. Click this button again to restart the numbering."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h2v6"/><path d="M4 17h4c0-3-4-2-4-5"/><line x1="12" y1="6" x2="20" y2="6"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/></svg></button>
           <button class="tool-btn" data-tool="signature" onclick="setTool('signature')" title="Signature Stamp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-1 3-3 6-3s4 4 7 2 4-5 5-7"/><path d="M3 21h18"/></svg></button>
           <button class="tool-btn" data-tool="pen" onclick="setTool('pen')" title="Pen (P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="shortcut">P</span></button>
           <button class="tool-btn" data-tool="highlight" onclick="setTool('highlight')" title="Highlight (G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="1" fill="rgba(251,191,36,0.3)"/></svg><span class="shortcut">G</span></button>
@@ -1051,6 +1087,27 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <div id="workbook-body"></div>
   </div>
 
+  <!-- MARKUPS LIST DOCK (v3.1, Bluebeam-style) -->
+  <div id="markups-dock">
+    <div id="markups-bar">
+      <span class="ml-title">Markups List</span>
+      <span class="ml-count" id="ml-count"></span>
+      <input id="ml-search" placeholder="Search markups…" oninput="refreshMarkupsList()">
+      <select id="ml-kind" onchange="refreshMarkupsList()">
+        <option value="all">All markups</option>
+        <option value="meas">Measurements</option>
+        <option value="marks">Markups only</option>
+      </select>
+      <button class="ml-btn" onclick="toggleLayersDrop(event)" title="Show/hide layers — assign a markup's layer in its row">Layers ▾</button>
+      <span style="flex:1"></span>
+      <button class="ml-btn" onclick="exportMarkupsListCSV()">Export CSV</button>
+      <button class="ml-btn" style="border-color:var(--accent);color:var(--accent-text)" onclick="openMarkupReport()">Report</button>
+      <button class="ml-btn" onclick="toggleMarkupsList()" title="Close">×</button>
+    </div>
+    <div id="ml-scroll"><table id="ml-table"><tbody id="ml-body"></tbody></table></div>
+    <div id="ml-layers-drop"></div>
+  </div>
+
   <!-- BOTTOM BAR (Bluebeam-style) -->
   <div id="statusbar">
     <!-- LEFT: Page view modes -->
@@ -1103,6 +1160,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <!-- RIGHT: Status info -->
     <div class="sb-group">
       <span id="cal-indicator" class="status-cal" style="font-size:10px">Not Calibrated</span>
+      <div class="sb-sep"></div>
+      <span id="sb-pagesize" class="sb-label" title="Physical page size"></span>
       <div class="sb-sep"></div>
       <span id="tool-indicator" style="font-size:10px">Select</span>
     </div>
@@ -1240,7 +1299,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.0';
+const APP_VERSION = 'v3.1';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -1516,7 +1575,7 @@ const toolNames = {
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
   snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature',
   viewport:'Viewport (region scale)', magicarea:'Room Fill (auto area)',
-  selecttext:'Select Text (copy)'
+  selecttext:'Select Text (copy)', sequence:'Sequence (numbered labels)'
 };
 
 // ============================================================
@@ -1737,6 +1796,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
     }
+    // No image on the clipboard — paste the copied MARKUP if we have one (v3.1)
+    if (markupClipboard) { e.preventDefault(); pasteMarkup(); }
   });
 
   // Load saved presets
@@ -1754,6 +1815,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (verEl) verEl.textContent = APP_VERSION;
   // Datum theme: dark is the product default; restore a saved light choice
   try { if (localStorage.getItem('datum-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); } catch (e) {}
+  // Tool rail dock position (v3.1) — Bluebeam users expect it on the RIGHT
+  try { applyRailDock(localStorage.getItem('datum-rail') || 'right'); } catch (e) {}
   // Set initial snap button state
   const snapBtn = document.getElementById('btn-snap');
   if (snapBtn && snapEnabled) snapBtn.style.color = 'var(--accent)';
@@ -2853,6 +2916,9 @@ function drawHatchPattern(ctx, bounds, hatchType, color) {
 // DRAW ANNOTATION
 // ============================================================
 function drawAnnotation(ctx, ann, isSelected) {
+  // Layers (v3.1): hidden layers draw NOWHERE — screen, bake, flatten,
+  // print and report all funnel through here, so this one gate is WYSIWYG.
+  if (typeof annVisible === 'function' && !annVisible(ann)) return;
   ctx.save();
   const color = ann.color || '#E5432E';
   const thickness = ann.thickness || 2;
@@ -4127,6 +4193,8 @@ function onCanvasMouseDown(e) {
   if (currentTool === 'stamp') { addStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
   // Tick stays armed so a whole checklist/QA pass can be ticked in one go (Esc/V to exit)
   if (currentTool === 'tick') { addTickMark(screenPt); isDrawing = false; return; }
+  // Sequence stays armed — every click places the next numbered label
+  if (currentTool === 'sequence') { addSequenceLabel(screenPt); isDrawing = false; return; }
   if (currentTool === 'signature') { addSignatureStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
   if (currentTool === 'text') { showTextInput(screenPt); isDrawing = false; /* returnToNavTool called after text input blur */ return; }
   if (currentTool === 'callout') {
@@ -5019,6 +5087,9 @@ function onKeyDown(e) {
   else if ((e.ctrlKey||e.metaKey) && key === 's' && e.shiftKey) { e.preventDefault(); saveProjectAs(); }
   else if ((e.ctrlKey||e.metaKey) && key === 'o') { e.preventDefault(); openFile(); }
   else if ((e.ctrlKey||e.metaKey) && key === 'f') { e.preventDefault(); openSearchDialog(); }
+  else if ((e.ctrlKey||e.metaKey) && key === 'p') { e.preventDefault(); openPrintDialog(); }
+  // Copy the selected markup — only when the user isn't selecting text on the page
+  else if ((e.ctrlKey||e.metaKey) && key === 'c' && selectedAnnotationId && !String(window.getSelection() || '').length) { copySelectedMarkup(); }
   else if (key === 'enter' && (currentTool === 'polyline' || currentTool === 'polyshape' || currentTool === 'area' || currentTool === 'polygon')) finishPolyShape();
   else if (key === 'pagedown' || key === 'arrowright') { e.preventDefault(); nextPage(); }
   else if (key === 'pageup' || key === 'arrowleft') { e.preventDefault(); previousPage(); }
@@ -5615,6 +5686,7 @@ function getAnnotationAtPoint(x, y, tol = 10) {
   for (let i = annotations.length - 1; i >= 0; i--) {
     const ann = annotations[i];
     if (ann.page !== currentPage) continue;
+    if (!annVisible(ann)) continue; // hidden layers can't be clicked
     if (hitTest(pagePoint.x, pagePoint.y, ann, pageTol)) return ann;
   }
 
@@ -6769,6 +6841,256 @@ function wbDeleteHeading(key) {
   takeoffHeadings = takeoffHeadings.filter(h => h !== key && !h.startsWith(key + ' / '));
   saveToHistory();
   refreshTakeoffPanel();
+}
+
+// ============================================================
+// v3.1 — BLUEBEAM-STYLE SHELL: menus, movable rail, markups list,
+// layers, markup clipboard, sequence tool
+// ============================================================
+
+// ---- Menu bar ----
+let _amOpen = null;
+function amToggle(btn) {
+  const am = btn.parentElement;
+  if (am.querySelector('#am-window-drop')) _buildWindowMenu();
+  if (_amOpen === am) { amClose(); return; }
+  amClose();
+  am.classList.add('open');
+  _amOpen = am;
+}
+function amClose() {
+  document.querySelectorAll('#menubar .am.open').forEach(m => m.classList.remove('open'));
+  _amOpen = null;
+}
+document.addEventListener('click', (e) => {
+  if (_amOpen && !e.target.closest('#menubar')) amClose();
+});
+// Bluebeam behaviour: once a menu is open, hovering a sibling switches to it
+document.addEventListener('mouseover', (e) => {
+  if (!_amOpen) return;
+  const am = e.target.closest('#menubar .am');
+  if (am && am !== _amOpen) { amClose(); am.classList.add('open'); _amOpen = am; if (am.querySelector('#am-window-drop')) _buildWindowMenu(); }
+});
+function _buildWindowMenu() {
+  const drop = document.getElementById('am-window-drop');
+  if (!drop) return;
+  if (!openDocs || !openDocs.length) { drop.innerHTML = '<div class="ami" onclick="amClose()">No documents open</div>'; return; }
+  drop.innerHTML = openDocs.map((d, i) =>
+    `<div class="ami" onclick="amClose();switchToDoc(${i})">${i === activeDocIndex ? '●' : '○'} ${escapeHtml((i === activeDocIndex ? currentFilename : d.currentFilename) || 'Untitled')}</div>`).join('') +
+    '<div class="am-sep"></div><div class="ami" onclick="amClose();toggleSplitView()">Split View</div>';
+}
+function showShortcutsHelp() {
+  const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['I / C','Dimension / Count'],
+    ['N / W / Y','Line / Arrow / Polyline shape'],['R / O / Q / D','Rect / Ellipse / Polygon / Cloud'],['T / B / S / J','Text / Callout / Stamp / Tick'],
+    ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
+    ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['Esc / right-click','Cancel draft']];
+  showModal('Keyboard Shortcuts', '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
+    rows.map(r => `<tr><td style="padding:4px 10px;font-family:var(--font-mono);color:var(--accent-text);white-space:nowrap">${r[0]}</td><td style="padding:4px 10px;color:var(--text-secondary)">${r[1]}</td></tr>`).join('') +
+    '</table>', [{ text: 'Close', class: 'primary', onclick: 'closeCurrentModal()' }]);
+}
+
+// ---- Movable tool rail: left / top / right (persisted; default right) ----
+function applyRailDock(pos) {
+  const rail = document.getElementById('toolbar');
+  const main = document.getElementById('main');
+  const app = document.getElementById('app');
+  if (!rail || !main || !app) return;
+  rail.classList.remove('dock-right', 'dock-top');
+  if (pos === 'top') {
+    rail.classList.add('dock-top');
+    app.insertBefore(rail, main); // rail sits above the main row
+  } else {
+    if (rail.parentElement !== main) main.insertBefore(rail, main.firstElementChild);
+    if (pos === 'right') rail.classList.add('dock-right');
+  }
+  try { localStorage.setItem('datum-rail', pos); } catch (e) {}
+}
+function cycleRailDock() {
+  const cur = (localStorage.getItem('datum-rail') || 'right');
+  const next = cur === 'left' ? 'top' : cur === 'top' ? 'right' : 'left';
+  applyRailDock(next);
+  showToast('Tool rail docked ' + next.toUpperCase());
+}
+
+// ---- Layers ----
+let hiddenLayers = new Set();
+function annLayer(a) { return a.layer || 'Markups'; }
+function annVisible(a) { return !hiddenLayers.has(annLayer(a)); }
+function knownLayers() {
+  const s = new Set(['Markups']);
+  annotations.forEach(a => s.add(annLayer(a)));
+  return [...s].sort();
+}
+function setMarkupLayer(annId, layer) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  a.layer = (layer || '').trim() || undefined;
+  saveToHistory(); refreshMarkupsList();
+}
+function toggleLayersDrop(e) {
+  e.stopPropagation();
+  const drop = document.getElementById('ml-layers-drop');
+  if (drop.style.display === 'block') { drop.style.display = 'none'; return; }
+  drop.innerHTML = knownLayers().map(l =>
+    `<label><input type="checkbox" ${hiddenLayers.has(l) ? '' : 'checked'} onchange="toggleLayerVisible('${escapeHtml(l).replace(/'/g, "\\'")}')"> ${escapeHtml(l)}</label>`).join('') +
+    '<div style="font-size:10px;color:var(--text-muted);padding:5px 6px 1px;border-top:1px solid var(--line);margin-top:5px">Hidden layers don’t draw, print or save-bake.<br>Type a layer name in any row to assign it.</div>';
+  const r = e.target.getBoundingClientRect();
+  drop.style.display = 'block';
+  drop.style.left = Math.max(8, r.left - 40) + 'px';
+  drop.style.top = (r.top - 8 - drop.offsetHeight) + 'px';
+  requestAnimationFrame(() => { drop.style.top = (r.top - 6 - drop.offsetHeight) + 'px'; });
+}
+function toggleLayerVisible(l) {
+  if (hiddenLayers.has(l)) hiddenLayers.delete(l); else hiddenLayers.add(l);
+  redrawAnnotations(); refreshMarkupsList();
+}
+document.addEventListener('click', (e) => {
+  const drop = document.getElementById('ml-layers-drop');
+  if (drop && drop.style.display === 'block' && !drop.contains(e.target)) drop.style.display = 'none';
+});
+
+// ---- Markups List dock ----
+let markupsListOpen = false;
+let _mlSort = { col: 'page', dir: 1 };
+function toggleMarkupsList(force) {
+  markupsListOpen = (force !== undefined) ? !!force : !markupsListOpen;
+  const dock = document.getElementById('markups-dock');
+  if (dock) dock.classList.toggle('open', markupsListOpen);
+  const btn = document.getElementById('btn-markups-list');
+  if (btn) btn.style.color = markupsListOpen ? 'var(--accent-text)' : '';
+  if (markupsListOpen) refreshMarkupsList();
+}
+function mlSortBy(col) {
+  if (_mlSort.col === col) _mlSort.dir = -_mlSort.dir; else _mlSort = { col, dir: 1 };
+  refreshMarkupsList();
+}
+function _mlRows() {
+  const q = (document.getElementById('ml-search')?.value || '').toLowerCase();
+  const kind = document.getElementById('ml-kind')?.value || 'all';
+  const measTypes = ['measure', 'polyline', 'area', 'dimension', 'count'];
+  const isMeas = (a) => measTypes.includes(a.type) && !a.isShape;
+  let rows = annotations.map(a => ({
+    id: a.id, subj: _annTypeLabel(a), page: a.page, content: _annDescription(a),
+    value: (isMeas(a) && a.label) ? a.label : '', layer: annLayer(a), color: a.color || '#888', hidden: !annVisible(a)
+  }));
+  if (kind !== 'all') rows = rows.filter(r => { const a = annotations.find(x => x.id === r.id); return kind === 'meas' ? isMeas(a) : !isMeas(a); });
+  if (q) rows = rows.filter(r => (r.subj + ' ' + r.content + ' ' + r.layer).toLowerCase().includes(q));
+  const { col, dir } = _mlSort;
+  rows.sort((a, b) => { const va = a[col], vb = b[col]; return (va > vb ? 1 : va < vb ? -1 : 0) * dir; });
+  return rows;
+}
+function refreshMarkupsList() {
+  if (!markupsListOpen) return;
+  const body = document.getElementById('ml-body');
+  if (!body) return;
+  const rows = _mlRows();
+  const cnt = document.getElementById('ml-count');
+  if (cnt) cnt.textContent = rows.length + ' / ' + annotations.length;
+  const arrow = (c) => _mlSort.col === c ? (_mlSort.dir > 0 ? ' ▲' : ' ▼') : '';
+  let h = `<tr>
+    <th onclick="mlSortBy('subj')">Subject${arrow('subj')}</th>
+    <th onclick="mlSortBy('page')">Page${arrow('page')}</th>
+    <th onclick="mlSortBy('content')">Comments / Content${arrow('content')}</th>
+    <th onclick="mlSortBy('value')">Value${arrow('value')}</th>
+    <th onclick="mlSortBy('layer')">Layer${arrow('layer')}</th>
+    <th>Colour</th></tr>`;
+  rows.forEach(r => {
+    h += `<tr class="ml-row${r.id === selectedAnnotationId ? ' ml-sel' : ''}" onclick="mlJump('${r.id}')" style="${r.hidden ? 'opacity:.42' : ''}">
+      <td class="ml-subj">${escapeHtml(r.subj)}${r.hidden ? ' <span style="font-size:9px;color:var(--text-muted)">(hidden)</span>' : ''}</td>
+      <td class="ml-mono">${r.page + 1}</td>
+      <td>${escapeHtml(String(r.content).slice(0, 90))}</td>
+      <td class="ml-mono" style="color:var(--accent-text)">${escapeHtml(r.value)}</td>
+      <td onclick="event.stopPropagation()"><input class="ml-layer-input" list="ml-layer-list" value="${escapeHtml(r.layer)}" onchange="setMarkupLayer('${r.id}', this.value)" title="Layer — type a name to move this markup to another layer"></td>
+      <td><span class="ml-sw" style="background:${escapeHtml(r.color)}"></span></td>
+    </tr>`;
+  });
+  body.innerHTML = h + `<datalist id="ml-layer-list">${knownLayers().map(l => `<option value="${escapeHtml(l)}">`).join('')}</datalist>`;
+}
+function mlJump(annId) {
+  const a = annotations.find(x => x.id === annId);
+  if (!a) return;
+  if (a.page !== currentPage) goToPage(a.page);
+  selectedAnnotationId = annId;
+  redrawAnnotations(); refreshMarkupsList();
+  if (typeof openPropertiesPanel === 'function') openPropertiesPanel();
+}
+function exportMarkupsListCSV() {
+  const rows = _mlRows();
+  let csv = 'No,Subject,Page,Content,Value,Layer,Colour\n';
+  rows.forEach((r, i) => {
+    const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+    csv += [i + 1, esc(r.subj), r.page + 1, esc(r.content), esc(r.value), esc(r.layer), r.color].join(',') + '\n';
+  });
+  downloadBlob(csv, 'text/csv', (currentFilename || 'document').replace(/\.pdf$/i, '') + '-markups.csv');
+}
+
+// ---- Markup clipboard (Ctrl+C / Ctrl+V) ----
+let markupClipboard = null, _pasteCount = 0;
+function copySelectedMarkup() {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  if (!a) { showToast('Select a markup first, then Ctrl+C'); return; }
+  const clone = JSON.parse(JSON.stringify(a, (k, v) => k.startsWith('_') ? undefined : v));
+  markupClipboard = clone; _pasteCount = 0;
+  try { navigator.clipboard.writeText('[datum markup] ' + (clone.text || clone.label || clone.type)).catch(() => {}); } catch (e) {}
+  showToast('Markup copied — Ctrl+V pastes it here or in another document/page');
+}
+function pasteMarkup() {
+  if (!markupClipboard || !pdfDoc) return false;
+  const a = JSON.parse(JSON.stringify(markupClipboard));
+  _pasteCount++;
+  const off = 14 * _pasteCount;
+  const shift = (p) => p && isFinite(p.x) ? { ...p, x: p.x + off, y: p.y + off } : p;
+  if (a.points) a.points = a.points.map(shift);
+  if (a.textPos) a.textPos = shift(a.textPos);
+  if (a.anchor) a.anchor = shift(a.anchor);
+  if (a.knees) a.knees = a.knees.map(shift);
+  a.id = generateId();
+  a.page = currentPage;
+  delete a.takeoffIds; delete a.takeoffId; delete a.zoneId; // pasted copy is not auto-linked to takeoff items
+  annotations.push(a);
+  selectedAnnotationId = a.id;
+  saveToHistory(); redrawAnnotations(); refreshMarkupsList();
+  showToast('Markup pasted');
+  return true;
+}
+
+// ---- Sequence tool (auto-numbered labels) ----
+let seqState = { prefix: null, next: null };
+// Arming while ALREADY armed restarts the prompt (new prefix / number)
+function armSequenceTool() {
+  if (currentTool === 'sequence') { seqState = { prefix: seqState.prefix, next: null }; showToast('Sequence reset — your next click sets a new prefix and number'); }
+  setTool('sequence');
+}
+function addSequenceLabel(point) {
+  if (seqState.next === null) {
+    const prefix = prompt('Sequence label prefix (e.g. "Door ", "P", "Col "):', seqState.prefix === null ? 'Door ' : seqState.prefix);
+    if (prefix === null) { setTool('select'); return; }
+    const start = parseInt(prompt('Start numbering at:', '1')) || 1;
+    seqState = { prefix, next: start };
+  }
+  const pagePoint = toPage(point);
+  const n = seqState.next++;
+  const label = seqState.prefix + (n < 10 ? '0' + n : n);
+  const ann = {
+    id: generateId(), type: 'text', page: currentPage, points: [pagePoint], text: label,
+    color: toolProperties.color, fontSize: toolProperties.fontSize || 12, fontFamily: toolProperties.fontFamily,
+    fontWeight: '700', fontStyle: 'normal', textDecoration: 'none', opacity: toolProperties.opacity,
+    boxFill: true, fillColor: '#FFFFFF', fillOpacity: 85
+  };
+  annotations.push(ann);
+  saveToHistory(); redrawAnnotations();
+}
+
+// ---- Status bar page size readout ----
+async function updateSbPageSize() {
+  const el = document.getElementById('sb-pagesize');
+  if (!el) return;
+  if (!pdfDoc) { el.textContent = ''; return; }
+  try {
+    const page = await pdfDoc.getPage(currentPage + 1);
+    const vp = page.getViewport({ scale: 1 });
+    el.textContent = Math.round(vp.width / 72 * 25.4) + ' × ' + Math.round(vp.height / 72 * 25.4) + ' mm';
+  } catch (e) { el.textContent = ''; }
 }
 
 // Datum theme toggle — dark default, light via data-theme="light" (persisted)
@@ -8538,6 +8860,8 @@ function saveToHistory() {
     docModified = true;  // first edit since open/save — show ● on the tab
     if (typeof renderDocTabs === 'function') renderDocTabs();
   }
+  // v3.1: keep the Markups List live (no-op while the dock is closed)
+  if (typeof refreshMarkupsList === 'function' && markupsListOpen) setTimeout(refreshMarkupsList, 0);
   historyIndex++;
   history = history.slice(0, historyIndex);
   // Snapshot measurements + countGroups + takeoffItems alongside annotations
@@ -8597,6 +8921,9 @@ function previousPage() { if (currentPage > 0) { cancelInProgressDrawing(); curr
 function nextPage() { if (pdfDoc && currentPage < pdfDoc.numPages-1) { cancelInProgressDrawing(); currentPage++; selectedAnnotationId=null; renderPage(currentPage); updatePageIndicator(); checkCalibrationBanner(); updateCalibrationIndicator(); openPropertiesPanel(); }}
 function updatePageIndicator() {
   const total = pdfDoc ? pdfDoc.numPages : 0;
+  // v3.1: physical page size readout + markups list follow the page
+  updateSbPageSize();
+  if (markupsListOpen) refreshMarkupsList();
   // Update bottom bar page input and total
   const pageInput = document.getElementById('sb-page-num');
   if (pageInput) pageInput.value = currentPage + 1;
@@ -11947,9 +12274,14 @@ function openCompareDialog() {
   if (!pdfDoc) { alert('Load a PDF first'); return; }
   const body = `
     <div style="display:flex;flex-direction:column;gap:12px">
-      <div style="font-size:12px;color:var(--text-secondary)">Compare the current document against a revised version. Differences will be highlighted with revision clouds.</div>
+      <div style="font-size:12px;color:var(--text-secondary)">Compare the current document against a revised version.</div>
       <button onclick="document.getElementById('compare-input').click()" style="width:100%;padding:10px;background:var(--accent);color:white;border-radius:4px;font-weight:600">Select Comparison PDF</button>
       <div id="compare-status" style="font-size:11px;color:var(--text-muted);text-align:center">No file selected</div>
+      <div><label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Mode</label>
+        <select id="compare-mode" class="select-input" style="margin-top:4px">
+          <option value="clouds" selected>Cloud the differences (marks change regions on this document)</option>
+          <option value="overlay">Colour overlay (this doc RED, revision BLUE — opens as a new document)</option>
+        </select></div>
       <div><label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Compare Page</label>
         <select id="compare-page" class="select-input" style="margin-top:4px">
           <option value="current">Current Page (${currentPage+1})</option>
@@ -11993,6 +12325,37 @@ async function executeCompare() {
     const c2 = document.createElement('canvas');
     c2.width = vp1.width; c2.height = vp1.height;
     await page2.render({ canvasContext: c2.getContext('2d'), viewport: vp2 }).promise;
+
+    // v3.1 — COLOUR OVERLAY mode: current doc's ink → RED, revision's → BLUE,
+    // agreement → dark. Opens as a new document tab, Bluebeam Overlay-style.
+    const mode = document.getElementById('compare-mode')?.value || 'clouds';
+    if (mode === 'overlay') {
+      const d1o = c1.getContext('2d').getImageData(0, 0, c1.width, c1.height);
+      const d2o = c2.getContext('2d').getImageData(0, 0, c2.width, c2.height);
+      const out = c1.getContext('2d').createImageData(c1.width, c1.height);
+      for (let i = 0; i < d1o.data.length; i += 4) {
+        const dA = 255 - (0.299*d1o.data[i] + 0.587*d1o.data[i+1] + 0.114*d1o.data[i+2]); // ink of current
+        const dB = 255 - (0.299*d2o.data[i] + 0.587*d2o.data[i+1] + 0.114*d2o.data[i+2]); // ink of revision
+        out.data[i]     = 255 - dB;              // red survives where only A has ink
+        out.data[i + 1] = 255 - Math.max(dA, dB);
+        out.data[i + 2] = 255 - dA;              // blue survives where only B has ink
+        out.data[i + 3] = 255;
+      }
+      const oc = document.createElement('canvas');
+      oc.width = c1.width; oc.height = c1.height;
+      oc.getContext('2d').putImageData(out, 0, 0);
+      const pngBytes = await (await fetch(oc.toDataURL('image/png'))).arrayBuffer();
+      const odoc = await PDFLib.PDFDocument.create();
+      const img = await odoc.embedPng(pngBytes);
+      const pg = odoc.addPage([vp1.width, vp1.height]);
+      pg.drawImage(img, { x: 0, y: 0, width: vp1.width, height: vp1.height });
+      const obytes = await odoc.save();
+      closeCurrentModal();
+      await loadPdf(obytes.buffer.slice(obytes.byteOffset, obytes.byteOffset + obytes.byteLength),
+        'Overlay - ' + (currentFilename || 'comparison') , null);
+      showToast('Overlay created — RED = this document only, BLUE = revision only');
+      return;
+    }
 
     // Pixel comparison
     const ctx1 = c1.getContext('2d'), ctx2 = c2.getContext('2d');
