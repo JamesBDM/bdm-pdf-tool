@@ -1002,6 +1002,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
           <button class="tool-btn" data-tool="signature" onclick="setTool('signature')" title="Signature Stamp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17c2-1 3-3 6-3s4 4 7 2 4-5 5-7"/><path d="M3 21h18"/></svg></button>
           <button class="tool-btn" data-tool="pen" onclick="setTool('pen')" title="Pen (P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg><span class="shortcut">P</span></button>
           <button class="tool-btn" data-tool="highlight" onclick="setTool('highlight')" title="Highlight (G)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="18" height="8" rx="1" fill="rgba(251,191,36,0.3)"/></svg><span class="shortcut">G</span></button>
+          <button class="tool-btn" data-tool="symbol" onclick="openSymbolsPanel()" title="Symbols — construction symbol tool chest (toilets, GPOs, doors, fire services…)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7.5" cy="7" r="3.5"/><rect x="14" y="3.5" width="7" height="7" rx="1"/><polygon points="7.5,14.5 11,20.5 4,20.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></button>
         </div>
       </div>
       <div class="tool-group" data-group="edit">
@@ -1086,7 +1087,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       </div>
       <div id="panel-tabs">
         <button class="panel-tab active" data-mode="properties" onclick="setPanelMode('properties')">Properties</button>
-        <button class="panel-tab" data-mode="symbols" onclick="setPanelMode('symbols')">Symbols</button>
         <button class="panel-tab" data-mode="takeoff" onclick="setPanelMode('takeoff')">Takeoff</button>
         <button class="panel-tab" data-mode="measurements" onclick="setPanelMode('measurements')">Measurements</button>
       </div>
@@ -1609,7 +1609,7 @@ const toolNames = {
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
-  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature', symbol:'Place Symbol',
+  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature', symbol:'Symbols',
   viewport:'Viewport (region scale)', magicarea:'Room Fill (auto area)',
   selecttext:'Select Text (copy)', sequence:'Sequence (numbered labels)'
 };
@@ -5952,15 +5952,6 @@ function openPropertiesPanel(forceOpen) {
   document.querySelectorAll('.panel-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.mode === panelMode));
 
-  // Symbols view — construction symbol library (v3.4).
-  if (panelMode === 'symbols') {
-    panelTitle.textContent = 'Symbols';
-    content.innerHTML = getSymbolsPanelHTML();
-    maybeOpen();
-    attachSymbolsPanelListeners();
-    return;
-  }
-
   // Takeoff view — Cubit-style item list with running totals.
   if (panelMode === 'takeoff') {
     panelTitle.textContent = 'Takeoff';
@@ -5998,6 +5989,7 @@ function openPropertiesPanel(forceOpen) {
     content.innerHTML = getToolPropertiesHTML(currentTool);
     maybeOpen();
     attachToolListeners();
+    if (currentTool === 'symbol') attachSymbolsPanelListeners();
   }
 }
 
@@ -8974,16 +8966,8 @@ function getToolPropertiesHTML(tool) {
       </div>`;
     }
   } else if (tool === 'symbol') {
-    const def = pendingSymbolId ? SYMBOL_DEFS[pendingSymbolId] : null;
-    html += `<div style="display:flex;flex-direction:column;gap:8px">
-      <label style="font-size:11px;color:var(--text-secondary)">Place Symbol</label>
-      <div style="display:flex;align-items:center;gap:10px">
-        <div class="sym-tile" style="width:44px;height:44px;flex-shrink:0;cursor:default">${def ? symbolTileSVG(def) : ''}</div>
-        <div style="font-size:12px;font-weight:600">${def ? escapeHtml(def.name) : 'No symbol selected'}</div>
-      </div>
-      <button class="modal-btn secondary" style="font-size:11px" onclick="openSymbolsPanel()">Open Symbol Library</button>
-      <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">Click on the page to place. Press Esc or choose Select to stop placing.</div>
-    </div>`;
+    // The symbol tool's panel IS the tool chest — full searchable library.
+    html += getSymbolsPanelHTML();
   } else {
     // Generic tool properties
     html += `<div style="display:flex;flex-direction:column;gap:8px">
@@ -13259,7 +13243,14 @@ function addSymbolAnn(screenPt) {
 }
 
 // ---- Panel -----------------------------------------------------
-function openSymbolsPanel() { setPanelMode('symbols'); }
+// The Symbols tool chest lives in the tool rail (MARKUP group) — arming the
+// symbol tool shows the full library in the properties panel, like Stamp.
+function openSymbolsPanel() {
+  panelMode = 'properties';
+  panelUserCollapsed = false;
+  document.getElementById('panel').classList.remove('collapsed');
+  setTool('symbol');
+}
 
 function getSymbolsPanelHTML() {
   return `<div style="display:flex;flex-direction:column;gap:8px">
