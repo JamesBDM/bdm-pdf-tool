@@ -388,7 +388,7 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
 #canvas-area.snipregion, #canvas-area.viewport, #canvas-area.magicarea { cursor: crosshair; }
-#canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature { cursor: pointer; }
+#canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature, #canvas-area.symbol { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
 #canvas-area.selecttext { cursor: text; }
 #canvas-area.cutcontent { cursor: crosshair; }
@@ -551,6 +551,25 @@ canvas { display: block; }
 .preset-type { font-size: 10px; color: var(--text-muted); }
 .preset-del { color: var(--text-muted); font-size: 14px; padding: 2px 6px; border-radius: 3px; }
 .preset-del:hover { background: var(--danger); color: white; }
+
+/* Symbols library (v3.4) — Bluebeam-style construction symbol chest */
+.sym-cat-head {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px;
+  font-size: 11px; font-weight: 600; color: var(--text-primary); cursor: pointer; user-select: none;
+}
+.sym-cat-head:hover { border-color: var(--accent); }
+.sym-cat-head .sym-chev { width: 10px; color: var(--text-muted); font-size: 9px; }
+.sym-cat-head .sym-count { margin-left: auto; color: var(--text-muted); font-weight: 400; font-size: 10px; }
+.sym-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 6px 1px 2px; }
+.sym-tile {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  background: #f2f0ea; color: #1a1a1a; border: 1px solid var(--border-color); border-radius: 4px;
+  cursor: pointer; transition: border-color .12s, transform .08s;
+}
+.sym-tile:hover { border-color: var(--accent); transform: scale(1.06); }
+.sym-tile.active { outline: 2px solid var(--accent); outline-offset: -1px; }
+.sym-tile svg { width: 82%; height: 82%; display: block; }
 
 /* Measurement summary table */
 .meas-table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -853,6 +872,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();setTool('pen')">Pen <span class="k">P</span></div>
       <div class="ami" onclick="amClose();setTool('highlight')">Highlight <span class="k">G</span></div>
       <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();openSymbolsPanel()">Symbols — Construction Library</div>
       <div class="ami" onclick="amClose();openToolChest()">Tool Chest (saved presets)…</div>
     </div></div>
     <div class="am"><button onclick="amToggle(this)">Window</button><div class="am-drop" id="am-window-drop">
@@ -1066,6 +1086,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       </div>
       <div id="panel-tabs">
         <button class="panel-tab active" data-mode="properties" onclick="setPanelMode('properties')">Properties</button>
+        <button class="panel-tab" data-mode="symbols" onclick="setPanelMode('symbols')">Symbols</button>
         <button class="panel-tab" data-mode="takeoff" onclick="setPanelMode('takeoff')">Takeoff</button>
         <button class="panel-tab" data-mode="measurements" onclick="setPanelMode('measurements')">Measurements</button>
       </div>
@@ -1314,7 +1335,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.3';
+const APP_VERSION = 'v3.4';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -1588,7 +1609,7 @@ const toolNames = {
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
-  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature',
+  snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature', symbol:'Place Symbol',
   viewport:'Viewport (region scale)', magicarea:'Room Fill (auto area)',
   selecttext:'Select Text (copy)', sequence:'Sequence (numbered labels)'
 };
@@ -2661,7 +2682,7 @@ function updateSelectHoverCursor(screenPt) {
     if (sel) {
       const hi = getResizeHandleAtPoint(sel, pagePt.x, pagePt.y, tol);
       if (hi >= 0) {
-        if (['rectangle','ellipse','highlight','cutcontent','image'].includes(sel.type) && sel.points.length === 2) {
+        if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(sel.type) && sel.points.length === 2) {
           // 0=TL 1=TC 2=TR 3=ML 4=MR 5=BL 6=BC 7=BR
           cursor = ['nwse-resize','ns-resize','nesw-resize','ew-resize','ew-resize','nesw-resize','ns-resize','nwse-resize'][hi] || 'move';
         } else cursor = 'crosshair';
@@ -2992,6 +3013,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     case 'tick': drawTickAnn(ctx, ann); break;
     case 'signature': drawSignatureAnn(ctx, ann); break;
     case 'image': drawImageAnn(ctx, ann); break;
+    case 'symbol': drawSymbolAnn(ctx, ann); break;
     case 'pen': drawPenAnn(ctx, ann); break;
     case 'highlight': drawHighlightAnn(ctx, ann); break;
     case 'count': drawCountAnn(ctx, ann); break;
@@ -3008,7 +3030,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     const pts = getAnnotationHandlePoints(ann);
     pts.forEach(p => { if(p) ctx.fillRect(p.x - hs, p.y - hs, hs*2, hs*2); });
     // Draw bounding box for resizable shapes
-    if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points && ann.points.length === 2) {
+    if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(ann.type) && ann.points && ann.points.length === 2) {
       ctx.strokeStyle = '#E5432E'; ctx.lineWidth = 1 / currentScale; ctx.setLineDash([4/currentScale, 4/currentScale]);
       const [a,b] = ann.points;
       ctx.strokeRect(Math.min(a.x,b.x), Math.min(a.y,b.y), Math.abs(b.x-a.x), Math.abs(b.y-a.y));
@@ -3673,7 +3695,7 @@ function offsetPos(p, ann) {
 //    (lengths/areas are rotation-invariant).
 // cutcontent is deliberately excluded — redaction boxes stay axis-aligned.
 // ============================================================
-const ROT_PROP_TYPES = ['rectangle','ellipse','highlight','image','signature','stamp','text'];
+const ROT_PROP_TYPES = ['rectangle','ellipse','highlight','image','signature','stamp','text','symbol'];
 const ROT_POINT_TYPES = ['line','arrow','measure','dimension','polygon','polyline','area','cloud','pen'];
 
 function annCanRotate(ann) {
@@ -3779,7 +3801,7 @@ function getAnnotationHandlePoints(ann) {
     ];
   }
   // For two-point shapes (rectangle, ellipse, highlight, cutcontent), return 8 handles (corners + midpoints)
-  if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points.length === 2) {
+  if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(ann.type) && ann.points.length === 2) {
     const [a, b] = ann.points;
     const minX = Math.min(a.x,b.x), maxX = Math.max(a.x,b.x), minY = Math.min(a.y,b.y), maxY = Math.max(a.y,b.y);
     const midX = (minX+maxX)/2, midY = (minY+maxY)/2;
@@ -3890,7 +3912,7 @@ function applyResize(ann, handleIdx, newPagePt) {
   }
 
   // Two-point shapes with 8 resize handles (corners + midpoints)
-  if (['rectangle','ellipse','highlight','cutcontent','image'].includes(ann.type) && ann.points && ann.points.length === 2) {
+  if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(ann.type) && ann.points && ann.points.length === 2) {
     const [a, b] = ann.points;
     let minX = Math.min(a.x,b.x), maxX = Math.max(a.x,b.x);
     let minY = Math.min(a.y,b.y), maxY = Math.max(a.y,b.y);
@@ -4217,7 +4239,7 @@ function onCanvasMouseDown(e) {
   }
 
   let startSnap = screenPt;
-  if (!['pan','select','pen','highlight','cloud','count','stamp','text','eraser','tick','signature'].includes(currentTool)) {
+  if (!['pan','select','pen','highlight','cloud','count','stamp','text','eraser','tick','signature','symbol'].includes(currentTool)) {
     startSnap = snapScreenPoint(screenPt);
   }
   isDrawing = true; startPoint = startSnap; currentMovePoint = startSnap;
@@ -4246,6 +4268,11 @@ function onCanvasMouseDown(e) {
   // Sequence stays armed — every click places the next numbered label
   if (currentTool === 'sequence') { addSequenceLabel(screenPt); isDrawing = false; return; }
   if (currentTool === 'signature') { addSignatureStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
+  if (currentTool === 'symbol') {
+    addSymbolAnn(screenPt); isDrawing = false;
+    if (!symbolKeepPlacing) returnToNavTool();
+    return;
+  }
   if (currentTool === 'text') { showTextInput(screenPt); isDrawing = false; /* returnToNavTool called after text input blur */ return; }
   if (currentTool === 'callout') {
     if (!calloutMode) { calloutAnchor = screenPt; calloutKnees = []; calloutMode = true; }
@@ -5791,7 +5818,7 @@ function hitTest(x, y, ann, tol) {
     }
     case 'measure': case 'line': case 'arrow': case 'dimension':
       return ptNearLine(x,y, ann.points[0], ann.points[1], tol);
-    case 'rectangle': case 'highlight': case 'cutcontent': case 'image': {
+    case 'rectangle': case 'highlight': case 'cutcontent': case 'image': case 'symbol': {
       const [a,b] = ann.points;
       return x >= Math.min(a.x,b.x)-tol && x <= Math.max(a.x,b.x)+tol && y >= Math.min(a.y,b.y)-tol && y <= Math.max(a.y,b.y)+tol;
     }
@@ -5924,6 +5951,15 @@ function openPropertiesPanel(forceOpen) {
   // Sync the tab strip with the current mode every time we redraw the panel.
   document.querySelectorAll('.panel-tab').forEach(t =>
     t.classList.toggle('active', t.dataset.mode === panelMode));
+
+  // Symbols view — construction symbol library (v3.4).
+  if (panelMode === 'symbols') {
+    panelTitle.textContent = 'Symbols';
+    content.innerHTML = getSymbolsPanelHTML();
+    maybeOpen();
+    attachSymbolsPanelListeners();
+    return;
+  }
 
   // Takeoff view — Cubit-style item list with running totals.
   if (panelMode === 'takeoff') {
@@ -8477,6 +8513,17 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
+  if (ann.type === 'symbol') {
+    const def = SYMBOL_DEFS[ann.symbolId];
+    html += `<div class="properties-section"><div class="properties-section-title">Symbol</div><div class="properties-section-content">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="sym-tile" style="width:44px;height:44px;flex-shrink:0;cursor:default">${def ? symbolTileSVG(def) : ''}</div>
+        <div style="font-size:12px;font-weight:600">${def ? escapeHtml(def.name) : 'Unknown symbol'}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text-secondary);margin-top:6px">Drag corners to resize, use the rotate handle to turn, and change the colour below (e.g. red for demolition).</div>
+    </div></div>`;
+  }
+
   if (ann.type === 'legend') {
     html += `<div class="properties-section"><div class="properties-section-title">Takeoff Table</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Style:</div><select id="prop-legend-mode" class="select-input">
@@ -8926,6 +8973,17 @@ function getToolPropertiesHTML(tool) {
           <input type="file" accept="image/*" style="display:none" onchange="uploadSignatureImage(this.files[0])"></label>
       </div>`;
     }
+  } else if (tool === 'symbol') {
+    const def = pendingSymbolId ? SYMBOL_DEFS[pendingSymbolId] : null;
+    html += `<div style="display:flex;flex-direction:column;gap:8px">
+      <label style="font-size:11px;color:var(--text-secondary)">Place Symbol</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="sym-tile" style="width:44px;height:44px;flex-shrink:0;cursor:default">${def ? symbolTileSVG(def) : ''}</div>
+        <div style="font-size:12px;font-weight:600">${def ? escapeHtml(def.name) : 'No symbol selected'}</div>
+      </div>
+      <button class="modal-btn secondary" style="font-size:11px" onclick="openSymbolsPanel()">Open Symbol Library</button>
+      <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">Click on the page to place. Press Esc or choose Select to stop placing.</div>
+    </div>`;
   } else {
     // Generic tool properties
     html += `<div style="display:flex;flex-direction:column;gap:8px">
@@ -12775,6 +12833,487 @@ function exportMeasurementsCSV() {
   });
 
   downloadBlob(csv, 'text/csv', currentFilename.replace('.pdf', '_measurements.csv'));
+}
+
+// ============================================================
+// SYMBOL LIBRARY (v3.4) — Bluebeam-style construction symbols
+// ------------------------------------------------------------
+// Every symbol is vector linework (SVG path data in a 0–100 box)
+// drawn via Path2D, so symbols stay crisp at any zoom and bake
+// into saves / flattens / prints exactly like other markups.
+// Each item: { id, name, w (default placed width, page units),
+//   p:[{d, lw?, f?, dash?}], t:[{t, x, y, s}] (optional text) }
+// ============================================================
+const SYMBOL_LIBRARY = [
+  { id:'general', name:'General / Drafting', items:[
+    { id:'g-north', name:'North Arrow', w:44, p:[
+      {d:'M50 6 A44 44 0 1 0 50 94 A44 44 0 1 0 50 6', lw:4},
+      {d:'M50 16 L38 58 L50 50 L62 58 Z', f:1}], t:[{t:'N', x:50, y:76, s:24}] },
+    { id:'g-section', name:'Section Marker', w:40, p:[
+      {d:'M50 30 A28 28 0 1 0 50 86 A28 28 0 1 0 50 30', lw:4},
+      {d:'M22 58 H78', lw:3},
+      {d:'M50 2 L36 24 H64 Z', f:1}], t:[{t:'A', x:50, y:46, s:18},{t:'01', x:50, y:72, s:14}] },
+    { id:'g-detail', name:'Detail Marker', w:40, p:[
+      {d:'M50 16 A34 34 0 1 0 50 84 A34 34 0 1 0 50 16', lw:4},
+      {d:'M16 50 H84', lw:3}], t:[{t:'1', x:50, y:35, s:20},{t:'A1', x:50, y:66, s:16}] },
+    { id:'g-elevation', name:'Elevation Marker', w:40, p:[
+      {d:'M50 34 A26 26 0 1 0 50 86 A26 26 0 1 0 50 34', lw:4},
+      {d:'M50 6 L32 32 H68 Z', lw:4}], t:[{t:'E1', x:50, y:60, s:18}] },
+    { id:'g-level', name:'Level / RL Marker', w:44, p:[
+      {d:'M50 38 A24 24 0 1 0 50 86 A24 24 0 1 0 50 38', lw:4},
+      {d:'M50 62 L50 38 A24 24 0 0 1 74 62 Z', f:1},
+      {d:'M50 62 L50 86 A24 24 0 0 1 26 62 Z', f:1},
+      {d:'M8 38 H92', lw:3}], t:[{t:'RL', x:50, y:22, s:18}] },
+    { id:'g-grid', name:'Grid Bubble', w:36, p:[
+      {d:'M50 12 A30 30 0 1 0 50 72 A30 30 0 1 0 50 12', lw:4},
+      {d:'M50 72 V96', lw:3}], t:[{t:'A', x:50, y:42, s:26}] },
+    { id:'g-rev', name:'Revision Triangle', w:36, p:[
+      {d:'M50 12 L12 84 H88 Z', lw:4}], t:[{t:'1', x:50, y:66, s:24}] },
+    { id:'g-keynote', name:'Keynote Hexagon', w:38, p:[
+      {d:'M30 16 H70 L89 50 L70 84 H30 L11 50 Z', lw:4}], t:[{t:'K1', x:50, y:50, s:22}] },
+    { id:'g-benchmark', name:'Benchmark', w:36, p:[
+      {d:'M50 18 L18 82 H82 Z', lw:4},
+      {d:'M50 52 A6 6 0 1 0 50 64 A6 6 0 1 0 50 52', f:1}] },
+    { id:'g-scalebar', name:'Scale Bar', w:60, p:[
+      {d:'M4 42 H96 V58 H4 Z', lw:3},
+      {d:'M4 42 H27 V58 H4 Z', f:1},
+      {d:'M50 42 H73 V58 H50 Z', f:1}] },
+  ]},
+  { id:'arch', name:'Architectural', items:[
+    { id:'a-door', name:'Door — Single Swing', w:50, p:[
+      {d:'M6 90 H20 M90 90 H96', lw:5},
+      {d:'M20 90 V20', lw:4},
+      {d:'M20 20 A70 70 0 0 1 90 90', lw:2, dash:1}] },
+    { id:'a-door2', name:'Door — Double Swing', w:56, p:[
+      {d:'M2 90 H8 M92 90 H98', lw:5},
+      {d:'M8 90 V48 M92 90 V48', lw:4},
+      {d:'M8 48 A42 42 0 0 1 50 90', lw:2, dash:1},
+      {d:'M92 48 A42 42 0 0 0 50 90', lw:2, dash:1}] },
+    { id:'a-slider', name:'Door — Sliding', w:56, p:[
+      {d:'M6 52 H54', lw:6},
+      {d:'M46 64 H94', lw:6},
+      {d:'M50 32 H78 M78 32 L69 26 M78 32 L69 38', lw:3}] },
+    { id:'a-bifold', name:'Door — Bi-fold', w:52, p:[
+      {d:'M2 90 H8 M92 90 H98', lw:5},
+      {d:'M8 90 L29 56 L50 90 L71 56 L92 90', lw:4}] },
+    { id:'a-cavity', name:'Door — Cavity Slider', w:56, p:[
+      {d:'M4 58 H42 M4 68 H50 M62 58 H96 M62 68 H96', lw:3},
+      {d:'M46 63 H78', lw:6}] },
+    { id:'a-window', name:'Window — Fixed', w:56, p:[
+      {d:'M6 40 H94 V60 H6 Z', lw:4},
+      {d:'M6 50 H94', lw:2}] },
+    { id:'a-window-s', name:'Window — Sliding', w:56, p:[
+      {d:'M6 40 H94 V60 H6 Z', lw:4},
+      {d:'M50 40 V60', lw:2},
+      {d:'M18 28 H44 M44 28 L37 23 M44 28 L37 33', lw:3},
+      {d:'M82 72 H56 M56 72 L63 67 M56 72 L63 77', lw:3}] },
+    { id:'a-stair', name:'Stair (Up)', w:52, p:[
+      {d:'M22 10 V90 M38 10 V90 M54 10 V90 M70 10 V90 M86 10 V90', lw:3},
+      {d:'M6 50 H74 M74 50 L62 42 M74 50 L62 58', lw:4}] },
+    { id:'a-break', name:'Break Line', w:52, p:[
+      {d:'M4 50 H36 L46 28 L54 72 L64 50 H96', lw:4}] },
+    { id:'a-lift', name:'Lift / Elevator', w:44, p:[
+      {d:'M14 14 H86 V86 H14 Z', lw:4},
+      {d:'M14 14 L86 86 M86 14 L14 86', lw:2}] },
+  ]},
+  { id:'plumb', name:'Plumbing / Hydraulic', items:[
+    { id:'p-wc', name:'Toilet / WC', w:38, p:[
+      {d:'M24 6 H76 V26 H24 Z', lw:4},
+      {d:'M50 26 C74 26 72 48 67 62 C62 80 38 80 33 62 C28 48 26 26 50 26 Z', lw:4},
+      {d:'M42 36 H58', lw:2}] },
+    { id:'p-basin', name:'Basin', w:34, p:[
+      {d:'M50 26 A26 26 0 1 0 50 78 A26 26 0 1 0 50 26', lw:4},
+      {d:'M50 8 V22', lw:4},
+      {d:'M50 48 A5 5 0 1 0 50 58 A5 5 0 1 0 50 48', lw:3}] },
+    { id:'p-vanity', name:'Vanity', w:50, p:[
+      {d:'M8 22 H92 V78 H8 Z', lw:4},
+      {d:'M50 34 C69 34 73 50 67 61 C61 71 39 71 33 61 C27 50 31 34 50 34 Z', lw:3},
+      {d:'M50 27 A3.5 3.5 0 1 0 50 34 A3.5 3.5 0 1 0 50 27', f:1}] },
+    { id:'p-bath', name:'Bath', w:44, p:[
+      {d:'M24 8 H76 Q90 8 90 22 V78 Q90 92 76 92 H24 Q10 92 10 78 V22 Q10 8 24 8 Z', lw:4},
+      {d:'M28 16 H72 Q82 16 82 26 V74 Q82 84 72 84 H28 Q18 84 18 74 V26 Q18 16 28 16 Z', lw:2},
+      {d:'M50 24 A6 6 0 1 0 50 36 A6 6 0 1 0 50 24', lw:3}] },
+    { id:'p-shower', name:'Shower', w:40, p:[
+      {d:'M10 10 H90 V90 H10 Z', lw:4},
+      {d:'M10 90 L90 10 M10 10 L90 90', lw:1.5},
+      {d:'M50 40 A10 10 0 1 0 50 60 A10 10 0 1 0 50 40', lw:3}] },
+    { id:'p-fw', name:'Floor Waste', w:24, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4},
+      {d:'M36 36 L64 64 M64 36 L36 64', lw:3}], t:[{t:'FW', x:50, y:90, s:16}] },
+    { id:'p-sink', name:'Kitchen Sink (Double)', w:52, p:[
+      {d:'M6 26 H94 V74 H6 Z', lw:4},
+      {d:'M14 34 H46 V66 H14 Z M54 34 H86 V66 H54 Z', lw:3},
+      {d:'M50 27 A3.5 3.5 0 1 0 50 34 A3.5 3.5 0 1 0 50 27', f:1}] },
+    { id:'p-tub', name:'Laundry Tub', w:40, p:[
+      {d:'M12 20 H88 V80 H12 Z', lw:4},
+      {d:'M22 30 H78 V70 H22 Z', lw:3},
+      {d:'M50 21 A3.5 3.5 0 1 0 50 28 A3.5 3.5 0 1 0 50 21', f:1}] },
+    { id:'p-hwu', name:'Hot Water Unit', w:36, p:[
+      {d:'M50 18 A32 32 0 1 0 50 82 A32 32 0 1 0 50 18', lw:4}], t:[{t:'HWU', x:50, y:50, s:17}] },
+    { id:'p-urinal', name:'Urinal', w:32, p:[
+      {d:'M30 12 H70 V42 C70 64 58 76 50 76 C42 76 30 64 30 42 Z', lw:4},
+      {d:'M40 24 H60', lw:2}] },
+    { id:'p-dp', name:'Downpipe', w:24, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4}], t:[{t:'DP', x:50, y:50, s:18}] },
+    { id:'p-tap', name:'Tap / Hose Cock', w:34, p:[
+      {d:'M16 50 H40', lw:4},
+      {d:'M40 34 V66 L68 50 Z', lw:3.5},
+      {d:'M96 34 V66 L68 50 Z', lw:3.5}] },
+    { id:'p-valve', name:'Isolation Valve', w:34, p:[
+      {d:'M12 34 V66 L50 50 Z M88 34 V66 L50 50 Z', lw:3.5},
+      {d:'M50 50 V26 M36 26 H64', lw:3.5}] },
+    { id:'p-wm', name:'Water Meter', w:30, p:[
+      {d:'M50 24 A26 26 0 1 0 50 76 A26 26 0 1 0 50 24', lw:4}], t:[{t:'WM', x:50, y:50, s:18}] },
+  ]},
+  { id:'elec', name:'Electrical', items:[
+    { id:'e-gpo', name:'GPO — Single', w:28, p:[
+      {d:'M50 42 A18 18 0 1 0 50 78 A18 18 0 1 0 50 42', lw:4},
+      {d:'M50 42 V20', lw:3.5},
+      {d:'M40 30 H60', lw:3.5}] },
+    { id:'e-gpo2', name:'GPO — Double', w:28, p:[
+      {d:'M50 42 A18 18 0 1 0 50 78 A18 18 0 1 0 50 42', lw:4},
+      {d:'M50 42 V14', lw:3.5},
+      {d:'M40 24 H60 M40 34 H60', lw:3.5}] },
+    { id:'e-gpowp', name:'GPO — Weatherproof', w:30, p:[
+      {d:'M50 36 A18 18 0 1 0 50 72 A18 18 0 1 0 50 36', lw:4},
+      {d:'M50 36 V8 M40 18 H60 M40 28 H60', lw:3.5}], t:[{t:'WP', x:50, y:88, s:16}] },
+    { id:'e-switch', name:'Light Switch', w:26, p:[
+      {d:'M36 62 A9 9 0 1 0 36 80 A9 9 0 1 0 36 62', f:1},
+      {d:'M42 64 L74 24', lw:4}] },
+    { id:'e-switch2', name:'Switch — Two-way', w:28, p:[
+      {d:'M36 62 A9 9 0 1 0 36 80 A9 9 0 1 0 36 62', f:1},
+      {d:'M42 64 L74 24', lw:4},
+      {d:'M60 22 L88 22', lw:3}], t:[{t:'2', x:88, y:38, s:16}] },
+    { id:'e-downlight', name:'Downlight', w:26, p:[
+      {d:'M50 36 A14 14 0 1 0 50 64 A14 14 0 1 0 50 36', lw:4},
+      {d:'M50 24 V10 M50 76 V90 M24 50 H10 M76 50 H90', lw:3}] },
+    { id:'e-batten', name:'Batten Light', w:28, p:[
+      {d:'M50 32 A18 18 0 1 0 50 68 A18 18 0 1 0 50 32', lw:4},
+      {d:'M26 26 L74 74 M74 26 L26 74', lw:3}] },
+    { id:'e-led', name:'LED Strip', w:56, p:[
+      {d:'M6 42 H94 V58 H6 Z', lw:3.5},
+      {d:'M14 50 H26 M34 50 H46 M54 50 H66 M74 50 H86', lw:2.5}] },
+    { id:'e-fan', name:'Ceiling Fan', w:36, p:[
+      {d:'M50 41 A9 9 0 1 0 50 59 A9 9 0 1 0 50 41', f:1},
+      {d:'M6 44 H41 V56 H6 Z M59 44 H94 V56 H59 Z', lw:3}] },
+    { id:'e-smoke', name:'Smoke Detector', w:28, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4}], t:[{t:'SD', x:50, y:50, s:18}] },
+    { id:'e-exhaust', name:'Exhaust Fan', w:32, p:[
+      {d:'M14 14 H86 V86 H14 Z', lw:4},
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:3},
+      {d:'M33 33 L67 67 M67 33 L33 67', lw:2}] },
+    { id:'e-db', name:'Distribution Board', w:40, p:[
+      {d:'M14 24 H86 V76 H14 Z', lw:4},
+      {d:'M14 24 H36 V76 H14 Z', f:1}], t:[{t:'DB', x:60, y:50, s:20}] },
+    { id:'e-data', name:'Data Point', w:26, p:[
+      {d:'M50 22 L26 68 H74 Z', lw:4},
+      {d:'M50 68 V86', lw:3}], t:[{t:'D', x:50, y:54, s:15}] },
+    { id:'e-tv', name:'TV Point', w:28, p:[
+      {d:'M50 26 A22 22 0 1 0 50 70 A22 22 0 1 0 50 26', lw:4},
+      {d:'M50 70 V88', lw:3}], t:[{t:'TV', x:50, y:48, s:16}] },
+    { id:'e-3p', name:'Three-phase Outlet', w:30, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4}], t:[{t:'3P', x:50, y:50, s:18}] },
+    { id:'e-iso', name:'Isolator', w:34, p:[
+      {d:'M18 30 H82 V70 H18 Z', lw:4}], t:[{t:'ISO', x:50, y:50, s:18}] },
+    { id:'e-pir', name:'Motion Sensor', w:30, p:[
+      {d:'M50 62 A7 7 0 1 0 50 76 A7 7 0 1 0 50 62', f:1},
+      {d:'M31 52 A26 26 0 0 1 69 52', lw:3},
+      {d:'M20 38 A42 42 0 0 1 80 38', lw:3}] },
+    { id:'e-em', name:'Emergency Light', w:26, p:[
+      {d:'M50 28 A22 22 0 1 0 50 72 A22 22 0 1 0 50 28', lw:4}], t:[{t:'E', x:50, y:50, s:22}] },
+    { id:'e-exit', name:'Exit Sign', w:44, p:[
+      {d:'M8 32 H92 V68 H8 Z', lw:4}], t:[{t:'EXIT', x:50, y:50, s:21}] },
+  ]},
+  { id:'mech', name:'Mechanical / HVAC', items:[
+    { id:'m-supply', name:'Supply Air Diffuser', w:36, p:[
+      {d:'M10 10 H90 V90 H10 Z', lw:4},
+      {d:'M38 38 H62 V62 H38 Z', lw:3},
+      {d:'M10 10 L38 38 M90 10 L62 38 M90 90 L62 62 M10 90 L38 62', lw:2}] },
+    { id:'m-return', name:'Return Air Grille', w:36, p:[
+      {d:'M10 10 H90 V90 H10 Z', lw:4},
+      {d:'M10 90 L90 10', lw:2.5}] },
+    { id:'m-exhaustg', name:'Exhaust Grille', w:36, p:[
+      {d:'M10 10 H90 V90 H10 Z', lw:4},
+      {d:'M10 90 L90 10 M10 10 L90 90', lw:2.5}] },
+    { id:'m-duct', name:'Duct (w/ Flow)', w:40, p:[
+      {d:'M18 18 H82 V82 H18 Z', lw:4},
+      {d:'M50 28 V70 M50 70 L40 58 M50 70 L60 58', lw:3.5}] },
+    { id:'m-split', name:'AC Split — Indoor', w:52, p:[
+      {d:'M10 32 Q10 24 18 24 H82 Q90 24 90 32 V62 Q90 70 82 70 H18 Q10 70 10 62 Z', lw:4},
+      {d:'M20 58 H80', lw:2.5},
+      {d:'M30 78 Q34 86 30 94 M50 78 Q54 86 50 94 M70 78 Q74 86 70 94', lw:2.5}] },
+    { id:'m-cond', name:'AC Condenser — Outdoor', w:44, p:[
+      {d:'M12 20 H88 V80 H12 Z', lw:4},
+      {d:'M50 30 A20 20 0 1 0 50 70 A20 20 0 1 0 50 30', lw:3},
+      {d:'M40 40 L60 60 M60 40 L40 60', lw:2}] },
+    { id:'m-thermo', name:'Thermostat', w:26, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4}], t:[{t:'T', x:50, y:50, s:24}] },
+    { id:'m-damper', name:'Damper', w:36, p:[
+      {d:'M14 30 H86 V70 H14 Z', lw:4},
+      {d:'M30 66 L70 34', lw:3.5},
+      {d:'M50 45 A5 5 0 1 0 50 55 A5 5 0 1 0 50 45', f:1}] },
+    { id:'m-ef', name:'Roof Exhaust Fan', w:32, p:[
+      {d:'M50 22 A28 28 0 1 0 50 78 A28 28 0 1 0 50 22', lw:4}], t:[{t:'EF', x:50, y:50, s:19}] },
+    { id:'m-fcu', name:'Fan Coil Unit', w:44, p:[
+      {d:'M12 28 H88 V72 H12 Z', lw:4}], t:[{t:'FCU', x:50, y:50, s:19}] },
+  ]},
+  { id:'fire', name:'Fire Services', items:[
+    { id:'f-ext', name:'Fire Extinguisher', w:28, p:[
+      {d:'M50 14 L20 80 H80 Z', lw:4}], t:[{t:'FE', x:50, y:63, s:17}] },
+    { id:'f-hr', name:'Fire Hose Reel', w:32, p:[
+      {d:'M46 26 A24 24 0 1 0 46 74 A24 24 0 1 0 46 26', lw:4},
+      {d:'M46 42 A8 8 0 1 0 46 58 A8 8 0 1 0 46 42', lw:3},
+      {d:'M70 50 H92', lw:3.5}], t:[{t:'FHR', x:46, y:90, s:15}] },
+    { id:'f-hyd', name:'Fire Hydrant', w:28, p:[
+      {d:'M50 28 A22 22 0 1 0 50 72 A22 22 0 1 0 50 28', lw:4}], t:[{t:'H', x:50, y:50, s:22}] },
+    { id:'f-spk', name:'Sprinkler Head', w:22, p:[
+      {d:'M50 36 A14 14 0 1 0 50 64 A14 14 0 1 0 50 36', lw:4},
+      {d:'M50 22 V8 M50 78 V92 M22 50 H8 M78 50 H92', lw:3}] },
+    { id:'f-sd', name:'Smoke Detector (Fire)', w:28, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4},
+      {d:'M50 26 A24 24 0 0 1 50 74', f:1}], t:[{t:'S', x:38, y:50, s:18}] },
+    { id:'f-hd', name:'Heat Detector', w:28, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4}], t:[{t:'HD', x:50, y:50, s:17}] },
+    { id:'f-mcp', name:'Break Glass Call Point', w:30, p:[
+      {d:'M20 20 H80 V80 H20 Z', lw:4}], t:[{t:'MCP', x:50, y:50, s:16}] },
+    { id:'f-fb', name:'Fire Blanket', w:26, p:[
+      {d:'M28 14 H72 V86 H28 Z', lw:4}], t:[{t:'FB', x:50, y:50, s:18}] },
+    { id:'f-wip', name:'WIP / EWIS Phone', w:28, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4}], t:[{t:'WIP', x:50, y:50, s:14}] },
+    { id:'f-fip', name:'Fire Indicator Panel', w:40, p:[
+      {d:'M12 26 H88 V74 H12 Z', lw:4}], t:[{t:'FIP', x:50, y:50, s:19}] },
+  ]},
+  { id:'furn', name:'Furniture / Fixtures', items:[
+    { id:'u-desk', name:'Desk + Chair', w:54, p:[
+      {d:'M8 18 H92 V56 H8 Z', lw:4},
+      {d:'M36 64 H64 V88 H36 Z', lw:3}] },
+    { id:'u-chair', name:'Office Chair', w:30, p:[
+      {d:'M50 40 A16 16 0 1 0 50 72 A16 16 0 1 0 50 40', lw:4},
+      {d:'M28 42 A28 28 0 0 1 72 42', lw:3.5}] },
+    { id:'u-table-r', name:'Table — Round + Chairs', w:56, p:[
+      {d:'M50 20 A30 30 0 1 0 50 80 A30 30 0 1 0 50 20', lw:4},
+      {d:'M42 2 H58 V14 H42 Z M42 86 H58 V98 H42 Z M2 42 V58 H14 V42 Z M86 42 V58 H98 V42 Z', lw:2.5}] },
+    { id:'u-table', name:'Table — Rect + Chairs', w:56, p:[
+      {d:'M20 30 H80 V70 H20 Z', lw:4},
+      {d:'M28 16 H44 V26 H28 Z M56 16 H72 V26 H56 Z M28 74 H44 V84 H28 Z M56 74 H72 V84 H56 Z', lw:2.5}] },
+    { id:'u-sofa', name:'Sofa', w:60, p:[
+      {d:'M10 26 H90 V42 H10 Z', lw:4},
+      {d:'M10 42 H90 V74 H10 Z', lw:4},
+      {d:'M50 42 V74', lw:2.5}] },
+    { id:'u-bed-d', name:'Bed — Double', w:64, p:[
+      {d:'M14 6 H86 V94 H14 Z', lw:4},
+      {d:'M20 10 H46 V22 H20 Z M54 10 H80 V22 H54 Z', lw:2.5},
+      {d:'M14 30 H86', lw:2.5}] },
+    { id:'u-bed-s', name:'Bed — Single', w:40, p:[
+      {d:'M26 6 H74 V94 H26 Z', lw:4},
+      {d:'M32 10 H68 V22 H32 Z', lw:2.5},
+      {d:'M26 30 H74', lw:2.5}] },
+    { id:'u-robe', name:'Wardrobe', w:56, p:[
+      {d:'M8 30 H92 V70 H8 Z', lw:4},
+      {d:'M8 50 H92', lw:2},
+      {d:'M22 40 V60 M34 40 V60 M46 40 V60 M58 40 V60', lw:2}] },
+    { id:'u-fridge', name:'Fridge', w:36, p:[
+      {d:'M20 12 H80 V88 H20 Z', lw:4}], t:[{t:'F', x:50, y:50, s:24}] },
+    { id:'u-cooktop', name:'Cooktop', w:40, p:[
+      {d:'M12 14 H88 V86 H12 Z', lw:4},
+      {d:'M35 30 A9 9 0 1 0 35 48 A9 9 0 1 0 35 30 M65 30 A9 9 0 1 0 65 48 A9 9 0 1 0 65 30 M35 58 A9 9 0 1 0 35 76 A9 9 0 1 0 35 58 M65 58 A9 9 0 1 0 65 76 A9 9 0 1 0 65 58', lw:3}] },
+    { id:'u-wash', name:'Washing Machine', w:36, p:[
+      {d:'M16 16 H84 V84 H16 Z', lw:4},
+      {d:'M50 32 A18 18 0 1 0 50 68 A18 18 0 1 0 50 32', lw:3},
+      {d:'M24 22 A3 3 0 1 0 24 28 A3 3 0 1 0 24 22', f:1}] },
+    { id:'u-dw', name:'Dishwasher', w:36, p:[
+      {d:'M16 16 H84 V84 H16 Z', lw:4}], t:[{t:'DW', x:50, y:50, s:20}] },
+    { id:'u-dryer', name:'Dryer', w:36, p:[
+      {d:'M16 16 H84 V84 H16 Z', lw:4},
+      {d:'M50 32 A18 18 0 1 0 50 68 A18 18 0 1 0 50 32', lw:3}], t:[{t:'D', x:50, y:50, s:14}] },
+  ]},
+  { id:'civil', name:'Civil / Siteworks', items:[
+    { id:'c-tree', name:'Tree', w:44, p:[
+      {d:'M50 16 A34 34 0 1 0 50 84 A34 34 0 1 0 50 16', lw:4},
+      {d:'M50 20 V80 M20 50 H80', lw:1.5},
+      {d:'M50 45 A5 5 0 1 0 50 55 A5 5 0 1 0 50 45', f:1}] },
+    { id:'c-shrub', name:'Shrub', w:28, p:[
+      {d:'M50 26 A24 24 0 1 0 50 74 A24 24 0 1 0 50 26', lw:4},
+      {d:'M50 38 A12 12 0 1 0 50 62 A12 12 0 1 0 50 38', lw:2.5}] },
+    { id:'c-park', name:'Parking Bay', w:44, p:[
+      {d:'M20 8 V92 M80 8 V92 M20 92 H80', lw:4}], t:[{t:'P', x:50, y:42, s:26}] },
+    { id:'c-parkdis', name:'Accessible Parking', w:44, p:[
+      {d:'M20 8 V92 M80 8 V92 M20 92 H80', lw:4},
+      {d:'M46 20 A6 6 0 1 0 46 32 A6 6 0 1 0 46 20', f:1},
+      {d:'M46 34 V52 H60 L66 68', lw:4},
+      {d:'M48 68 A15 15 0 1 0 62 76', lw:3.5}] },
+    { id:'c-bollard', name:'Bollard', w:20, p:[
+      {d:'M50 32 A18 18 0 1 0 50 68 A18 18 0 1 0 50 32', lw:4},
+      {d:'M50 42 A8 8 0 1 0 50 58 A8 8 0 1 0 50 42', f:1}] },
+    { id:'c-gate', name:'Gate (Swing)', w:48, p:[
+      {d:'M2 80 H14 M79 80 H98', lw:5},
+      {d:'M14 80 V15', lw:4},
+      {d:'M14 15 A65 65 0 0 1 79 80', lw:2, dash:1}] },
+    { id:'c-pit', name:'Stormwater Pit', w:32, p:[
+      {d:'M20 20 H80 V80 H20 Z', lw:4},
+      {d:'M20 20 L80 80 M80 20 L20 80', lw:2}] },
+    { id:'c-mh', name:'Manhole', w:30, p:[
+      {d:'M50 24 A26 26 0 1 0 50 76 A26 26 0 1 0 50 24', lw:4}], t:[{t:'MH', x:50, y:50, s:17}] },
+    { id:'c-pole', name:'Light Pole', w:26, p:[
+      {d:'M50 40 A10 10 0 1 0 50 60 A10 10 0 1 0 50 40', f:1},
+      {d:'M50 20 V80 M20 50 H80', lw:2.5}] },
+    { id:'c-sign', name:'Sign Post', w:30, p:[
+      {d:'M50 92 V20', lw:4},
+      {d:'M50 20 H84 V44 H50', lw:4},
+      {d:'M44 92 H56', lw:4}] },
+  ]},
+];
+
+// Flat id → definition map for fast lookup at draw time.
+const SYMBOL_DEFS = {};
+SYMBOL_LIBRARY.forEach(cat => cat.items.forEach(s => { SYMBOL_DEFS[s.id] = s; }));
+
+// Path2D cache — parsing SVG path data is not free; do it once per path.
+const _symPathCache = new Map();
+function _symPath(d) {
+  let p = _symPathCache.get(d);
+  if (!p) { p = new Path2D(d); _symPathCache.set(d, p); }
+  return p;
+}
+
+// Draw a placed symbol. ann.points = [topLeft, bottomRight] (page space),
+// ann.symbolId picks the definition. Linework scales with the box; the
+// ann.thickness property (default 2) acts as a weight multiplier so the
+// Properties panel thickness control works like other markups.
+function drawSymbolAnn(ctx, ann) {
+  if (!ann.points || ann.points.length < 2) return;
+  const [a, b] = ann.points;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+  if (w < 0.5 || h < 0.5) return;
+  const def = SYMBOL_DEFS[ann.symbolId];
+  ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity / 100 : 1;
+  const col = ann.color || '#111111';
+  if (!def) {
+    // Unknown symbol id (e.g. project from a newer version) — placeholder box
+    ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([4,3]);
+    ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    return;
+  }
+  const sx = w / 100, sy = h / 100, k = (sx + sy) / 2;
+  const weight = (ann.thickness || 2) / 2;
+  const m = new DOMMatrix([sx, 0, 0, sy, x, y]);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  (def.p || []).forEach(p => {
+    const tp = new Path2D();
+    tp.addPath(_symPath(p.d), m);
+    if (p.f) { ctx.fillStyle = col; ctx.fill(tp); }
+    else {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(0.35, (p.lw || 4) * k * weight);
+      ctx.setLineDash(p.dash ? [6 * k, 4 * k] : []);
+      ctx.stroke(tp);
+    }
+  });
+  ctx.setLineDash([]);
+  (def.t || []).forEach(t => {
+    ctx.fillStyle = col;
+    ctx.font = `bold ${Math.max(2, (t.s || 24) * k)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(t.t, x + (t.x ?? 50) * sx, y + (t.y ?? 50) * sy);
+  });
+}
+
+// Tile preview — the same path data rendered as inline SVG for the panel.
+function symbolTileSVG(def) {
+  let inner = '';
+  (def.p || []).forEach(p => {
+    inner += `<path d="${p.d}" fill="${p.f ? 'currentColor' : 'none'}" stroke="${p.f ? 'none' : 'currentColor'}" stroke-width="${p.lw || 4}"${p.dash ? ' stroke-dasharray="6 4"' : ''} stroke-linecap="round" stroke-linejoin="round"/>`;
+  });
+  (def.t || []).forEach(t => {
+    inner += `<text x="${t.x ?? 50}" y="${t.y ?? 50}" font-family="Arial, sans-serif" font-weight="bold" font-size="${t.s || 24}" fill="currentColor" text-anchor="middle" dominant-baseline="central">${t.t}</text>`;
+  });
+  return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+}
+
+// ---- Placement -------------------------------------------------
+let pendingSymbolId = null;
+let symbolKeepPlacing = localStorage.getItem('bdm-symbol-keep') !== '0';
+let symbolSearchQuery = '';
+let symbolCollapsedCats = {};
+try { symbolCollapsedCats = JSON.parse(localStorage.getItem('bdm-symbol-collapsed') || '{}'); } catch(e) { symbolCollapsedCats = {}; }
+
+function armSymbol(id) {
+  pendingSymbolId = id;
+  setTool('symbol'); // re-renders the panel; the tile highlight follows pendingSymbolId
+}
+
+function addSymbolAnn(screenPt) {
+  const def = SYMBOL_DEFS[pendingSymbolId];
+  if (!def) { showToast('Pick a symbol from the Symbols panel first'); return; }
+  const p = toPage(screenPt);
+  const w = def.w || 40, h = w; // symbols are authored in a square box
+  const ann = {
+    id: generateId(), type: 'symbol', page: currentPage,
+    symbolId: def.id, color: '#111111', thickness: 2,
+    points: [{ x: p.x - w/2, y: p.y - h/2 }, { x: p.x + w/2, y: p.y + h/2 }]
+  };
+  annotations.push(ann);
+  saveToHistory();
+  redrawAnnotations();
+}
+
+// ---- Panel -----------------------------------------------------
+function openSymbolsPanel() { setPanelMode('symbols'); }
+
+function getSymbolsPanelHTML() {
+  return `<div style="display:flex;flex-direction:column;gap:8px">
+    <input type="text" id="symbol-search" class="property-input" placeholder="Search symbols… (e.g. toilet, GPO)" value="${escapeHtml(symbolSearchQuery)}" autocomplete="off">
+    <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+      <input type="checkbox" class="checkbox-input" id="symbol-keep" ${symbolKeepPlacing ? 'checked' : ''}>
+      Keep placing after each click</label>
+    <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
+      Click a symbol, then click the drawing to place it. Drag corners to resize, use the rotate handle to turn, recolour from Properties.</div>
+    <div id="sym-cats">${getSymbolCatsHTML()}</div>
+  </div>`;
+}
+
+function getSymbolCatsHTML() {
+  const q = symbolSearchQuery.trim().toLowerCase();
+  let html = '';
+  SYMBOL_LIBRARY.forEach(cat => {
+    const items = cat.items.filter(s => !q || s.name.toLowerCase().includes(q) || cat.name.toLowerCase().includes(q));
+    if (!items.length) return;
+    const collapsed = !q && symbolCollapsedCats[cat.id]; // searching auto-expands
+    html += `<div class="sym-cat" style="margin-bottom:6px">
+      <div class="sym-cat-head" onclick="toggleSymbolCat('${cat.id}')">
+        <span class="sym-chev">${collapsed ? '▶' : '▼'}</span>${cat.name}<span class="sym-count">${items.length}</span>
+      </div>`;
+    if (!collapsed) {
+      html += `<div class="sym-grid">` + items.map(s =>
+        `<div class="sym-tile${(pendingSymbolId === s.id && currentTool === 'symbol') ? ' active' : ''}" title="${escapeHtml(s.name)}" onclick="armSymbol('${s.id}')">${symbolTileSVG(s)}</div>`
+      ).join('') + `</div>`;
+    }
+    html += `</div>`;
+  });
+  if (!html) html = `<div style="text-align:center;color:var(--text-muted);padding:16px;font-size:12px">No symbols match "${escapeHtml(symbolSearchQuery)}"</div>`;
+  return html;
+}
+
+function attachSymbolsPanelListeners() {
+  const search = document.getElementById('symbol-search');
+  if (search) search.addEventListener('input', () => {
+    symbolSearchQuery = search.value;
+    const cats = document.getElementById('sym-cats');
+    if (cats) cats.innerHTML = getSymbolCatsHTML(); // only the grid rerenders — keeps focus in the box
+  });
+  const keep = document.getElementById('symbol-keep');
+  if (keep) keep.addEventListener('change', () => {
+    symbolKeepPlacing = keep.checked;
+    localStorage.setItem('bdm-symbol-keep', symbolKeepPlacing ? '1' : '0');
+  });
+}
+
+function toggleSymbolCat(id) {
+  symbolCollapsedCats[id] = !symbolCollapsedCats[id];
+  localStorage.setItem('bdm-symbol-collapsed', JSON.stringify(symbolCollapsedCats));
+  const cats = document.getElementById('sym-cats');
+  if (cats) cats.innerHTML = getSymbolCatsHTML();
 }
 
 // ============================================================
