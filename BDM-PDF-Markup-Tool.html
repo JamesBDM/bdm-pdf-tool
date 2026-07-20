@@ -9981,8 +9981,6 @@ function goToPage(i) {
 // ============================================================
 function showThumbContextMenu(x, y) {
   const menu = document.getElementById('thumb-context-menu');
-  menu.style.left = x + 'px'; menu.style.top = y + 'px';
-  menu.classList.add('visible');
   // Right-clicking within a multi-selection offers a bulk delete
   const delItem = document.getElementById('thumb-ctx-delete');
   if (delItem) delItem.textContent = (thumbSelectedPages.size > 1 && thumbSelectedPages.has(thumbCtxPage))
@@ -9990,6 +9988,22 @@ function showThumbContextMenu(x, y) {
   // Enable/disable move up/down
   document.getElementById('thumb-ctx-moveup').classList.toggle('disabled', thumbCtxPage <= 0);
   document.getElementById('thumb-ctx-movedown').classList.toggle('disabled', thumbCtxPage >= pdfDoc.numPages - 1);
+  // Show first (off-screen) so we can measure the fully-populated menu, then
+  // clamp its position to stay within the viewport instead of running off the edge.
+  menu.style.left = '-9999px'; menu.style.top = '-9999px';
+  menu.classList.add('visible');
+  const margin = 6;
+  const rect = menu.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = x, top = y;
+  // If it would overflow the right edge, open to the left of the cursor instead.
+  if (left + rect.width > vw - margin) left = Math.max(margin, x - rect.width);
+  // If it would overflow the bottom edge, flip it up above the cursor.
+  if (top + rect.height > vh - margin) top = Math.max(margin, y - rect.height);
+  // Final safety clamp so it never sits off the top/left.
+  left = Math.min(Math.max(margin, left), Math.max(margin, vw - rect.width - margin));
+  top = Math.min(Math.max(margin, top), Math.max(margin, vh - rect.height - margin));
+  menu.style.left = left + 'px'; menu.style.top = top + 'px';
 }
 function hideThumbContextMenu() {
   document.getElementById('thumb-context-menu').classList.remove('visible');
