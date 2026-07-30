@@ -1014,12 +1014,26 @@ canvas { display: block; }
 .compare-container { position: relative; width: 100%; }
 .compare-slider { width: 100%; margin: 8px 0; accent-color: var(--accent); }
 
-/* Text input overlay for inline editing */
+/* Text input overlay for inline editing.
+   v3.7 — WYSIWYG: no background, no border, no padding, so the characters you
+   type sit EXACTLY where the finished markup gets drawn on the page. The only
+   chrome is a dashed outline, which paints OUTSIDE the box and therefore costs
+   zero layout offset. */
 .text-input-overlay {
-  position: absolute; z-index: 10; background: rgba(34,35,56,0.95);
-  border: 2px solid var(--accent); border-radius: 4px; padding: 4px 6px;
+  position: absolute; z-index: 10; background: transparent;
+  border: 0; padding: 0; margin: 0; border-radius: 0;
   color: var(--text-primary); font-size: 14px; font-family: Arial, sans-serif;
-  min-width: 120px; min-height: 24px; outline: none; resize: both; overflow: auto;
+  min-width: 6px; min-height: 1em;
+  white-space: pre; overflow: visible;
+  outline: 1px dashed var(--accent); outline-offset: 3px;
+  caret-color: var(--accent);
+}
+/* Callout editor keeps the white box, because that IS what the finished
+   callout looks like. Its 6px padding is cancelled by an equal negative
+   offset applied in JS, so the first character still lands on textPos. */
+.text-input-overlay.callout-edit {
+  padding: 6px; background: #ffffff; color: #000000;
+  outline: 1px solid var(--accent); outline-offset: 0;
 }
 
 /* Print styles */
@@ -1765,7 +1779,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.5';
+const APP_VERSION = 'v3.7';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3408,6 +3422,10 @@ function drawAnnotation(ctx, ann, isSelected) {
   // Layers (v3.1): hidden layers draw NOWHERE — screen, bake, flatten,
   // print and report all funnel through here, so this one gate is WYSIWYG.
   if (typeof annVisible === 'function' && !annVisible(ann)) return;
+  // v3.7 — while a markup is being edited inline, the (now transparent) editor
+  // sits directly over it. Skip the canvas copy so the live text doesn't ghost
+  // behind what you're typing. Transient: cleared the moment editing ends.
+  if (ann._editingInline) return;
   ctx.save();
   const color = ann.color || '#E5432E';
   const thickness = ann.thickness || 2;
@@ -6025,16 +6043,39 @@ function finishPolyShape() {
   refreshMeasurementsPanel();
 }
 
+// v3.7 — WYSIWYG inline text editing.
+// The editor used to be a chromed box (dark fill, 2px border, 4x6px padding,
+// 120px minimum width). That padding+border pushed the caret ~8px right and
+// ~6px down from the click, and the dark fill hid the drawing underneath — so
+// it read as a separate pop-up editor rather than typing straight onto the
+// page, even though the committed markup landed on the click point.
+// This helper makes the editor match the canvas render exactly: same font,
+// same weight/slant/underline, same line spacing (fontSize + 2, as used by
+// drawTextAnn), and — with padding and border now zero in CSS — the same
+// top-left origin. What you see while typing is what gets drawn.
+function _styleTextOverlay(overlay, o) {
+  const fs = o.fontSize || 14;
+  overlay.style.fontFamily = o.fontFamily || 'Arial';
+  overlay.style.fontSize = (fs * currentScale) + 'px';
+  // drawTextAnn / drawCalloutAnn step each line by (fontSize + lineGap)
+  overlay.style.lineHeight = ((fs + (o.lineGap !== undefined ? o.lineGap : 2)) * currentScale) + 'px';
+  overlay.style.color = o.color || '#E5432E';
+  overlay.style.fontWeight = o.fontWeight || 'normal';
+  overlay.style.fontStyle = o.fontStyle || 'normal';
+  overlay.style.textDecoration = o.textDecoration || 'none';
+}
+
 function showTextInput(screenPt) {
   // screenPt is in screen space — position overlay directly, store page space in annotation
   const pagePt = toPage(screenPt);
   const overlay = document.createElement('div');
   overlay.className = 'text-input-overlay';
   overlay.contentEditable = true;
+  // Canvas draws text with textBaseline 'top' at points[0], and the overlay now
+  // has no border/padding — so left/top == the click point puts the very first
+  // character precisely where it will be drawn.
   overlay.style.left = screenPt.x + 'px'; overlay.style.top = screenPt.y + 'px';
-  overlay.style.fontFamily = toolProperties.fontFamily;
-  overlay.style.fontSize = (toolProperties.fontSize * currentScale) + 'px';
-  overlay.style.color = toolProperties.color;
+  _styleTextOverlay(overlay, toolProperties);
   // Prevent clicks on the overlay from propagating to the canvas beneath
   overlay.addEventListener('mousedown', (e) => e.stopPropagation());
   overlay.addEventListener('mouseup', (e) => e.stopPropagation());
@@ -6062,13 +6103,23 @@ function showTextInput(screenPt) {
 
 function showCalloutTextInput(anchor, knees, textPos) {
   const overlay = document.createElement('div');
-  overlay.className = 'text-input-overlay';
+  // callout-edit keeps the white box the finished callout has; its 6px padding
+  // is cancelled below so the text still starts exactly on textPos.
+  overlay.className = 'text-input-overlay callout-edit';
   overlay.contentEditable = true;
   const screenTextPos = toScreen(textPos);
-  overlay.style.left = screenTextPos.x + 'px'; overlay.style.top = screenTextPos.y + 'px';
-  overlay.style.fontFamily = toolProperties.fontFamily;
-  overlay.style.fontSize = ((toolProperties.fontSize || 12) * currentScale) + 'px';
-  overlay.style.color = toolProperties.color;
+  const CALLOUT_PAD = 6;
+  overlay.style.left = (screenTextPos.x - CALLOUT_PAD) + 'px';
+  overlay.style.top  = (screenTextPos.y - CALLOUT_PAD) + 'px';
+  _styleTextOverlay(overlay, {
+    fontFamily: toolProperties.fontFamily,
+    fontSize: toolProperties.fontSize || 12,
+    fontWeight: toolProperties.fontWeight,
+    fontStyle: toolProperties.fontStyle,
+    textDecoration: toolProperties.textDecoration,
+    color: '#000000',        // finished callout uses black text on white
+    lineGap: 3               // drawCalloutAnn steps lines by fontSize + 3
+  });
   // Prevent clicks on the overlay from propagating to the canvas beneath
   overlay.addEventListener('mousedown', (e) => e.stopPropagation());
   overlay.addEventListener('mouseup', (e) => e.stopPropagation());
@@ -6110,26 +6161,39 @@ function _appendOverlayAtActivePage(overlay) {
 }
 
 function editTextAnnotationInline(ann, e) {
-  const pos = ann.type === 'callout' ? ann.textPos : ann.points[0];
+  const isCallout = ann.type === 'callout';
+  const pos = isCallout ? ann.textPos : ann.points[0];
   const screenPos = toScreen(pos);
-  const container = document.getElementById('canvas-container');
   const overlay = document.createElement('div');
-  overlay.className = 'text-input-overlay';
+  overlay.className = 'text-input-overlay' + (isCallout ? ' callout-edit' : '');
   overlay.contentEditable = true;
-  overlay.style.left = screenPos.x + 'px';
-  overlay.style.top = screenPos.y + 'px';
-  overlay.style.fontFamily = ann.fontFamily || 'Arial';
-  overlay.style.fontSize = ((ann.fontSize || 14) * currentScale) + 'px';
-  overlay.style.color = ann.color || '#E5432E';
-  overlay.style.fontWeight = ann.fontWeight || 'normal';
-  overlay.style.fontStyle = ann.fontStyle || 'normal';
+  // Same WYSIWYG rule as showTextInput: zero chrome offset, so the existing
+  // text stays put the instant you start editing it (no visible jump).
+  const pad = isCallout ? 6 : 0;
+  overlay.style.left = (screenPos.x - pad) + 'px';
+  overlay.style.top = (screenPos.y - pad) + 'px';
+  _styleTextOverlay(overlay, {
+    fontFamily: ann.fontFamily,
+    fontSize: ann.fontSize || (isCallout ? 12 : 14),
+    fontWeight: ann.fontWeight,
+    fontStyle: ann.fontStyle,
+    textDecoration: ann.textDecoration,
+    color: isCallout ? (ann.textColor || ann.color || '#000000') : (ann.color || '#E5432E'),
+    lineGap: isCallout ? 3 : 2
+  });
+  if (isCallout && ann.fillColor) overlay.style.background = ann.fillColor;
   overlay.innerText = ann.text || '';
   overlay.addEventListener('mousedown', (ev) => ev.stopPropagation());
   overlay.addEventListener('mouseup', (ev) => ev.stopPropagation());
   overlay.addEventListener('click', (ev) => ev.stopPropagation());
   _appendOverlayAtActivePage(overlay);
+  // Plain text: the editor is transparent now, so hide the canvas copy while
+  // editing or the old text ghosts through. Callouts keep drawing — their
+  // opaque white editor box already covers the original.
+  if (!isCallout) { ann._editingInline = true; redrawAnnotations(); }
   setTimeout(() => { overlay.focus(); selectAllText(overlay); }, 10);
   overlay.addEventListener('blur', () => {
+    delete ann._editingInline;
     if (!overlay._cancelled) {  // Escape = keep the original text untouched
       const newText = overlay.innerText.trim();
       if (newText) { ann.text = newText; } else { ann.text = ann.text || 'Text'; }
@@ -12192,8 +12256,17 @@ async function executePrint() {
     // intent:'print' tells pdf.js to render at print fidelity — it embeds the
     // actual font glyphs into the canvas instead of falling back to system
     // fonts. Without this, PDFs with embedded subsets often print as boxes.
-    // annotationMode:0 disables pdf.js's own annotation layer (we draw our own).
-    await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 0 }).promise;
+    // v3.6 — annotationMode must be ENABLE (1), NOT DISABLE (0). Datum draws its
+    // OWN markups from the `annotations` array (below), but annotationMode:0 also
+    // threw away the annotations already baked into the incoming file — typewriter
+    // text, form-field values, stamps, sticky notes added in Acrobat/Edge/Bluebeam.
+    // Those showed on screen (screen render uses pdf.js's ENABLE default) but
+    // silently vanished from every print. Mode 1 (not 2/ENABLE_FORMS) is the right
+    // value: 2 deliberately skips widget/form annotations on canvas, expecting an
+    // HTML form layer that Datum doesn't have. pdf.js still honours each
+    // annotation's Print flag under intent:'print', so hidden/no-print
+    // annotations stay out — same behaviour as Acrobat.
+    await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
 
     if (s.markups) {
       const pageAnns = annotations.filter(a => a.page === pi);
@@ -12592,7 +12665,9 @@ async function executeMarkupReport() {
         c.width = vp.width; c.height = vp.height;
         const ctx = c.getContext('2d');
         ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
-        await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 0 }).promise;
+        // v3.6 — mode 1 (ENABLE), not 0: keep annotations already in the source
+        // file (typewriter text, form values, stamps) in the report thumbnails.
+        await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
         isBakingAnnotations = true;
         try {
           annotations.filter(a => a.page === pg).forEach(a => {
