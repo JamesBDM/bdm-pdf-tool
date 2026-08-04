@@ -1779,7 +1779,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.7';
+const APP_VERSION = 'v3.8';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -6441,6 +6441,15 @@ function openPropertiesPanel(forceOpen) {
   const panelTitle = document.getElementById('panel-title');
   const content = document.getElementById('panel-content');
 
+  // Document search owns the panel while it's open — page jumps and takeoff
+  // refreshes must not rebuild it (that used to flip the sidebar back to
+  // Takeoff after the first search result). Selecting a markup is an
+  // explicit action, so that DOES exit search and shows its properties.
+  if (typeof searchPanelOpen !== 'undefined' && searchPanelOpen) {
+    if (selectedAnnotationId) { searchPanelOpen = false; }
+    else return;
+  }
+
   // Workbook two-way link: selecting a takeoff shape scrolls/flashes its rows
   if (typeof workbookSyncSelection === 'function') workbookSyncSelection();
 
@@ -6496,6 +6505,8 @@ function openPropertiesPanel(forceOpen) {
 // Switch the panel between properties / measurements / takeoff views.
 function setPanelMode(mode) {
   panelMode = mode;
+  // Clicking a panel tab is an explicit exit from document search.
+  if (typeof searchPanelOpen !== 'undefined') searchPanelOpen = false;
   // Explicit user action — open the panel and clear the "keep closed" flag.
   panelUserCollapsed = false;
   document.getElementById('panel').classList.remove('collapsed');
@@ -12801,6 +12812,11 @@ async function executeMarkupReport() {
 let searchHighlights = [];
 let searchCurrentIdx = -1;
 let searchLastQuery = '';
+// While true, the sidebar panel belongs to Search: openPropertiesPanel()
+// must NOT rebuild it (page jumps used to wipe the search UI back to the
+// Takeoff/Properties tab after the first result). Cleared by the Close
+// button, by clicking a panel tab, or by selecting a markup.
+let searchPanelOpen = false;
 
 function openSearchDialog() {
   if (!pdfDoc) { alert('Open a PDF first'); return; }
@@ -12808,6 +12824,14 @@ function openSearchDialog() {
   const panel = document.getElementById('panel');
   const panelTitle = document.getElementById('panel-title');
   const content = document.getElementById('panel-content');
+  // Already open? Just focus the box — don't wipe the results list.
+  if (searchPanelOpen && document.getElementById('search-input')) {
+    panel.classList.remove('collapsed');
+    const el = document.getElementById('search-input');
+    el.focus(); el.select();
+    return;
+  }
+  searchPanelOpen = true;
   panelTitle.textContent = 'Search';
   content.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:10px;padding:4px">
@@ -12824,6 +12848,7 @@ function openSearchDialog() {
         <button class="modal-btn secondary" style="flex:1;padding:4px;font-size:11px" onclick="searchPrev()">◀ Prev</button>
         <button class="modal-btn secondary" style="flex:1;padding:4px;font-size:11px" onclick="searchNext()">Next ▶</button>
         <button class="modal-btn secondary" style="padding:4px 8px;font-size:11px" onclick="clearSearchHighlights()">Clear</button>
+        <button class="modal-btn secondary" style="padding:4px 8px;font-size:11px" onclick="closeSearchPanel()" title="Close search and return to the normal panel">✕</button>
       </div>
       <div id="search-results" style="overflow:auto;border:1px solid var(--border-color);border-radius:4px;max-height:calc(100vh - 340px)"></div>
     </div>`;
@@ -12878,7 +12903,7 @@ async function runDocSearch() {
           const hPx = fontHeight + 2;
           const hl = { page: p, x: x - 1, y: yTop - 1, w: wPx, h: hPx, idx: total, text: str.substr(idx, needle.length) };
           searchHighlights.push(hl);
-          html += `<div style="padding:6px 8px;border-bottom:1px solid var(--border-color);cursor:pointer;font-size:12px" onclick="gotoSearchResult(${total})">
+          html += `<div data-sr="${total}" style="padding:6px 8px;border-bottom:1px solid var(--border-color);cursor:pointer;font-size:12px" onclick="gotoSearchResult(${total})">
             <span style="color:var(--accent);font-weight:600">Page ${p+1}</span> — ${escapeHtml(str)}</div>`;
           total++;
           pos = idx + needle.length;
@@ -12898,6 +12923,15 @@ function gotoSearchResult(i) {
   if (i < 0 || i >= searchHighlights.length) return;
   searchCurrentIdx = i;
   const h = searchHighlights[i];
+  // Keep the panel's status + result list in sync with the active hit.
+  const st = document.getElementById('search-status');
+  if (st) st.textContent = `${i+1} of ${searchHighlights.length}`;
+  const list = document.getElementById('search-results');
+  if (list) {
+    list.querySelectorAll('[data-sr]').forEach(el => { el.style.background = ''; });
+    const row = list.querySelector(`[data-sr="${i}"]`);
+    if (row) { row.style.background = 'var(--bg-hover)'; row.scrollIntoView({ block: 'nearest' }); }
+  }
   if (h.page !== currentPage) {
     // Route through goToPage so continuous/side-by-side view modes survive
     // (calling renderPage directly destroyed the continuous-view DOM).
@@ -12919,6 +12953,13 @@ function scrollToSearchHit(h) {
 function searchNext() { if (searchHighlights.length) gotoSearchResult((searchCurrentIdx+1) % searchHighlights.length); }
 function searchPrev() { if (searchHighlights.length) gotoSearchResult((searchCurrentIdx-1+searchHighlights.length) % searchHighlights.length); }
 function clearSearchHighlights() { searchHighlights = []; searchCurrentIdx = -1; redrawAnnotations(); const s = document.getElementById('search-status'); if (s) s.textContent = ''; const r = document.getElementById('search-results'); if (r) r.innerHTML = ''; }
+
+// ✕ button: hand the panel back to the normal Properties/Takeoff view.
+function closeSearchPanel() {
+  clearSearchHighlights();
+  searchPanelOpen = false;
+  openPropertiesPanel();
+}
 
 function openMergeDialog() {
   mergeFiles = [];
