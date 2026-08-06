@@ -1781,7 +1781,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.9';
+const APP_VERSION = 'v3.9.1';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3864,6 +3864,16 @@ function _wrapTextLines(ctx, text, maxW) {
   return out;
 }
 
+// v3.9.1 — boxFill is a colour string ('#FFFFFF') or 'none'/falsy for no box.
+// Old sequence labels stored the boolean `true` instead, which canvas rejects
+// as a fillStyle (leaving the previous colour = the text colour → invisible
+// text). Normalise on read so existing saved files repair themselves.
+function _textBoxFillColor(ann) {
+  if (!ann || !ann.boxFill || ann.boxFill === 'none') return null;
+  if (typeof ann.boxFill !== 'string') return ann.fillColor || '#FFFFFF';
+  return ann.boxFill;
+}
+
 function drawTextAnn(ctx, ann) {
   ctx.globalAlpha = 1;
   ctx.fillStyle = ann.color || '#E5432E';
@@ -3877,12 +3887,13 @@ function drawTextAnn(ctx, ann) {
   const lines = ann.boxW ? _wrapTextLines(ctx, ann.text || '', ann.boxW) : (ann.text||'').split('\n');
   // Optional fill behind the text (ann.boxFill — Properties → Appearance).
   // Separate property from shapes' fillColor so older text stays unfilled.
-  if (ann.boxFill && ann.boxFill !== 'none') {
+  const _boxFillCol = _textBoxFillColor(ann);
+  if (_boxFillCol) {
     const bp = 3; // breathing room around the text
     const bw = (ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width))) + bp * 2;
     const bh = (ann.boxH || Math.max(fs + 2, lines.length * (fs + 2))) + bp * 2;
     ctx.save();
-    ctx.fillStyle = ann.boxFill;
+    ctx.fillStyle = _boxFillCol;
     ctx.globalAlpha = (ann.fillOpacity !== undefined ? ann.fillOpacity : 100) / 100;
     ctx.fillRect(ann.points[0].x - bp, ann.points[0].y - bp, bw, bh);
     ctx.restore();
@@ -7814,7 +7825,11 @@ function addSequenceLabel(point) {
     id: generateId(), type: 'text', page: currentPage, points: [pagePoint], text: label,
     color: toolProperties.color, fontSize: toolProperties.fontSize || 12, fontFamily: toolProperties.fontFamily,
     fontWeight: '700', fontStyle: 'normal', textDecoration: 'none', opacity: toolProperties.opacity,
-    boxFill: true, fillColor: '#FFFFFF', fillOpacity: 85
+    // v3.9.1: boxFill must be a COLOUR STRING (drawTextAnn assigns it straight
+    // to ctx.fillStyle). It used to be `true`, which canvas silently ignores —
+    // the fill kept the previous fillStyle (the text colour), so every sequence
+    // label came out as red text on a red box.
+    boxFill: '#FFFFFF', fillColor: '#FFFFFF', fillOpacity: 85
   };
   annotations.push(ann);
   saveToHistory(); redrawAnnotations();
@@ -9548,10 +9563,11 @@ function getAnnotationPropertiesHTML(ann) {
     }
 
     if (ann.type === 'text') {
-      const tfOn = ann.boxFill && ann.boxFill !== 'none';
+      const tfCol = _textBoxFillColor(ann); // v3.9.1: tolerates legacy boxFill:true
+      const tfOn = !!tfCol;
       html += `<div class="property-row"><div class="property-label" title="Fill colour behind the text — handy over busy linework">Box Fill:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
         <input type="checkbox" id="prop-textfill-on" class="checkbox-input" ${tfOn ? 'checked' : ''}>
-        <input type="color" id="prop-textfill-color" class="color-picker" value="${tfOn ? ann.boxFill : '#ffffff'}" ${tfOn ? '' : 'disabled'}>
+        <input type="color" id="prop-textfill-color" class="color-picker" value="${tfOn ? tfCol : '#ffffff'}" ${tfOn ? '' : 'disabled'}>
       </div></div>
       <div class="color-swatches" data-target="prop-textfill-color"></div>
       <div class="slider-group"><div class="slider-label"><span>Fill Opacity:</span><span id="prop-tfo-val">${ann.fillOpacity !== undefined ? ann.fillOpacity : 100}%</span></div>
