@@ -818,7 +818,7 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
 #canvas-area.snipregion, #canvas-area.viewport, #canvas-area.magicarea { cursor: crosshair; }
-#canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature, #canvas-area.symbol { cursor: pointer; }
+#canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature, #canvas-area.symbol, #canvas-area.table { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
 #canvas-area.selecttext { cursor: text; }
 #canvas-area.cutcontent { cursor: crosshair; }
@@ -1311,6 +1311,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="am-sep"></div>
       <div class="ami" onclick="amClose();setTool('text')">Text <span class="k">T</span></div>
       <div class="ami" onclick="amClose();setTool('callout')">Callout <span class="k">B</span></div>
+      <div class="ami" onclick="amClose();setTool('table')">Legend / Table (custom)…</div>
       <div class="ami" onclick="amClose();setTool('stamp')">Stamp <span class="k">S</span></div>
       <div class="ami" onclick="amClose();armSequenceTool()">Sequence (numbered labels)</div>
       <div class="ami" onclick="amClose();setTool('pen')">Pen <span class="k">P</span></div>
@@ -1440,6 +1441,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
         <div class="tool-group-body">
           <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
           <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
+          <button class="tool-btn" data-tool="table" onclick="setTool('table')" title="Legend / Table — drop a custom table on the drawing with text cells and colour-key boxes. Click the page to place it, then double-click it to edit."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="14.5" x2="21" y2="14.5"/><line x1="9" y1="9" x2="9" y2="20"/></svg></button>
           <button class="tool-btn" data-tool="stamp" onclick="setTool('stamp')" title="Stamp (S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 10h8M8 14h8"/></svg><span class="shortcut">S</span></button>
           <button class="tool-btn" data-tool="tick" onclick="setTool('tick')" title="Tick / Check Mark (J)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,13 10,18 20,6"/></svg><span class="shortcut">J</span></button>
           <button class="tool-btn" data-tool="sequence" onclick="armSequenceTool()" title="Sequence — auto-numbered labels (Door 01, Door 02…). Click to place each one; set the prefix and starting number on first click. Click this button again to restart the numbering."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h2v6"/><path d="M4 17h4c0-3-4-2-4-5"/><line x1="12" y1="6" x2="20" y2="6"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/></svg></button>
@@ -1779,7 +1781,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.8';
+const APP_VERSION = 'v3.9';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2046,6 +2048,19 @@ const toolProperties = {
 // Tool presets (Tool Chest)
 let toolPresets = [];
 
+// v3.9: default colour of the text inside measurement labels (the little
+// pill that shows 63.15m² / 4250mm). White reads far better on the dark pill
+// than the old redline red. Individual labels can still be recoloured.
+const DEFAULT_LABEL_TEXT_COLOR = '#ffffff';
+
+// v3.9 calibration preferences (persisted in localStorage)
+//   calibrateAskAfterDraw — DRAW the line first, THEN type what it really is
+//   calibrateAfterTool    — what the app switches to once a calibration lands
+//   calAllPages           — sticky "apply to ALL pages" state
+let calibrateAskAfterDraw = true;
+let calibrateAfterTool = 'calibrate';
+let calAllPages = false;
+
 // Tool names
 const toolNames = {
   select:'Select', pan:'Pan', calibrate:'Calibrate', measure:'Measure Length',
@@ -2055,7 +2070,8 @@ const toolNames = {
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
   snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature', symbol:'Symbols',
   viewport:'Viewport (region scale)', magicarea:'Room Fill (auto area)',
-  selecttext:'Select Text (copy)', sequence:'Sequence (numbered labels)'
+  selecttext:'Select Text (copy)', sequence:'Sequence (numbered labels)',
+  table:'Legend / Table'
 };
 
 // ============================================================
@@ -2282,6 +2298,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load saved presets
   try { toolPresets = JSON.parse(localStorage.getItem('bdm-tool-presets') || '[]'); } catch(e) { toolPresets = []; }
+  // v3.9 calibration preferences
+  try {
+    const cp = JSON.parse(localStorage.getItem('bdm-calibrate-prefs') || '{}');
+    if (typeof cp.askAfterDraw === 'boolean') calibrateAskAfterDraw = cp.askAfterDraw;
+    if (typeof cp.afterTool === 'string') calibrateAfterTool = cp.afterTool;
+  } catch(e) { /* defaults */ }
 
   updateToolIndicator();
   saveToHistory();
@@ -3474,6 +3496,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     case 'dimension': drawDimensionAnn(ctx, ann); break;
     case 'cutcontent': drawCutContentAnn(ctx, ann); break;
     case 'legend': drawLegendAnn(ctx, ann); break;
+    case 'table': drawTableAnn(ctx, ann); break;
   }
   ctx.setLineDash([]);
 
@@ -4111,7 +4134,10 @@ function drawLabel(ctx, text, pos, opts) {
   }
   const fontSize = ann.labelFontSize || 8;   // was 11 — measurement labels were too big on drawings
   const bg = ann.labelBg || 'rgba(18,19,26,0.8)';
-  const fg = ann.labelColor || '#E5432E';
+  // v3.9: measurement labels are WHITE by default. Red-on-dark was hard to
+  // read over coloured architectural fills; white on the dark pill reads on
+  // any drawing. Per-annotation override: Properties → Label → Text Color.
+  const fg = ann.labelColor || DEFAULT_LABEL_TEXT_COLOR;
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.font = `${fontSize}px Arial`;
@@ -4246,7 +4272,7 @@ function getAnnotationHandlePoints(ann) {
   }
   // Takeoff legend / summary table — 4 corner handles; dragging any corner
   // scales the whole table (ann.legendScale) around the opposite corner.
-  if (ann.type === 'legend') {
+  if (ann.type === 'legend' || ann.type === 'table') {
     const w = ann._legendW || 120, h = ann._legendH || 60;
     const p = ann.points[0];
     return [
@@ -4342,7 +4368,7 @@ function applyResize(ann, handleIdx, newPagePt) {
   // Takeoff legend / summary — corner drag rescales the table proportionally
   // (content re-lays-out from ann.legendScale on the next draw); the corner
   // OPPOSITE the dragged one stays pinned.
-  if (ann.type === 'legend') {
+  if (ann.type === 'legend' || ann.type === 'table') {
     const w = ann._legendW || 1, h = ann._legendH || 1;
     const p = ann.points[0];
     const ls = ann.legendScale || 1;
@@ -4717,6 +4743,8 @@ function onCanvasMouseDown(e) {
   }
   if (currentTool === 'count') { addCountMarker(screenPt); isDrawing = false; return; }
   if (currentTool === 'stamp') { addStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
+  // Legend / Table — click drops the table, then the editor opens straight away
+  if (currentTool === 'table') { addTableAnn(screenPt); isDrawing = false; returnToNavTool(); return; }
   // Tick stays armed so a whole checklist/QA pass can be ticked in one go (Esc/V to exit)
   if (currentTool === 'tick') { addTickMark(screenPt); isDrawing = false; return; }
   // Sequence stays armed — every click places the next numbered label
@@ -5062,6 +5090,11 @@ function onCanvasDoubleClick(e) {
       selectedAnnotationId = ann.id;
       redrawAnnotations();
       editTextAnnotationInline(ann, e);
+    } else if (ann && ann.type === 'table') {
+      // v3.9: double-click a legend/table opens its cell editor
+      selectedAnnotationId = ann.id;
+      redrawAnnotations();
+      openTableEditor(ann.id);
     }
   }
 }
@@ -5695,38 +5728,26 @@ function addMeasurement(points) {
   const dist = Math.hypot(points[1].x-points[0].x, points[1].y-points[0].y);
 
   // Handle calibration mode
+  // v3.9: draw-then-type is now the default. The user drags a line over a
+  // known dimension and Datum asks what that line really is (with a live
+  // 1:N preview) — instead of demanding the number up front. And when the
+  // calibration lands the tool NO LONGER snaps back to the arrow.
   if (currentTool === 'calibrate') {
     calibrationPixels = dist;
+    if (!(dist > 0)) { showToast('That line has no length — drag across a known dimension'); return; }
     const mmInput = document.getElementById('calibrate-distance');
-    let mm = mmInput ? parseFloat(mmInput.value) : NaN;
-    // The reference-length input only exists while the calibrate panel is
-    // visible — if it's missing or invalid, ASK rather than silently using a
-    // stale value (which calibrated whole drawings wrongly).
-    if (!(mm > 0)) {
-      const answer = prompt('Real-world length of the line you just drew (in mm):', calibrationMM || 1000);
-      mm = parseFloat(answer);
-      if (!(mm > 0)) { showToast('Calibration cancelled'); setTool('select'); return; }
+    const typed = mmInput ? parseFloat(mmInput.value) : NaN;
+    const prefill = (typed > 0) ? typed : (calibrationMM || 1000);
+    if (calibrateAskAfterDraw || !(typed > 0)) {
+      datumCalibrationPrompt(dist, prefill).then(res => {
+        if (!res) { showToast('Calibration cancelled'); afterCalibrationTool(); return; }
+        applyMeasuredCalibration(dist, res.mm, res.allPages);
+        afterCalibrationTool();
+      });
+      return;
     }
-    if (mm > 0 && dist > 0) {
-      calibrationMM = mm;
-      const guessed = guessScale(dist, mm);
-      const applyAllEl = document.getElementById('cal-all-pages');
-      const cal = { pixelsPerMm: dist / mm, scale: guessed };
-      if (applyAllEl && applyAllEl.checked && pdfDoc) {
-        for (let p = 0; p < pdfDoc.numPages; p++) pageCalibrations[p] = { ...cal };
-      } else {
-        pageCalibrations[currentPage] = cal;
-      }
-      defaultCalibration = { ...cal };
-      updateCalibrationIndicator();
-      checkCalibrationBanner();
-      rebuildMeasurements();
-      redrawAnnotations();
-      const status = document.getElementById('calibrate-status');
-      if (status) status.textContent = `Calibrated: ${pageCalibrations[currentPage].scale}`;
-      showToast('Calibrated ' + guessed + (applyAllEl && applyAllEl.checked ? ' (all pages)' : ' on page ' + (currentPage+1)));
-    }
-    setTool('select');
+    applyMeasuredCalibration(dist, typed);
+    afterCalibrationTool();
     return;
   }
 
@@ -6311,7 +6332,7 @@ function hitTest(x, y, ann, tol) {
     x = lp.x; y = lp.y;
   }
   switch(ann.type) {
-    case 'legend': {
+    case 'legend': case 'table': {
       const p = ann.points[0];
       const w = ann._legendW || 140, h = ann._legendH || 60;
       return x >= p.x - tol && x <= p.x + w + tol && y >= p.y - tol && y <= p.y + h + tol;
@@ -8637,6 +8658,386 @@ function drawLegendAnn(ctx, ann) {
   ctx.restore();
 }
 
+
+// ============================================================
+// v3.9 — CUSTOM LEGEND / TABLE ANNOTATION
+// A free-form table you drop on the drawing: any number of rows and
+// columns, columns are either TEXT or COLOUR BOX (a filled swatch, with
+// optional text inside it) so you can build your own key / legend.
+// Placed with the Legend/Table tool, double-click to edit, drag to move,
+// drag a corner to resize. Bakes into saves, prints, flattens and reports
+// like every other markup because it draws through drawAnnotation.
+// ============================================================
+const TABLE_MIN_COL_W = 14;
+const TABLE_SWATCHES = ['#E5432E','#4F8EF7','#28a745','#E0A800','#9B59B6','#17A2B8','#E83E8C','#FD7E14','#6c757d','#000000'];
+const TABLE_FONT = '"Segoe UI", Arial, sans-serif';
+let _tableEditId = null;
+let _tableDraft = null;
+
+function makeDefaultTableData() {
+  return {
+    title: 'LEGEND', showTitle: true, headerRow: true, showGrid: true,
+    fontSize: 9, legendScale: 1,
+    bgColor: '#ffffff', headerBg: '#e9edf2', borderColor: '#333333',
+    gridColor: '#b8bec8', textColor: '#111111', titleBg: '#12131a',
+    cols: [
+      { type: 'colour', label: 'Key',         w: 34,  align: 'center' },
+      { type: 'text',   label: 'Description', w: 150, align: 'left' },
+      { type: 'text',   label: 'Qty',         w: 60,  align: 'right' }
+    ],
+    rows: [
+      [ { color: '#E5432E', text: '' }, { text: '' }, { text: '' } ],
+      [ { color: '#4F8EF7', text: '' }, { text: '' }, { text: '' } ],
+      [ { color: '#28a745', text: '' }, { text: '' }, { text: '' } ]
+    ]
+  };
+}
+
+// Black or white ink, whichever reads on the given fill.
+function _contrastInk(hex) {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex || ''));
+  if (!m) return '#111111';
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111111' : '#ffffff';
+}
+
+function _tableMetrics(ann) {
+  const ls = Math.max(0.3, Math.min(8, ann.legendScale || 1));
+  const fs = (ann.fontSize || 9) * ls;
+  const pad = 5 * ls;
+  const rowH = Math.max(fs + 8 * ls, 13 * ls);
+  const cols = ann.cols || [];
+  const colW = cols.map(c => Math.max(TABLE_MIN_COL_W, c.w || 80) * ls);
+  const w = colW.reduce((a, b) => a + b, 0) || 120 * ls;
+  const rows = ann.rows || [];
+  const showTitle = ann.showTitle !== false && !!String(ann.title || '').trim();
+  const titleH = showTitle ? rowH + 2 * ls : 0;
+  const headH = (ann.headerRow !== false) ? rowH : 0;
+  const h = titleH + headH + rows.length * rowH;
+  return { ls, fs, pad, rowH, cols, colW, w, h, rows, showTitle, titleH, headH };
+}
+
+// One cell's text, clipped to the cell so a long entry can't bleed out.
+function _tableCellText(ctx, text, cx, cy, cw, ch, align, colour, pad) {
+  if (text === undefined || text === null || text === '') return;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(cx, cy, cw, ch); ctx.clip();
+  ctx.fillStyle = colour;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = align === 'right' ? 'right' : (align === 'center' ? 'center' : 'left');
+  const tx = align === 'right' ? cx + cw - pad : (align === 'center' ? cx + cw / 2 : cx + pad);
+  ctx.fillText(String(text), tx, cy + ch / 2);
+  ctx.restore();
+}
+
+function drawTableAnn(ctx, ann) {
+  const M = _tableMetrics(ann);
+  const x = ann.points[0].x, y = ann.points[0].y;
+  const bg = ann.bgColor || '#ffffff';
+  const border = ann.borderColor || '#333333';
+  const grid = ann.gridColor || '#b8bec8';
+  const ink = ann.textColor || '#111111';
+  ctx.save();
+  ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity / 100 : 1;
+  ctx.setLineDash([]);
+  ctx.textBaseline = 'middle';
+
+  if (bg && bg !== 'none') { ctx.fillStyle = bg; ctx.fillRect(x, y, M.w, M.h); }
+
+  let yy = y;
+  if (M.showTitle) {
+    const tbg = ann.titleBg || border;
+    ctx.fillStyle = tbg;
+    ctx.fillRect(x, yy, M.w, M.titleH);
+    ctx.font = '700 ' + (M.fs * 1.06) + 'px ' + TABLE_FONT;
+    _tableCellText(ctx, ann.title, x, yy, M.w, M.titleH, 'center', ann.titleColor || _contrastInk(tbg), M.pad);
+    yy += M.titleH;
+  }
+  if (M.headH) {
+    const hbg = ann.headerBg || '#e9edf2';
+    ctx.fillStyle = hbg;
+    ctx.fillRect(x, yy, M.w, M.headH);
+    ctx.font = '700 ' + M.fs + 'px ' + TABLE_FONT;
+    let cx = x;
+    M.cols.forEach((c, i) => {
+      _tableCellText(ctx, c.label || '', cx, yy, M.colW[i], M.headH, c.align || 'left', _contrastInk(hbg), M.pad);
+      cx += M.colW[i];
+    });
+    yy += M.headH;
+  }
+
+  M.rows.forEach((row, ri) => {
+    const ry = yy + ri * M.rowH;
+    let cx = x;
+    M.cols.forEach((c, ci) => {
+      const cell = (row && row[ci]) || {};
+      const cw = M.colW[ci];
+      if (c.type === 'colour') {
+        const inset = Math.max(1, 2.5 * M.ls);
+        const swatch = cell.color || '#cccccc';
+        ctx.fillStyle = swatch;
+        ctx.fillRect(cx + inset, ry + inset, Math.max(2, cw - inset * 2), Math.max(2, M.rowH - inset * 2));
+        if (cell.text) {
+          ctx.font = '600 ' + M.fs + 'px ' + TABLE_FONT;
+          _tableCellText(ctx, cell.text, cx, ry, cw, M.rowH, c.align || 'center', cell.textColor || _contrastInk(swatch), M.pad);
+        }
+      } else {
+        if (cell.fill) { ctx.fillStyle = cell.fill; ctx.fillRect(cx, ry, cw, M.rowH); }
+        ctx.font = (cell.bold ? '700 ' : '') + M.fs + 'px ' + TABLE_FONT;
+        _tableCellText(ctx, cell.text || '', cx, ry, cw, M.rowH, c.align || 'left',
+          cell.textColor || (cell.fill ? _contrastInk(cell.fill) : ink), M.pad);
+      }
+      cx += cw;
+    });
+  });
+
+  if (ann.showGrid !== false) {
+    ctx.strokeStyle = grid;
+    ctx.lineWidth = Math.max(0.25, 0.5 * M.ls);
+    const top = y + M.titleH;
+    for (let i = 0; i <= M.rows.length; i++) {
+      const gy = top + M.headH + i * M.rowH;
+      ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + M.w, gy); ctx.stroke();
+    }
+    let cx = x;
+    for (let i = 0; i < M.cols.length - 1; i++) {
+      cx += M.colW[i];
+      ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx, y + M.h); ctx.stroke();
+    }
+  }
+  ctx.strokeStyle = border;
+  ctx.lineWidth = Math.max(0.4, 0.8 * M.ls);
+  ctx.setLineDash([]);
+  ctx.strokeRect(x, y, M.w, M.h);
+
+  // Cache the rendered size — hit-testing, selection handles and the
+  // corner-drag resize all read these (shared with the takeoff legend).
+  ann._legendW = M.w; ann._legendH = M.h;
+  ctx.restore();
+}
+
+// Size every text column to the widest thing typed in it.
+function autoFitTableCols(data) {
+  const c = document.createElement('canvas').getContext('2d');
+  const fs = data.fontSize || 9;
+  (data.cols || []).forEach((col, i) => {
+    if (col.type === 'colour') { col.w = Math.max(20, col.w || 34); return; }
+    c.font = '700 ' + fs + 'px ' + TABLE_FONT;
+    let wmax = c.measureText(String(col.label || '')).width;
+    c.font = fs + 'px ' + TABLE_FONT;
+    (data.rows || []).forEach(r => {
+      const t = (r && r[i] && r[i].text) || '';
+      wmax = Math.max(wmax, c.measureText(String(t)).width);
+    });
+    col.w = Math.round(Math.max(30, wmax + 14));
+  });
+}
+
+function addTableAnn(screenPt) {
+  if (!pdfDoc) { showToast('Open a PDF first'); return; }
+  const pt = toPage(screenPt);
+  const ann = Object.assign({ id: generateId(), type: 'table', page: currentPage, points: [pt] }, makeDefaultTableData());
+  annotations.push(ann);
+  selectedAnnotationId = ann.id;
+  saveToHistory(); redrawAnnotations();
+  openTableEditor(ann.id);
+}
+
+// Stamp a copy of this table onto every page — handy for a legend that has
+// to appear on the whole set.
+function tableCopyToAllPages(id) {
+  const src = annotations.find(a => a.id === (id || selectedAnnotationId));
+  if (!src || src.type !== 'table' || !pdfDoc) return;
+  let n = 0;
+  for (let p = 0; p < pdfDoc.numPages; p++) {
+    if (p === src.page) continue;
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.id = generateId(); copy.page = p;
+    delete copy._legendW; delete copy._legendH;
+    annotations.push(copy); n++;
+  }
+  saveToHistory(); redrawAnnotations();
+  showToast('Table copied to ' + n + ' other page' + (n === 1 ? '' : 's'));
+}
+
+// ---------- Editor ----------
+function _teEsc(v) {
+  return String(v === undefined || v === null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _teCell(ri, ci) {
+  const d = _tableDraft;
+  if (!d.rows[ri]) d.rows[ri] = [];
+  if (!d.rows[ri][ci]) d.rows[ri][ci] = {};
+  return d.rows[ri][ci];
+}
+
+function openTableEditor(id) {
+  const ann = annotations.find(a => a.id === id);
+  if (!ann || ann.type !== 'table') return;
+  _tableEditId = id;
+  const base = makeDefaultTableData();
+  const draft = {};
+  Object.keys(base).forEach(k => { draft[k] = (ann[k] !== undefined) ? ann[k] : base[k]; });
+  _tableDraft = JSON.parse(JSON.stringify(draft));
+  showModal('Legend / Table', _tableEditorBodyHTML(), [
+    { text: 'Cancel', class: 'secondary', onclick: 'closeTableEditor()' },
+    { text: 'Apply',  class: 'primary',   onclick: 'applyTableEditor()' }
+  ]);
+  const m = currentModal && currentModal.querySelector('.modal');
+  if (m) m.style.maxWidth = '900px';
+}
+
+function closeTableEditor() {
+  closeCurrentModal();
+  _tableEditId = null; _tableDraft = null;
+}
+
+function _tableEditorBodyHTML() {
+  const d = _tableDraft;
+  const cols = d.cols || [], rows = d.rows || [];
+  let h = `<div style="display:flex;flex-direction:column;gap:10px;font-size:12px">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:5px;white-space:nowrap"><input type="checkbox" id="te-showtitle" ${d.showTitle !== false ? 'checked' : ''}> Title</label>
+      <input type="text" id="te-title" class="property-input" value="${_teEsc(d.title)}" placeholder="LEGEND" style="flex:1;min-width:120px">
+      <label style="display:flex;align-items:center;gap:5px;white-space:nowrap">Font <input type="number" id="te-fontsize" class="property-input" min="4" max="40" step="0.5" value="${d.fontSize || 9}" style="width:58px"></label>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--text-secondary)">
+      <label style="display:flex;align-items:center;gap:4px">Title bar <input type="color" id="te-titlebg" class="color-picker" value="${_teEsc(d.titleBg || '#12131a')}"></label>
+      <label style="display:flex;align-items:center;gap:4px">Heading <input type="color" id="te-headerbg" class="color-picker" value="${_teEsc(d.headerBg || '#e9edf2')}"></label>
+      <label style="display:flex;align-items:center;gap:4px">Body <input type="color" id="te-bgcolor" class="color-picker" value="${_teEsc(d.bgColor || '#ffffff')}"></label>
+      <label style="display:flex;align-items:center;gap:4px">Border <input type="color" id="te-bordercolor" class="color-picker" value="${_teEsc(d.borderColor || '#333333')}"></label>
+      <label style="display:flex;align-items:center;gap:4px">Text <input type="color" id="te-textcolor" class="color-picker" value="${_teEsc(d.textColor || '#111111')}"></label>
+      <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="te-headerrow" ${d.headerRow !== false ? 'checked' : ''}> Heading row</label>
+      <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="te-showgrid" ${d.showGrid !== false ? 'checked' : ''}> Grid lines</label>
+    </div>
+    <div style="overflow:auto;max-height:44vh;border:1px solid var(--border-color);border-radius:6px">
+      <table style="border-collapse:collapse;font-size:11px">
+        <thead><tr><th style="width:28px"></th>`;
+  cols.forEach((c, i) => {
+    h += `<th style="padding:5px;border-left:1px solid var(--border-color);min-width:150px;text-align:left;vertical-align:top">
+      <div style="display:flex;gap:3px;align-items:center;margin-bottom:3px">
+        <select class="select-input" data-col-type="${i}" style="flex:1;min-width:0;font-size:10px;padding:2px">
+          <option value="text" ${c.type !== 'colour' ? 'selected' : ''}>Text</option>
+          <option value="colour" ${c.type === 'colour' ? 'selected' : ''}>Colour box</option>
+        </select>
+        <select class="select-input" data-col-align="${i}" style="width:70px;font-size:10px;padding:2px">
+          <option value="left" ${(c.align || 'left') === 'left' ? 'selected' : ''}>Left</option>
+          <option value="center" ${c.align === 'center' ? 'selected' : ''}>Centre</option>
+          <option value="right" ${c.align === 'right' ? 'selected' : ''}>Right</option>
+        </select>
+        <input type="number" class="property-input" data-col-w="${i}" value="${Math.round(c.w || 80)}" min="12" step="2" title="Column width" style="width:52px;font-size:10px;padding:2px">
+        <button class="modal-btn secondary" style="padding:2px 6px;font-size:11px" onclick="tableEditorDelCol(${i})" title="Delete this column">×</button>
+      </div>
+      <input type="text" class="property-input" data-col-label="${i}" value="${_teEsc(c.label)}" placeholder="Heading" style="width:100%;box-sizing:border-box;font-size:11px">
+    </th>`;
+  });
+  h += `</tr></thead><tbody>`;
+  rows.forEach((r, ri) => {
+    h += `<tr><td style="text-align:center;padding:2px"><button class="modal-btn secondary" style="padding:2px 6px;font-size:11px" onclick="tableEditorDelRow(${ri})" title="Delete this row">×</button></td>`;
+    cols.forEach((c, ci) => {
+      const cell = (r && r[ci]) || {};
+      if (c.type === 'colour') {
+        h += `<td style="padding:3px;border-left:1px solid var(--border-color)"><div style="display:flex;gap:4px;align-items:center">
+          <input type="color" class="color-picker" data-cell-color="${ri}-${ci}" value="${_teEsc(cell.color || TABLE_SWATCHES[ri % TABLE_SWATCHES.length])}">
+          <input type="text" class="property-input" data-cell-text="${ri}-${ci}" value="${_teEsc(cell.text)}" placeholder="text in box (optional)" style="flex:1;min-width:0;font-size:11px">
+        </div></td>`;
+      } else {
+        h += `<td style="padding:3px;border-left:1px solid var(--border-color)"><div style="display:flex;gap:4px;align-items:center">
+          <input type="text" class="property-input" data-cell-text="${ri}-${ci}" value="${_teEsc(cell.text)}" style="flex:1;min-width:0;font-size:11px">
+          <label title="Bold this cell" style="font-size:10px;display:flex;align-items:center;gap:2px;font-weight:700"><input type="checkbox" data-cell-bold="${ri}-${ci}" ${cell.bold ? 'checked' : ''}>B</label>
+        </div></td>`;
+      }
+    });
+    h += `</tr>`;
+  });
+  h += `</tbody></table></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="modal-btn secondary" onclick="tableEditorAddRow()">+ Row</button>
+      <button class="modal-btn secondary" onclick="tableEditorAddCol('text')">+ Text column</button>
+      <button class="modal-btn secondary" onclick="tableEditorAddCol('colour')">+ Colour column</button>
+      <button class="modal-btn secondary" onclick="tableEditorAutoFit()" title="Size every text column to fit what you have typed in it">Auto-fit widths</button>
+    </div>
+    <div style="font-size:10.5px;color:var(--text-muted);line-height:1.5">Colour-box cells draw a filled swatch — leave the text blank for a plain key, or type in it for a filled label (the text flips black/white automatically). On the drawing: drag the table to move it, drag a corner to resize, double-click to come back here.</div>
+  </div>`;
+  return h;
+}
+
+function _readTableEditor() {
+  const root = currentModal;
+  if (!root || !_tableDraft) return;
+  const d = _tableDraft;
+  const g = id => root.querySelector('#' + id);
+  if (g('te-title')) d.title = g('te-title').value;
+  if (g('te-showtitle')) d.showTitle = g('te-showtitle').checked;
+  if (g('te-headerrow')) d.headerRow = g('te-headerrow').checked;
+  if (g('te-showgrid')) d.showGrid = g('te-showgrid').checked;
+  if (g('te-fontsize')) d.fontSize = Math.max(4, Math.min(40, parseFloat(g('te-fontsize').value) || 9));
+  [['titleBg','te-titlebg'],['headerBg','te-headerbg'],['bgColor','te-bgcolor'],
+   ['borderColor','te-bordercolor'],['textColor','te-textcolor']].forEach(([k, id]) => {
+    if (g(id)) d[k] = g(id).value;
+  });
+  root.querySelectorAll('[data-col-type]').forEach(el => { const i = +el.dataset.colType; if (d.cols[i]) d.cols[i].type = el.value; });
+  root.querySelectorAll('[data-col-align]').forEach(el => { const i = +el.dataset.colAlign; if (d.cols[i]) d.cols[i].align = el.value; });
+  root.querySelectorAll('[data-col-label]').forEach(el => { const i = +el.dataset.colLabel; if (d.cols[i]) d.cols[i].label = el.value; });
+  root.querySelectorAll('[data-col-w]').forEach(el => { const i = +el.dataset.colW; const v = parseFloat(el.value); if (d.cols[i] && v > 0) d.cols[i].w = v; });
+  root.querySelectorAll('[data-cell-text]').forEach(el => { const [ri, ci] = el.dataset.cellText.split('-').map(Number); _teCell(ri, ci).text = el.value; });
+  root.querySelectorAll('[data-cell-color]').forEach(el => { const [ri, ci] = el.dataset.cellColor.split('-').map(Number); _teCell(ri, ci).color = el.value; });
+  root.querySelectorAll('[data-cell-bold]').forEach(el => { const [ri, ci] = el.dataset.cellBold.split('-').map(Number); _teCell(ri, ci).bold = el.checked; });
+}
+
+function _rerenderTableEditor() {
+  const body = currentModal && currentModal.querySelector('.modal-body');
+  if (body) body.innerHTML = _tableEditorBodyHTML();
+}
+
+function _newTableCell(type, ri) {
+  return type === 'colour' ? { color: TABLE_SWATCHES[ri % TABLE_SWATCHES.length], text: '' } : { text: '' };
+}
+function tableEditorAddRow() {
+  _readTableEditor();
+  const ri = _tableDraft.rows.length;
+  _tableDraft.rows.push(_tableDraft.cols.map(c => _newTableCell(c.type, ri)));
+  _rerenderTableEditor();
+}
+function tableEditorDelRow(i) {
+  _readTableEditor();
+  _tableDraft.rows.splice(i, 1);
+  _rerenderTableEditor();
+}
+function tableEditorAddCol(type) {
+  _readTableEditor();
+  _tableDraft.cols.push({ type: type || 'text', label: type === 'colour' ? 'Key' : 'Column',
+    w: type === 'colour' ? 34 : 110, align: type === 'colour' ? 'center' : 'left' });
+  _tableDraft.rows.forEach((r, ri) => r.push(_newTableCell(type, ri)));
+  _rerenderTableEditor();
+}
+function tableEditorDelCol(i) {
+  _readTableEditor();
+  if (_tableDraft.cols.length <= 1) { showToast('A table needs at least one column'); return; }
+  _tableDraft.cols.splice(i, 1);
+  _tableDraft.rows.forEach(r => r.splice(i, 1));
+  _rerenderTableEditor();
+}
+function tableEditorAutoFit() {
+  _readTableEditor();
+  autoFitTableCols(_tableDraft);
+  _rerenderTableEditor();
+  showToast('Columns fitted to their contents');
+}
+
+function applyTableEditor() {
+  _readTableEditor();
+  const ann = annotations.find(a => a.id === _tableEditId);
+  if (ann && _tableDraft) {
+    Object.assign(ann, JSON.parse(JSON.stringify(_tableDraft)));
+    delete ann._legendW; delete ann._legendH;
+    saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+  }
+  closeTableEditor();
+}
+
 function exportTakeoffCSV() {
   if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
   let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Markup %,Amount,Shapes,Deductions\n';
@@ -9103,6 +9504,19 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
+  if (ann.type === 'table') {
+    html += `<div class="properties-section"><div class="properties-section-title">Legend / Table</div><div class="properties-section-content">
+      <div class="property-row"><button class="modal-btn primary" style="width:100%;padding:7px" onclick="openTableEditor('${ann.id}')">Edit table…</button></div>
+      <div class="property-row"><div class="property-label">Size %:</div>
+        <input type="number" id="prop-table-scale" class="property-input" min="30" max="800" step="10" value="${Math.round((ann.legendScale || 1) * 100)}" style="width:64px">
+        <button class="modal-btn secondary" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){a.legendScale=1; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}">Reset</button></div>
+      <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-table-font" class="property-input" min="4" max="40" step="0.5" value="${ann.fontSize || 9}"></div>
+      <div class="property-row"><div class="property-label">Opacity:</div><input type="number" id="prop-table-opacity" class="property-input" min="10" max="100" step="5" value="${ann.opacity !== undefined ? ann.opacity : 100}"></div>
+      <div class="property-row"><button class="modal-btn secondary" style="width:100%;font-size:11px" onclick="tableCopyToAllPages('${ann.id}')" title="Stamp an identical copy of this table on every other page of the document">Copy to all pages</button></div>
+      <div style="font-size:10px;color:var(--text-muted);padding:2px 2px 0">Double-click the table on the drawing to edit its cells. Drag a corner to resize.</div>
+    </div></div>`;
+  }
+
   if (ann.type === 'legend') {
     html += `<div class="properties-section"><div class="properties-section-title">Takeoff Table</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Style:</div><select id="prop-legend-mode" class="select-input">
@@ -9123,7 +9537,7 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
-  if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature' && ann.type !== 'legend') {
+  if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature' && ann.type !== 'legend' && ann.type !== 'table') {
     html += `<div class="properties-section"><div class="properties-section-title">Appearance</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Colour:</div><input type="color" id="prop-color" class="color-picker" value="${ann.color||'#E5432E'}"></div>
       <div class="color-swatches" data-target="prop-color"></div>`;
@@ -9257,7 +9671,7 @@ function getAnnotationPropertiesHTML(ann) {
   // Label styling for measurement annotations — text colour, background colour,
   // font size, and a reset-position button to undo any manual label drag.
   if (['measure','polyline','area','dimension'].includes(ann.type)) {
-    const lc = ann.labelColor || '#E5432E';
+    const lc = ann.labelColor || DEFAULT_LABEL_TEXT_COLOR;
     // Convert the rgba default background to a hex for the colour input. The
     // input value is what the user sees as a starting swatch.
     const lbg = ann.labelBg || '#12131a';
@@ -9362,6 +9776,9 @@ function attachAnnotationListeners(ann) {
     v %= 360; if (v < 0) v += 360;
     return v;
   });
+  bind('prop-table-scale', 'legendScale', t => Math.max(0.3, Math.min(8, (parseFloat(t.value) || 100) / 100)));
+  bind('prop-table-font', 'fontSize', t => Math.max(4, Math.min(40, parseFloat(t.value) || 9)));
+  bind('prop-table-opacity', 'opacity', t => Math.max(5, Math.min(100, parseInt(t.value) || 100)));
   bind('prop-legend-mode', 'legendMode');
   bind('prop-legend-scope', 'legendScope');
   bind('prop-legend-rates', 'showRates', t => t.checked);
@@ -9432,22 +9849,51 @@ function getToolPropertiesHTML(tool) {
 
   if (tool === 'calibrate') {
     const cal = pageCalibrations[currentPage];
+    const PRESET_SCALES = [1, 5, 10, 20, 25, 50, 75, 100, 125, 200, 250, 500, 1000];
+    const recent = _recentCustomScales();
     html += `<div style="display:flex;flex-direction:column;gap:8px">
-      <div><label style="display:block;font-size:11px;color:var(--text-secondary);margin-bottom:4px">Reference Length (mm)</label>
-        <input type="number" id="calibrate-distance" class="property-input" placeholder="e.g. 1000" value="${calibrationMM}"></div>
-      <label style="font-size:11px;color:var(--text-secondary)">Scale Presets</label>
+
+      <div style="font-size:11px;font-weight:600;color:var(--text-secondary)">1 · Pick the drawing scale</div>
       <div style="display:flex;gap:4px;flex-wrap:wrap">
-        <button onclick="applyScalePreset(20)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:20</button>
-        <button onclick="applyScalePreset(50)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:50</button>
-        <button onclick="applyScalePreset(100)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:100</button>
-        <button onclick="applyScalePreset(200)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:200</button>
-        <button onclick="applyScalePreset(250)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:250</button>
-        <button onclick="applyScalePreset(500)" class="modal-btn secondary" style="flex:1;min-width:44px;font-size:10px">1:500</button>
+        ${PRESET_SCALES.map(v => `<button onclick="applyScalePreset(${v})" class="modal-btn secondary" style="flex:1 0 42px;min-width:42px;font-size:10px;padding:5px 2px">1:${v}</button>`).join('')}
       </div>
-      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);cursor:pointer">
-        <input type="checkbox" id="cal-all-pages"> Apply to ALL pages</label>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span style="font-size:11px;color:var(--text-secondary)">Custom&nbsp;1:</span>
+        <input type="number" id="cal-custom-scale" class="property-input" step="any" min="0.1" placeholder="75" style="flex:1;min-width:0"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();applyCustomScale();}">
+        <button onclick="applyCustomScale()" class="modal-btn primary" style="font-size:10px;padding:5px 10px">Apply</button>
+      </div>
+      ${recent.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:10px;color:var(--text-muted)">Recent:</span>
+        ${recent.map(v => `<button onclick="applyScalePreset(${v})" class="modal-btn secondary" style="font-size:10px;padding:3px 7px">1:${v}</button>`).join('')}
+      </div>` : ''}
+
+      <div style="border-top:1px solid var(--border-color);padding-top:8px;font-size:11px;font-weight:600;color:var(--text-secondary)">2 · Or measure something you know</div>
+      <label style="display:flex;align-items:flex-start;gap:6px;font-size:11px;color:var(--text-secondary);cursor:pointer">
+        <input type="checkbox" id="cal-ask-after" ${calibrateAskAfterDraw ? 'checked' : ''} onchange="setCalibrateAskAfterDraw(this.checked)" style="margin-top:2px">
+        <span>Draw first, then type the length <span style="color:var(--text-muted)">(recommended)</span></span></label>
+      ${calibrateAskAfterDraw ? `<div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">
+        Drag a line along a dimension you know (a gridline, a door, a stated dimension). Datum then asks what it really is and previews the scale before applying it.</div>
+      <input type="hidden" id="calibrate-distance" value="${calibrationMM}">`
+      : `<div><label style="display:block;font-size:11px;color:var(--text-secondary);margin-bottom:4px">Reference Length (mm)</label>
+        <input type="number" id="calibrate-distance" class="property-input" placeholder="e.g. 1000" value="${calibrationMM}"></div>
       <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px">
-        Pick a scale preset above for instant calibration, OR draw a line of known length on the drawing and enter its real length above.</div>
+        Type the real length above FIRST, then draw a line that long on the drawing.</div>`}
+
+      <div style="border-top:1px solid var(--border-color);padding-top:8px;display:flex;flex-direction:column;gap:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);cursor:pointer">
+          <input type="checkbox" id="cal-all-pages" ${calAllPages ? 'checked' : ''} onchange="setCalAllPages(this.checked)"> Apply to ALL pages</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:var(--text-secondary);white-space:nowrap">After calibrating:</span>
+          <select class="select-input" style="flex:1" onchange="setCalibrateAfterTool(this.value)">
+            <option value="calibrate" ${calibrateAfterTool==='calibrate'?'selected':''}>Stay on Calibrate</option>
+            <option value="measure" ${calibrateAfterTool==='measure'?'selected':''}>Switch to Measure</option>
+            <option value="area" ${calibrateAfterTool==='area'?'selected':''}>Switch to Measure Area</option>
+            <option value="select" ${calibrateAfterTool==='select'?'selected':''}>Switch to Select (arrow)</option>
+          </select>
+        </div>
+      </div>
+
       <div id="calibrate-status" style="font-size:11px;color:${cal?'var(--success)':'var(--warning)'};padding:6px;background:var(--bg-tertiary);border-radius:4px;text-align:center">
         ${cal ? 'Calibrated: '+cal.scale : 'Page '+( currentPage+1)+' not calibrated'}</div>
       ${cal ? `<button onclick="clearCalibration()" class="modal-btn secondary" style="font-size:11px">Recalibrate (clear this page)</button>` : ''}
@@ -10163,20 +10609,180 @@ function guessScale(pixelDist, mmDist) {
   // At scale 1:S, 1 paper-mm represents S real-mm, so S = mmDist / (pixelDist / (72/25.4)).
   const PT_PER_MM = 72 / 25.4;
   const raw = mmDist / (pixelDist / PT_PER_MM);
-  // Snap to a common architectural scale when within 3%
-  const scales = [1,2,5,10,20,25,50,100,125,150,200,250,500,1000];
+  // Snap to a common architectural scale when within 3%.
+  // v3.9: list widened so odd-but-real scales (1:75, 1:150, 1:300, 1:400…)
+  // are recognised instead of being rounded onto a neighbour.
+  const scales = [1,2,2.5,5,10,15,20,25,30,40,50,60,75,100,125,150,200,250,300,400,500,600,750,1000,1250,1500,2000,2500,5000];
   for (const s of scales) {
     if (Math.abs(raw - s) / s < 0.03) return '1:' + s;
   }
-  return '1:' + Math.round(raw);
+  return '1:' + (raw < 10 ? Math.round(raw * 10) / 10 : Math.round(raw));
+}
+
+// v3.9 — apply a calibration worked out from a line the user actually drew.
+// Split out of addMeasurement so both the "ask me afterwards" dialog and the
+// old type-first flow land in exactly the same place.
+function applyMeasuredCalibration(pixelDist, mm, allPagesOverride) {
+  if (!(mm > 0) || !(pixelDist > 0)) return;
+  calibrationMM = mm;
+  const guessed = guessScale(pixelDist, mm);
+  const applyAll = (allPagesOverride !== undefined) ? !!allPagesOverride : _calAllPagesState();
+  const cal = { pixelsPerMm: pixelDist / mm, scale: guessed };
+  if (applyAll && pdfDoc) {
+    for (let pg = 0; pg < pdfDoc.numPages; pg++) pageCalibrations[pg] = { ...cal };
+  } else {
+    pageCalibrations[currentPage] = cal;
+  }
+  defaultCalibration = { ...cal };
+  updateCalibrationIndicator();
+  checkCalibrationBanner();
+  rebuildMeasurements();
+  redrawAnnotations();
+  const status = document.getElementById('calibrate-status');
+  if (status) status.textContent = 'Calibrated: ' + guessed;
+  showToast('Calibrated ' + guessed + (applyAll ? ' (all pages)' : ' on page ' + (currentPage + 1)));
+}
+
+// Sticky "apply to ALL pages" — the checkbox is re-rendered every time the
+// properties panel refreshes, so the real state lives in a variable.
+function _calAllPagesState() {
+  const el = document.getElementById('cal-all-pages');
+  if (el) calAllPages = el.checked;
+  return calAllPages;
+}
+function setCalAllPages(on) { calAllPages = !!on; }
+
+// What happens once a calibration lands. v3.9: NEVER silently back to Select
+// unless the user picks that — the old setTool('select') was the "it switches
+// to the arrow" complaint.
+function afterCalibrationTool() {
+  const next = calibrateAfterTool || 'calibrate';
+  if (next === 'calibrate' || next === currentTool) { openPropertiesPanel(); return; }
+  setTool(next);
+}
+
+function setCalibrateAfterTool(v) {
+  calibrateAfterTool = v || 'calibrate';
+  _saveCalibratePrefs();
+}
+function setCalibrateAskAfterDraw(on) {
+  calibrateAskAfterDraw = !!on;
+  _saveCalibratePrefs();
+  openPropertiesPanel();
+}
+function _saveCalibratePrefs() {
+  try {
+    localStorage.setItem('bdm-calibrate-prefs', JSON.stringify({
+      askAfterDraw: calibrateAskAfterDraw, afterTool: calibrateAfterTool }));
+  } catch(e) { /* private mode — preference just won't persist */ }
+}
+
+// Custom scale box — anything the user types, e.g. 1:75, 1:35, 1:1.5
+function applyCustomScale() {
+  const el = document.getElementById('cal-custom-scale');
+  const v = el ? parseFloat(el.value) : NaN;
+  if (!(v > 0)) { showToast('Type the number after the colon — e.g. 75 for a 1:75 drawing'); return; }
+  applyScalePreset(v);
+  _rememberCustomScale(v);
+}
+function _rememberCustomScale(v) {
+  try {
+    let list = JSON.parse(localStorage.getItem('bdm-custom-scales') || '[]');
+    list = [v, ...list.filter(x => x !== v)].slice(0, 6);
+    localStorage.setItem('bdm-custom-scales', JSON.stringify(list));
+  } catch(e) { /* ignore */ }
+}
+function _recentCustomScales() {
+  try { return JSON.parse(localStorage.getItem('bdm-custom-scales') || '[]'); } catch(e) { return []; }
+}
+
+// ============================================================
+// v3.9 CALIBRATION DIALOG — "you drew a line, what is it really?"
+// Branded, promise-based; shows a live 1:N preview as you type so a typo
+// is obvious before it calibrates a whole drawing set.
+// ============================================================
+function datumCalibrationPrompt(pixelDist, prefillMm) {
+  return new Promise((resolve) => {
+    const old = document.getElementById('datum-cal'); if (old) old.remove();
+    const ov = document.createElement('div');
+    ov.id = 'datum-cal';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(10,18,40,.45);display:flex;align-items:center;justify-content:center;z-index:5200';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;box-shadow:0 24px 60px -24px rgba(10,18,40,.55);max-width:400px;width:88%;padding:18px 20px 16px';
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:10px">
+        <svg width="17" height="17" viewBox="0 0 100 100"><polygon points="16,24 84,24 50,72" fill="#E5432E"/><line x1="8" y1="85" x2="92" y2="85" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+        <span style="font-weight:600;font-size:15px;color:var(--text-primary)">Set the scale</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--text-secondary);line-height:1.5;margin-bottom:10px">
+        How long is the line you just drew, in real life?
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" id="datum-cal-val" step="any" min="0" value="${prefillMm}"
+          style="flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;font-size:14px;border:1px solid var(--border-color);border-radius:7px;background:var(--bg-tertiary);color:var(--text-primary);outline:none">
+        <select id="datum-cal-unit" class="select-input" style="width:76px;padding:8px">
+          <option value="mm" selected>mm</option>
+          <option value="m">m</option>
+        </select>
+      </div>
+      <div id="datum-cal-preview" style="margin-top:10px;font-size:12px;padding:7px;border-radius:6px;background:var(--bg-tertiary);color:var(--text-secondary);text-align:center"></div>
+      <label style="display:flex;align-items:center;gap:7px;margin-top:10px;font-size:11.5px;color:var(--text-secondary);cursor:pointer">
+        <input type="checkbox" id="datum-cal-all" ${calAllPages ? 'checked' : ''}> Apply this scale to ALL pages
+      </label>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+        <button class="modal-btn secondary" id="datum-cal-cancel" style="padding:7px 14px">Cancel</button>
+        <button class="modal-btn primary" id="datum-cal-ok" style="padding:7px 18px">Calibrate</button>
+      </div>`;
+    ov.appendChild(box);
+    document.body.appendChild(ov);
+    const valEl = box.querySelector('#datum-cal-val');
+    const unitEl = box.querySelector('#datum-cal-unit');
+    const allEl = box.querySelector('#datum-cal-all');
+    const prev = box.querySelector('#datum-cal-preview');
+    const readMm = () => {
+      const v = parseFloat(valEl.value);
+      if (!(v > 0)) return NaN;
+      return unitEl.value === 'm' ? v * 1000 : v;
+    };
+    const refresh = () => {
+      const mm = readMm();
+      prev.textContent = (mm > 0)
+        ? 'Drawing scale will be ' + guessScale(pixelDist, mm)
+        : 'Enter a length to see the scale';
+      prev.style.color = (mm > 0) ? 'var(--accent)' : 'var(--text-muted)';
+    };
+    valEl.addEventListener('input', refresh);
+    unitEl.addEventListener('change', refresh);
+    refresh();
+    const done = (res) => { ov.remove(); document.removeEventListener('keydown', onKey, true); resolve(res); };
+    const ok = () => {
+      const mm = readMm();
+      if (!(mm > 0)) { valEl.focus(); return; }
+      calAllPages = allEl.checked;
+      const cb = document.getElementById('cal-all-pages');
+      if (cb) cb.checked = calAllPages;
+      done({ mm, allPages: allEl.checked });
+    };
+    const onKey = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); ok(); }
+      else if (e.key === 'Escape') { e.preventDefault(); done(null); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    box.querySelector('#datum-cal-ok').onclick = ok;
+    box.querySelector('#datum-cal-cancel').onclick = () => done(null);
+    ov.addEventListener('click', (e) => { if (e.target === ov) done(null); });
+    setTimeout(() => { valEl.focus(); valEl.select(); }, 30);
+  });
 }
 
 function applyScalePreset(scale, allPages) {
   // Directly calibrate using architectural scale.
   // Annotation coords are in PDF-point page space (72 pt/inch = 72/25.4 px per paper-mm).
   // At 1:scale, 1mm on paper = scale mm real, so pixelsPerMm(real) = (72/25.4)/scale.
+  scale = parseFloat(scale);
+  if (!(scale > 0)) { showToast('Enter a valid scale'); return; }
   const pxPerMm = (72/25.4) / scale;
-  const applyAll = allPages !== undefined ? allPages : (document.getElementById('cal-all-pages') && document.getElementById('cal-all-pages').checked);
+  const applyAll = allPages !== undefined ? !!allPages : _calAllPagesState();
   if (applyAll && pdfDoc) {
     for (let p = 0; p < pdfDoc.numPages; p++) {
       pageCalibrations[p] = { pixelsPerMm: pxPerMm, scale: '1:' + scale };
@@ -12578,6 +13184,7 @@ const ANNOTATION_TYPE_LABELS = {
 };
 function _annTypeLabel(a) {
   if (a.type === 'polyline' && a.isShape) return 'Polyline shape';
+  if (a.type === 'table') return 'Legend / table';
   if (String(a.type).toLowerCase().includes('legend') || String(a.type).toLowerCase().includes('takeoff')) return 'Takeoff table';
   return ANNOTATION_TYPE_LABELS[a.type] || (String(a.type).charAt(0).toUpperCase() + String(a.type).slice(1));
 }
