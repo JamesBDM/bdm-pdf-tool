@@ -1781,7 +1781,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.10';
+const APP_VERSION = 'v3.11';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2443,6 +2443,10 @@ function closeDoc(idx, force) {
   // If we're closing the active doc, make sure we don't then write
   // stale globals back into a neighbour during restore.
   const wasActive = (idx === activeDocIndex);
+
+  // v3.11: a deliberate close means its crash-recovery backup is no longer
+  // wanted — the user either saved or chose "Close Without Saving".
+  if (openDocs[idx] && openDocs[idx]._asId && typeof _asDeleteDoc === 'function') _asDeleteDoc(openDocs[idx]._asId);
 
   openDocs.splice(idx, 1);
 
@@ -3176,7 +3180,7 @@ function snapPagePoint(pagePt) {
   if (!snapEnabled) {
     // Markup snap off but drawing-line snap on — go straight to raster snap
     const c0 = snapPageToContent(pagePt);
-    if (c0) { lastSnapHit = { x: c0.x, y: c0.y, type: 'content' }; return { x: c0.x, y: c0.y }; }
+    if (c0) { lastSnapHit = { x: c0.x, y: c0.y, type: c0.corner ? 'corner' : 'content' }; return { x: c0.x, y: c0.y }; }
     return pagePt;
   }
   const tolPage = 8 / currentScale; // 8 screen px
@@ -3218,7 +3222,7 @@ function snapPagePoint(pagePt) {
   if (best) { lastSnapHit = { x: best.x, y: best.y, type: best.type }; return { x: best.x, y: best.y }; }
   // No markup point nearby — try the drawing's own lines (walls, gridlines)
   const c = snapPageToContent(pagePt);
-  if (c) { lastSnapHit = { x: c.x, y: c.y, type: 'content' }; return { x: c.x, y: c.y }; }
+  if (c) { lastSnapHit = { x: c.x, y: c.y, type: c.corner ? 'corner' : 'content' }; return { x: c.x, y: c.y }; }
   return pagePt;
 }
 
@@ -3338,6 +3342,12 @@ function redrawAnnotations() {
       ctx.beginPath();
       ctx.arc(lastSnapHit.x, lastSnapHit.y, r * 0.8, 0, Math.PI * 2);
       ctx.stroke();
+    } else if (lastSnapHit.type === 'corner') {
+      // v3.11: drawing CORNER / line-end / intersection snap → square + circle
+      ctx.strokeRect(lastSnapHit.x - r * 0.7, lastSnapHit.y - r * 0.7, r * 1.4, r * 1.4);
+      ctx.beginPath();
+      ctx.arc(lastSnapHit.x, lastSnapHit.y, r * 1.1, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
       ctx.strokeRect(lastSnapHit.x - r, lastSnapHit.y - r, r*2, r*2);
     }
@@ -3402,20 +3412,105 @@ function snapPageToContent(pagePt) {
     const w = Math.min(pdfCanvas.width - x0, 2 * r + 1);
     const h = Math.min(pdfCanvas.height - y0, 2 * r + 1);
     if (w <= 0 || h <= 0) return null;
-    const data = pdfCanvas.getContext('2d', { willReadFrequently: true }).getImageData(x0, y0, w, h).data;
-    let bestD = Infinity, bx = -1, by = -1;
-    for (let yy = 0; yy < h; yy++) {
-      for (let xx = 0; xx < w; xx++) {
-        const i = (yy * w + xx) * 4;
-        if (data[i + 3] < 100) continue; // transparent
-        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        if (lum >= 120) continue;        // not drawing ink
-        const dx = (x0 + xx) - cx, dy = (y0 + yy) - cy;
-        const d = dx * dx + dy * dy;
-        if (d < bestD) { bestD = d; bx = x0 + xx; by = y0 + yy; }
+    // v3.11: sample a slightly larger patch than the snap radius so the
+    // corner classifier's sampling ring never falls off the edge. Corners get
+    // a bigger "magnet" radius than plain edges — the nearest ink is almost
+    // always the flank of the line you're measuring along, so without the
+    // extra reach a corner a few px further away could never win.
+    const RING = 4; // classifier ring radius (canvas px)
+    const rC = Math.round(r * 1.8) + 2; // corner magnet radius
+    const m = rC + RING + 1;
+    const px0 = Math.max(0, Math.round(cx - m));
+    const py0 = Math.max(0, Math.round(cy - m));
+    const pw = Math.min(pdfCanvas.width - px0, 2 * m + 1);
+    const ph = Math.min(pdfCanvas.height - py0, 2 * m + 1);
+    if (pw <= 0 || ph <= 0) return null;
+    const data = pdfCanvas.getContext('2d', { willReadFrequently: true }).getImageData(px0, py0, pw, ph).data;
+    // Binary ink mask for the patch (1 = drawing ink)
+    const mask = new Uint8Array(pw * ph);
+    for (let p = 0; p < pw * ph; p++) {
+      const i = p * 4;
+      if (data[i + 3] < 100) continue; // transparent
+      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (lum < 120) mask[p] = 1;
+    }
+    // Collect ink pixels within the corner-magnet radius, nearest first
+    const cand = [];
+    for (let yy = 0; yy < ph; yy++) {
+      for (let xx = 0; xx < pw; xx++) {
+        if (!mask[yy * pw + xx]) continue;
+        const dx = (px0 + xx) - cx, dy = (py0 + yy) - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= rC * rC) cand.push({ xx, yy, d2 });
       }
     }
-    if (bx >= 0 && Math.sqrt(bestD) <= r) return { x: bx / factor, y: by / factor };
+    if (!cand.length) return null;
+    cand.sort((a, b) => a.d2 - b.d2);
+    // v3.11: prefer CORNERS, LINE ENDS and INTERSECTIONS over the nearest
+    // edge pixel — measuring wall-to-wall used to land on the side of the
+    // wall line (always closer than its corner). A 16-point ring around each
+    // candidate classifies the local ink: 1 short dark arc = line end,
+    // 2 arcs at ~180° = straight line (skip), 2 arcs off-axis = corner,
+    // 3+ arcs = intersection/junction.
+    const K = 16;
+    const ringX = [], ringY = [];
+    for (let k = 0; k < K; k++) {
+      ringX.push(Math.round(RING * Math.cos(2 * Math.PI * k / K)));
+      ringY.push(Math.round(RING * Math.sin(2 * Math.PI * k / K)));
+    }
+    const isCornerLike = (xx, yy) => {
+      let darkCount = 0;
+      const dark = new Array(K);
+      for (let k = 0; k < K; k++) {
+        const sx = xx + ringX[k], sy = yy + ringY[k];
+        const dk = (sx >= 0 && sy >= 0 && sx < pw && sy < ph) ? mask[sy * pw + sx] === 1 : false;
+        dark[k] = dk;
+        if (dk) darkCount++;
+      }
+      if (darkCount === 0) return true;       // isolated dot / tick — snap to it
+      if (darkCount >= K - 1) return false;   // interior of thick ink
+      // Split the ring into contiguous dark arcs
+      const arcs = [];
+      for (let k = 0; k < K; k++) {
+        if (dark[k] && !dark[(k + K - 1) % K]) {
+          let len = 0, j = k;
+          while (dark[j % K] && len < K) { len++; j++; }
+          arcs.push({ start: k, len });
+        }
+      }
+      if (arcs.length === 1) return arcs[0].len <= Math.round(K * 0.45); // short arc = line end
+      if (arcs.length >= 3) return true;      // junction / intersection
+      if (arcs.length === 2) {
+        // Direction of each arm = mean unit vector over the arc's samples
+        const dir = (arc) => {
+          let vx = 0, vy = 0;
+          for (let t = 0; t < arc.len; t++) {
+            const k = (arc.start + t) % K;
+            vx += Math.cos(2 * Math.PI * k / K);
+            vy += Math.sin(2 * Math.PI * k / K);
+          }
+          const n = Math.hypot(vx, vy) || 1;
+          return { x: vx / n, y: vy / n };
+        };
+        const a = dir(arcs[0]), b = dir(arcs[1]);
+        const dot = a.x * b.x + a.y * b.y;
+        // Opposite arms = straight line. The pixel grid skews arc directions
+        // by up to ~22° on a line's flank, so demand a decisively bent pair
+        // (< ~120°) before calling it a corner.
+        return dot > -0.5;
+      }
+      return false;
+    };
+    for (const c of cand) {
+      if (isCornerLike(c.xx, c.yy)) {
+        return { x: (px0 + c.xx) / factor, y: (py0 + c.yy) / factor, corner: true };
+      }
+    }
+    // No corner nearby — fall back to the nearest ink pixel (edge snap),
+    // within the ORIGINAL snap radius only (the magnet reach is corners-only).
+    const n0 = cand[0];
+    if (n0.d2 > r * r) return null;
+    return { x: (px0 + n0.xx) / factor, y: (py0 + n0.yy) / factor, corner: false };
   } catch (e) { /* tainted canvas or transient state — skip silently */ }
   return null;
 }
@@ -10128,6 +10223,27 @@ function getToolPropertiesHTML(tool) {
         Tip: tick "Include today's date" and add your initials, then place the stamp — perfect for approving invoices or marking documents as paid.<br>
         Size and Transparency above apply to the next stamp you place and are remembered. To change one already on the page, click it with the arrow tool (or drag its corner handles).</div>
     </div>`;
+  } else if (tool === 'magicarea') {
+    const gapOpts = [
+      ['off',    'Off — exact lines only'],
+      ['small',  'Small — hairline breaks'],
+      ['medium', 'Medium — hatch + join gaps'],
+      ['large',  'Large — door openings']
+    ];
+    html += `<div style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:11px;color:var(--text-secondary);line-height:1.5">
+        Click inside a room to measure its area automatically. The fill follows the
+        drawing's lines; stays armed for the next room (Esc or V to exit).</div>
+      <div class="property-row"><div class="property-label">Gap closing:</div>
+        <select id="magic-gap-select" class="property-input" onchange="setMagicGap(this.value)">
+          ${gapOpts.map(([v, l]) => `<option value="${v}" ${magicGapMode === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select></div>
+      <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
+        Gap closing seals small breaks in the room's boundary (line joins, hatching,
+        door swings) so the fill can't leak out — the measured outline still runs to
+        the true wall face. If the fill grabs two rooms at once, turn it down; if it
+        "escapes", turn it up.</div>
+    </div>`;
   } else if (tool === 'tick') {
     html += `<div style="display:flex;flex-direction:column;gap:8px">
       <label style="font-size:11px;color:var(--text-secondary)">Tick / Check Mark</label>
@@ -10354,6 +10470,8 @@ function saveToHistory() {
   if (typeof refreshMarkupsList === 'function' && markupsListOpen) setTimeout(refreshMarkupsList, 0);
   // v3.2: any edit may touch the estimate — flag the standalone workbook dirty
   if (typeof markWorkbookFileDirty === 'function') markWorkbookFileDirty();
+  // v3.11: refresh the crash-recovery backup shortly after the last edit
+  if (typeof autosaveSweepSoon === 'function') autosaveSweepSoon();
   historyIndex++;
   history = history.slice(0, historyIndex);
   // Snapshot measurements + countGroups + takeoffItems alongside annotations
@@ -10610,6 +10728,18 @@ async function zoomFit() {
 // ============================================================
 const MAGIC_AREA_MAX_PIXELS = 6000000;   // bail-out for unenclosed regions
 const MAGIC_AREA_DARK_LUM = 120;         // pixels darker than this are walls/lines
+// v3.11 — Gap closing: virtually thickens the drawing's lines before the fill
+// so small breaks in a room's boundary (hatch gaps, line joins, door swings)
+// don't let the fill leak out. Values are in page points; the traced outline
+// is expanded back to the true wall face afterwards so the AREA is unchanged.
+const MAGIC_GAP_PT = { off: 0, small: 1.5, medium: 4, large: 10 };
+let magicGapMode = 'small';
+try { const g = localStorage.getItem('bdm-magicarea-gap'); if (g && MAGIC_GAP_PT[g] !== undefined) magicGapMode = g; } catch (e) {}
+function setMagicGap(mode) {
+  if (MAGIC_GAP_PT[mode] === undefined) return;
+  magicGapMode = mode;
+  try { localStorage.setItem('bdm-magicarea-gap', mode); } catch (e) {}
+}
 
 function magicAreaAt(screenPt) {
   try {
@@ -10628,50 +10758,149 @@ function magicAreaAt(screenPt) {
     if (!isFinite(factor) || factor <= 0) return;
     const pagePt = toPage(screenPt);
     const W = pdfCanvas.width, H = pdfCanvas.height;
-    const sx = Math.round(pagePt.x * factor), sy = Math.round(pagePt.y * factor);
-    if (sx < 1 || sy < 1 || sx >= W - 1 || sy >= H - 1) return;
+    const cxF = Math.round(pagePt.x * factor), cyF = Math.round(pagePt.y * factor);
+    if (cxF < 1 || cyF < 1 || cxF >= W - 1 || cyF >= H - 1) return;
 
     const data = pdfCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, W, H).data;
-    const isOpen = (idx) => {
-      const o = idx * 4;
-      if (data[o + 3] < 100) return true; // transparent = open
-      return (0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]) >= MAGIC_AREA_DARK_LUM;
-    };
-    const startIdx = sy * W + sx;
-    if (!isOpen(startIdx)) { showToast('That\'s on a line — click in the open space inside the room'); return; }
 
-    // Flood fill (4-connected, explicit stack)
-    const filled = new Uint8Array(W * H);
+    // v3.11 — work on a downsampled grid when the rendered page is huge
+    // (high zoom + retina). Any ink inside an s×s block marks the whole block
+    // as ink ("max-pool"), so thin walls survive the downsample. Previously a
+    // big room at high zoom aborted with "room is huge".
+    const s = Math.max(1, Math.ceil(Math.sqrt((W * H) / 4000000)));
+    const Ws = Math.ceil(W / s), Hs = Math.ceil(H / s);
+    const ink = new Uint8Array(Ws * Hs);
+    for (let y = 0; y < H; y++) {
+      const row = y * W, wrow = ((y / s) | 0) * Ws;
+      for (let x = 0; x < W; x++) {
+        const o = (row + x) * 4;
+        if (data[o + 3] < 100) continue; // transparent = open
+        if (0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2] < MAGIC_AREA_DARK_LUM) {
+          ink[wrow + ((x / s) | 0)] = 1;
+        }
+      }
+    }
+
+    // v3.11 — Gap closing: city-block distance-to-ink transform; pixels
+    // within gapW of a line count as "wall" during the fill, sealing small
+    // breaks in the room boundary. The outline is expanded back afterwards.
+    const gapW = Math.min(40, Math.round((MAGIC_GAP_PT[magicGapMode] || 0) * factor / s));
+    let D = null;
+    if (gapW > 0) {
+      const INF = 1 << 29;
+      D = new Int32Array(Ws * Hs);
+      for (let i = 0; i < Ws * Hs; i++) D[i] = ink[i] ? 0 : INF;
+      for (let y = 0; y < Hs; y++) {
+        for (let x = 0; x < Ws; x++) {
+          const i = y * Ws + x; let v = D[i];
+          if (x > 0 && D[i - 1] + 1 < v) v = D[i - 1] + 1;
+          if (y > 0 && D[i - Ws] + 1 < v) v = D[i - Ws] + 1;
+          D[i] = v;
+        }
+      }
+      for (let y = Hs - 1; y >= 0; y--) {
+        for (let x = Ws - 1; x >= 0; x--) {
+          const i = y * Ws + x; let v = D[i];
+          if (x < Ws - 1 && D[i + 1] + 1 < v) v = D[i + 1] + 1;
+          if (y < Hs - 1 && D[i + Ws] + 1 < v) v = D[i + Ws] + 1;
+          D[i] = v;
+        }
+      }
+    }
+    const isOpen = (i) => ink[i] === 0 && (!D || D[i] > gapW);
+
+    // Click point on the working grid; if it lands on a line (or inside the
+    // gap-closing collar around one), hunt for the nearest open pixel nearby
+    // instead of refusing — clicking exactly mid-room shouldn't be required.
+    let sx = Math.min(Ws - 1, Math.max(0, Math.round(cxF / s)));
+    let sy = Math.min(Hs - 1, Math.max(0, Math.round(cyF / s)));
+    let startIdx = sy * Ws + sx;
+    if (!isOpen(startIdx)) {
+      const R = gapW + 3;
+      let bd = Infinity, bi = -1;
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const nx = sx + dx, ny = sy + dy;
+          if (nx < 0 || ny < 0 || nx >= Ws || ny >= Hs) continue;
+          const ni = ny * Ws + nx;
+          if (!isOpen(ni)) continue;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < bd) { bd = d2; bi = ni; }
+        }
+      }
+      if (bi < 0) { showToast('That\'s on a line — click in the open space inside the room'); return; }
+      startIdx = bi; sx = bi % Ws; sy = (bi / Ws) | 0;
+    }
+
+    // Flood fill (4-connected, explicit stack) with LEAK detection — if the
+    // fill reaches the edge of the sheet, the room isn't enclosed.
+    const filled = new Uint8Array(Ws * Hs);
     let stack = [startIdx];
     filled[startIdx] = 1;
     let count = 0;
+    let leaked = false;
     let topIdx = startIdx; // topmost-then-leftmost filled pixel (boundary trace start)
     while (stack.length) {
       const idx = stack.pop();
       count++;
-      if (count > MAGIC_AREA_MAX_PIXELS) {
-        showToast('Room isn\'t fully enclosed (or is huge) — close the gap or trace it with the Area tool');
-        return;
-      }
+      if (count > MAGIC_AREA_MAX_PIXELS) { leaked = true; break; }
       if (idx < topIdx) topIdx = idx;
-      const x = idx % W;
-      // 4-neighbours
-      if (x > 0)      { const n = idx - 1; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
-      if (x < W - 1)  { const n = idx + 1; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
-      if (idx >= W)         { const n = idx - W; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
-      if (idx < W * (H - 1)) { const n = idx + W; if (!filled[n] && isOpen(n)) { filled[n] = 1; stack.push(n); } }
+      const x = idx % Ws, y = (idx / Ws) | 0;
+      if (x === 0 || y === 0 || x === Ws - 1 || y === Hs - 1) { leaked = true; break; }
+      const nL = idx - 1, nR = idx + 1, nU = idx - Ws, nD = idx + Ws;
+      if (!filled[nL] && isOpen(nL)) { filled[nL] = 1; stack.push(nL); }
+      if (!filled[nR] && isOpen(nR)) { filled[nR] = 1; stack.push(nR); }
+      if (!filled[nU] && isOpen(nU)) { filled[nU] = 1; stack.push(nU); }
+      if (!filled[nD] && isOpen(nD)) { filled[nD] = 1; stack.push(nD); }
     }
-    if (count < 50) { showToast('Region too small — zoom in and try again'); return; }
+    if (leaked) {
+      showToast('Room isn\'t fully enclosed — the fill escaped. Try a bigger "Gap closing" setting in the Room Fill panel, or trace it with the Area tool');
+      return;
+    }
+    if (count * s * s < 50) { showToast('Region too small — zoom in and try again'); return; }
+
+    // Gap closing shrank the fill away from the walls by gapW — grow it back
+    // out to the TRUE wall face (never through ink) so the measured area
+    // matches what an un-gapped fill would have found.
+    if (gapW > 0) {
+      // Seed with just the boundary pixels (a filled pixel with an unfilled
+      // 4-neighbour) — seeding every filled pixel would balloon memory.
+      let frontier = [];
+      for (let i = 0; i < Ws * Hs; i++) {
+        if (!filled[i]) continue;
+        const x = i % Ws, y = (i / Ws) | 0;
+        if ((x > 0 && !filled[i - 1]) || (x < Ws - 1 && !filled[i + 1]) ||
+            (y > 0 && !filled[i - Ws]) || (y < Hs - 1 && !filled[i + Ws])) frontier.push(i);
+      }
+      for (let step = 0; step < gapW && frontier.length; step++) {
+        const next = [];
+        for (const idx of frontier) {
+          const x = idx % Ws, y = (idx / Ws) | 0;
+          const tryN = (ni) => {
+            if (filled[ni] || ink[ni] !== 0) return;   // never grow through ink
+            if (D && D[ni] > gapW) return;             // only inside the collar
+            filled[ni] = 1;
+            if (ni < topIdx) topIdx = ni;
+            next.push(ni);
+          };
+          if (x > 0) tryN(idx - 1);
+          if (x < Ws - 1) tryN(idx + 1);
+          if (y > 0) tryN(idx - Ws);
+          if (y < Hs - 1) tryN(idx + Ws);
+        }
+        frontier = next;
+      }
+    }
 
     // Trace the outer boundary (Moore neighbourhood, clockwise)
-    const contour = _traceBoundary(filled, W, H, topIdx % W, (topIdx / W) | 0);
+    const contour = _traceBoundary(filled, Ws, Hs, topIdx % Ws, (topIdx / Ws) | 0);
     if (!contour || contour.length < 8) { showToast('Couldn\'t trace the room outline — try the Area tool'); return; }
 
     // Simplify, convert to page coords, create a standard area measurement
-    const eps = Math.max(1.25, factor * 0.75); // ~0.75 page-pt tolerance
+    const eps = Math.max(1.25, (factor / s) * 0.75); // ~0.75 page-pt tolerance
     const simple = _simplifyPath(contour, eps);
     if (simple.length < 3) return;
-    const pagePts = simple.map(p => ({ x: p.x / factor, y: p.y / factor }));
+    const pagePts = simple.map(p => ({ x: (p.x * s + s / 2) / factor, y: (p.y * s + s / 2) / factor }));
     const ann = {
       id: generateId(), type: 'area', page: currentPage, points: pagePts,
       label: '', perimLabel: '', measLabel: '',
@@ -12162,6 +12391,8 @@ async function writeSavedBytes(savedBytes) {
   docModified = false;
   if (activeDocIndex >= 0 && openDocs[activeDocIndex]) openDocs[activeDocIndex].docModified = false;
   renderDocTabs(); // drop the ● unsaved marker
+  // v3.11: the markups are safely in the file now — retire the crash backup
+  if (typeof autosaveSweepSoon === 'function') autosaveSweepSoon(1000);
   if (currentFileHandle && typeof currentFileHandle.createWritable === 'function') {
     try {
       // Permission check — handles obtained via launchQueue are already granted,
@@ -14887,6 +15118,275 @@ function showModal(title, bodyHTML, buttons) {
 function closeCurrentModal() {
   if (currentModal) { currentModal.remove(); currentModal = null; }
 }
+
+// ============================================================
+// AUTOSAVE & CRASH RECOVERY (v3.11)
+// Every ~30s (and ~8s after any edit) each document with unsaved markups is
+// snapshotted into IndexedDB: the PDF bytes go in one store, the (small)
+// project JSON in another, so routine sweeps rewrite only the JSON unless the
+// pages themselves changed. On startup, records whose session heartbeat has
+// gone quiet (crash, force-close, power cut) trigger a branded
+// "Recover unsaved work?" prompt. Records are removed the moment a document
+// is saved or deliberately closed, so the prompt only ever shows real losses.
+// Heartbeats live in localStorage (shared across windows) so the pop-out
+// window's live documents are never mistaken for crashed ones.
+// ============================================================
+const AUTOSAVE_INTERVAL_MS = 30000;   // background sweep cadence
+const AUTOSAVE_DEBOUNCE_MS = 8000;    // sweep this long after the last edit
+const AUTOSAVE_HEARTBEAT_MS = 20000;  // "this session is alive" pulse
+const AUTOSAVE_STALE_MS = 90000;      // heartbeat older than this = dead session
+const AUTOSAVE_MAX_BYTES = 150 * 1024 * 1024; // don't autosave PDFs bigger than this
+const AUTOSAVE_HB_PREFIX = 'datum-as-hb-';
+const _asSessionId = 'ds-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+let _asDbPromise = null;
+let _asSweeping = false;
+let _asSoonTimer = null;
+let _asWarnedBig = false;
+let _asPendingOffer = null;
+let _asIdSeq = 0;
+
+function _asOpenDb() {
+  if (_asDbPromise) return _asDbPromise;
+  _asDbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) { reject(new Error('IndexedDB unavailable')); return; }
+    const req = indexedDB.open('datum-autosave', 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('bytes')) db.createObjectStore('bytes');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  // A failed open (private mode, storage disabled) shouldn't wedge every
+  // later call into the same rejected promise chain warning — reset so a
+  // retry is possible, but swallow the rejection here.
+  _asDbPromise.catch(() => { _asDbPromise = null; });
+  return _asDbPromise;
+}
+function _asTx(db, store, mode, fn) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(store, mode);
+    const req = fn(tx.objectStore(store));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted'));
+  });
+}
+async function _asPutMeta(rec)      { const db = await _asOpenDb(); return _asTx(db, 'meta', 'readwrite', s => s.put(rec)); }
+async function _asGetAllMeta()      { const db = await _asOpenDb(); return _asTx(db, 'meta', 'readonly', s => s.getAll()); }
+async function _asPutBytes(id, u8)  { const db = await _asOpenDb(); return _asTx(db, 'bytes', 'readwrite', s => s.put(u8, id)); }
+async function _asGetBytes(id)      { const db = await _asOpenDb(); return _asTx(db, 'bytes', 'readonly', s => s.get(id)); }
+async function _asDeleteDoc(id) {
+  try {
+    const db = await _asOpenDb();
+    await _asTx(db, 'meta', 'readwrite', s => s.delete(id));
+    await _asTx(db, 'bytes', 'readwrite', s => s.delete(id));
+  } catch (e) { /* best-effort */ }
+}
+
+// --- session heartbeat (localStorage is shared across windows/tabs) ---
+function _asBeat() { try { localStorage.setItem(AUTOSAVE_HB_PREFIX + _asSessionId, String(Date.now())); } catch (e) {} }
+function _asClearBeat() { try { localStorage.removeItem(AUTOSAVE_HB_PREFIX + _asSessionId); } catch (e) {} }
+function _asSessionLive(sessionId) {
+  if (!sessionId) return false;
+  if (sessionId === _asSessionId) return true;
+  try {
+    const t = parseInt(localStorage.getItem(AUTOSAVE_HB_PREFIX + sessionId) || '0');
+    return t > 0 && (Date.now() - t) < AUTOSAVE_STALE_MS;
+  } catch (e) { return false; }
+}
+function _asCleanStaleBeats() {
+  try {
+    const dead = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(AUTOSAVE_HB_PREFIX)) continue;
+      const t = parseInt(localStorage.getItem(k) || '0');
+      if (!t || (Date.now() - t) >= AUTOSAVE_STALE_MS) dead.push(k);
+    }
+    dead.forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
+}
+
+// Same transient-stripping as _annotationsForSnapshot, but usable for
+// non-active documents (that helper reads the global `annotations`).
+function _asStripAnn(a) {
+  const c = Object.assign({}, a);
+  delete c._labelRect; delete c._perimRect; delete c._legendW; delete c._legendH;
+  delete c._annBox; delete c._stampW; delete c._stampH; delete c._editingInline;
+  return c;
+}
+
+function autosaveSweepSoon(delayMs) {
+  clearTimeout(_asSoonTimer);
+  _asSoonTimer = setTimeout(() => { autosaveSweep(); }, delayMs || AUTOSAVE_DEBOUNCE_MS);
+}
+
+async function autosaveSweep() {
+  if (_asSweeping) return;
+  _asSweeping = true;
+  try {
+    if (activeDocIndex >= 0) captureActiveDocState();
+    const live = new Set();
+    for (let i = 0; i < openDocs.length; i++) {
+      const d = openDocs[i];
+      if (!d._asId) d._asId = 'doc-' + Date.now() + '-' + (++_asIdSeq) + '-' + Math.random().toString(36).slice(2, 7);
+      live.add(d._asId);
+      const dirty = (i === activeDocIndex) ? docModified : !!d.docModified;
+      if (!dirty) { await _asDeleteDoc(d._asId); d._asBytesRef = null; continue; }
+      const bytes = d.currentPdfBytes;
+      if (!bytes || !bytes.length) continue;
+      if (bytes.length > AUTOSAVE_MAX_BYTES) {
+        if (!_asWarnedBig) {
+          _asWarnedBig = true;
+          showToast('This PDF is too large for background backup — remember to Save regularly');
+        }
+        continue;
+      }
+      const project = {
+        annotations: (d.annotations || []).map(_asStripAnn),
+        pageCalibrations: d.pageCalibrations || {},
+        defaultCalibration: d.defaultCalibration || null,
+        countGroups: d.countGroups || {},
+        measurements: d.measurements || [],
+        viewports: d.viewports || [],
+        currentPage: d.currentPage || 0
+      };
+      await _asPutMeta({
+        id: d._asId,
+        filename: d.currentFilename || 'document.pdf',
+        savedAt: Date.now(),
+        sessionId: _asSessionId,
+        projectJson: JSON.stringify(project),
+        // Job-level takeoff rides along on every record; restore merges it
+        // (mergeTakeoffIntoJob dedupes by id, so multi-doc restores are safe).
+        takeoffJson: JSON.stringify({ items: takeoffItems || [], zones: takeoffZones || [], headings: takeoffHeadings || [] })
+      });
+      // The PDF bytes only change on page ops / open — skip the heavy write
+      // when this exact Uint8Array has already been stored for this record.
+      if (d._asBytesRef !== bytes) {
+        await _asPutBytes(d._asId, bytes);
+        d._asBytesRef = bytes;
+      }
+    }
+    // Belt-and-braces: drop any of OUR records whose document is gone
+    // (closeDoc also deletes eagerly; this catches anything it missed).
+    const metas = await _asGetAllMeta();
+    for (const m of (metas || [])) {
+      if (m.sessionId === _asSessionId && !live.has(m.id)) await _asDeleteDoc(m.id);
+    }
+  } catch (e) {
+    console.warn('Autosave sweep failed:', e);
+  } finally {
+    _asSweeping = false;
+  }
+}
+
+// --- startup: offer to restore documents from sessions that died ---
+async function autosaveStartupCheck() {
+  try {
+    _asCleanStaleBeats();
+    const metas = await _asGetAllMeta();
+    const offer = (metas || []).filter(m => !_asSessionLive(m.sessionId));
+    if (!offer.length) return;
+    offer.sort((a, b) => (a.savedAt || 0) - (b.savedAt || 0));
+    _asPendingOffer = offer;
+    const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const rows = offer.map(m => {
+      const when = m.savedAt ? new Date(m.savedAt).toLocaleString() : '';
+      return `<div style="display:flex;justify-content:space-between;gap:12px;padding:5px 8px;background:var(--bg-tertiary);border-radius:4px;font-size:12px">
+        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.filename)}</span>
+        <span style="color:var(--text-secondary);white-space:nowrap">backed up ${esc(when)}</span></div>`;
+    }).join('<div style="height:4px"></div>');
+    showModal('Recover unsaved work?', `
+      <div style="font-size:13px;line-height:1.6">
+        Datum closed before ${offer.length === 1 ? 'this document was' : 'these documents were'} saved.
+        A background backup was kept:<br><br>${rows}<br>
+        <span style="color:var(--text-secondary);font-size:12px">Restore reopens ${offer.length === 1 ? 'it' : 'them'} with all markups and takeoff exactly as they were. Discard deletes the backup${offer.length === 1 ? '' : 's'} permanently.</span>
+      </div>`, [
+      { text: 'Discard', class: 'secondary', onclick: 'closeCurrentModal(); autosaveDiscardOffer()' },
+      { text: 'Restore', class: 'primary', onclick: 'closeCurrentModal(); autosaveRestoreOffer()' }
+    ]);
+  } catch (e) { console.warn('Autosave recovery check failed:', e); }
+}
+
+async function autosaveDiscardOffer() {
+  const offer = _asPendingOffer || [];
+  _asPendingOffer = null;
+  for (const m of offer) await _asDeleteDoc(m.id);
+}
+
+async function autosaveRestoreOffer() {
+  const offer = _asPendingOffer || [];
+  _asPendingOffer = null;
+  let restored = 0;
+  for (const m of offer) {
+    try {
+      const bytes = await _asGetBytes(m.id);
+      if (!bytes || !bytes.length) { await _asDeleteDoc(m.id); continue; }
+      // loadPdf copies the buffer it's given, opens the doc and makes it the
+      // active tab; we then lay the backed-up project state over the top.
+      await loadPdf(bytes.slice().buffer, m.filename || 'document.pdf');
+      const p = JSON.parse(m.projectJson || '{}');
+      // Mutate the live arrays/objects IN PLACE — the openDocs entry holds
+      // references to these same globals, so reassignment would desync them.
+      annotations.length = 0;
+      (p.annotations || []).forEach(a => annotations.push(a));
+      measurements.length = 0;
+      (p.measurements || []).forEach(x => measurements.push(x));
+      viewports.length = 0;
+      (p.viewports || []).forEach(v => viewports.push(v));
+      Object.keys(pageCalibrations).forEach(k => delete pageCalibrations[k]);
+      Object.assign(pageCalibrations, p.pageCalibrations || {});
+      Object.keys(countGroups).forEach(k => delete countGroups[k]);
+      Object.assign(countGroups, p.countGroups || {});
+      defaultCalibration = p.defaultCalibration || null;
+      try {
+        const t = JSON.parse(m.takeoffJson || '{}');
+        if (!workbookFileHandle && t && (t.items || []).length) {
+          mergeTakeoffIntoJob(t.items, t.zones, t.headings);
+        }
+      } catch (e) {}
+      const tp = Math.min(Math.max(0, p.currentPage || 0), pdfDoc ? pdfDoc.numPages - 1 : 0);
+      currentPage = tp;
+      // The restored content is unsaved by definition — this also snapshots
+      // history and re-arms the ● marker + a fresh autosave record.
+      saveToHistory();
+      captureActiveDocState();
+      renderPage(currentPage);
+      generateThumbnails();
+      updatePageIndicator();
+      updateCalibrationIndicator();
+      checkCalibrationBanner();
+      redrawAnnotations();
+      if (typeof refreshTakeoffPanel === 'function' && panelMode === 'takeoff') refreshTakeoffPanel();
+      renderDocTabs();
+      restored++;
+      await _asDeleteDoc(m.id); // old record; the sweep re-saves under this session
+    } catch (e) {
+      console.warn('Could not restore backup for', m && m.filename, e);
+    }
+  }
+  if (restored > 0) showToast('Recovered ' + restored + ' document' + (restored > 1 ? 's' : '') + ' — remember to Save');
+  autosaveSweepSoon(2000);
+}
+
+function autosaveInit() {
+  _asBeat();
+  setInterval(_asBeat, AUTOSAVE_HEARTBEAT_MS);
+  setInterval(autosaveSweep, AUTOSAVE_INTERVAL_MS);
+  // Clean shutdown (tab closed, even with the "leave site?" warning accepted):
+  // drop the heartbeat so leftover records are offered IMMEDIATELY on the
+  // next open, instead of after the 90s staleness window. A hard crash never
+  // runs pagehide — the heartbeat then simply goes stale.
+  window.addEventListener('pagehide', _asClearBeat);
+  // A hidden tab can be killed by the OS without pagehide — take a quick
+  // snapshot whenever the app goes to the background.
+  document.addEventListener('visibilitychange', () => { if (document.hidden) autosaveSweep(); });
+  setTimeout(() => { autosaveStartupCheck(); }, 900);
+}
+document.addEventListener('DOMContentLoaded', autosaveInit);
 
 </script>
 </body>
