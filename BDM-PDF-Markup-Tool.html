@@ -1781,7 +1781,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.9.1';
+const APP_VERSION = 'v3.10';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3157,6 +3157,9 @@ function updateSelectHoverCursor(screenPt) {
         if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(sel.type) && sel.points.length === 2) {
           // 0=TL 1=TC 2=TR 3=ML 4=MR 5=BL 6=BC 7=BR
           cursor = ['nwse-resize','ns-resize','nesw-resize','ew-resize','ew-resize','nesw-resize','ns-resize','nwse-resize'][hi] || 'move';
+        } else if (['stamp','legend','table'].includes(sel.type)) {
+          // 4 corner handles: 0=TL 1=TR 2=BL 3=BR — proportional resize
+          cursor = ['nwse-resize','nesw-resize','nesw-resize','nwse-resize'][hi] || 'move';
         } else cursor = 'crosshair';
       }
     }
@@ -3984,16 +3987,60 @@ function drawCalloutAnn(ctx, ann) {
   ctx.textAlign = 'left';
 }
 
+// Stamp — boxed text centred on ann.points[0].
+// v3.10: `ann.stampScale` (1 = the original 18px text) sizes the whole stamp and
+// `ann.opacity` (percent, default 85 = the historic look) sets how see-through it
+// is. Text, box, padding and border thickness all scale together so a big stamp
+// looks like the small one, just bigger. _stampW/_stampH are cached on every draw
+// so hit-testing and the corner resize handles track the real box at any size.
+const DEFAULT_STAMP_OPACITY = 85;
+const STAMP_BASE_FONT = 18;   // px at scale 1
+const STAMP_BASE_PAD  = 20;   // horizontal padding at scale 1
+const STAMP_BASE_H    = 28;   // box height at scale 1
 function drawStampAnn(ctx, ann) {
-  ctx.globalAlpha = 0.85; ctx.fillStyle = ann.stampColor || '#E5432E';
-  ctx.font = `bold 18px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const sc = stampScaleOf(ann);
+  ctx.globalAlpha = (ann.opacity !== undefined ? ann.opacity : DEFAULT_STAMP_OPACITY) / 100;
+  ctx.fillStyle = ann.stampColor || '#E5432E';
+  ctx.font = `bold ${STAMP_BASE_FONT * sc}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const t = ann.text || 'APPROVED';
-  const w = ctx.measureText(t).width + 20;
-  ctx.strokeStyle = ann.stampColor || '#E5432E'; ctx.lineWidth = 2;
-  ctx.strokeRect(ann.points[0].x - w/2, ann.points[0].y - 14, w, 28);
+  const w = ctx.measureText(t).width + STAMP_BASE_PAD * sc;
+  const h = STAMP_BASE_H * sc;
+  ctx.strokeStyle = ann.stampColor || '#E5432E'; ctx.lineWidth = 2 * sc;
+  ctx.strokeRect(ann.points[0].x - w/2, ann.points[0].y - h/2, w, h);
   ctx.fillText(t, ann.points[0].x, ann.points[0].y);
   ctx.textAlign = 'left';
+  ann._stampW = w; ann._stampH = h;   // transient — stripped before save/undo
 }
+// Clamped stamp scale (guards against a corrupt/hand-edited save).
+function stampScaleOf(ann) {
+  const v = parseFloat(ann.stampScale);
+  return (isFinite(v) && v > 0) ? Math.max(0.2, Math.min(12, v)) : 1;
+}
+// Measured box for a stamp — uses the cached size when the stamp has been drawn
+// at least once, otherwise estimates from the character count.
+function stampBoxOf(ann) {
+  const sc = stampScaleOf(ann);
+  const w = ann._stampW || ((ann.text || 'APPROVED').length * 11 + STAMP_BASE_PAD) * sc;
+  const h = ann._stampH || STAMP_BASE_H * sc;
+  return { w, h };
+}
+
+// Default size / transparency applied to NEW stamps. Set from the Stamp tool
+// panel (or "Use as default" on a selected stamp) and remembered between
+// sessions, so a user who wants big, faint stamps only sets it up once.
+let stampDefaultScale = 1;
+let stampDefaultOpacity = DEFAULT_STAMP_OPACITY;
+function loadStampPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem('bdm-stamp-prefs') || '{}');
+    if (isFinite(p.scale) && p.scale > 0) stampDefaultScale = Math.max(0.2, Math.min(12, p.scale));
+    if (isFinite(p.opacity)) stampDefaultOpacity = Math.max(5, Math.min(100, p.opacity));
+  } catch (e) {}
+}
+function saveStampPrefs() {
+  try { localStorage.setItem('bdm-stamp-prefs', JSON.stringify({ scale: stampDefaultScale, opacity: stampDefaultOpacity })); } catch (e) {}
+}
+loadStampPrefs();
 
 // Tick / check-mark — drawn as a 3-segment polyline (short down stroke, long up stroke).
 // Centered on ann.points[0]. Size and thickness are user-configurable.
@@ -4281,6 +4328,17 @@ function getAnnotationHandlePoints(ann) {
   if (ann.type === 'text') {
     return ann._annBox ? _boxHandlePts(ann._annBox) : [ann.points[0]];
   }
+  // Stamp — 4 corner handles; dragging any corner scales the whole stamp
+  // (ann.stampScale) around the opposite corner. The stamp is centred on
+  // points[0], so the handles sit half a box out in each direction.
+  if (ann.type === 'stamp') {
+    const { w, h } = stampBoxOf(ann);
+    const p = ann.points[0];
+    return [
+      { x: p.x - w/2, y: p.y - h/2 }, { x: p.x + w/2, y: p.y - h/2 },   // TL, TR
+      { x: p.x - w/2, y: p.y + h/2 }, { x: p.x + w/2, y: p.y + h/2 }    // BL, BR
+    ];
+  }
   // Takeoff legend / summary table — 4 corner handles; dragging any corner
   // scales the whole table (ann.legendScale) around the opposite corner.
   if (ann.type === 'legend' || ann.type === 'table') {
@@ -4373,6 +4431,33 @@ function applyResize(ann, handleIdx, newPagePt) {
     ann.boxW = nb.w;
     ann.boxH = nb.h;
     ann._annBox = nb;
+    return;
+  }
+
+  // Stamp — corner drag rescales the stamp proportionally; the corner OPPOSITE
+  // the dragged one stays pinned. Because the stamp is centred on points[0] we
+  // move the centre to keep that pinned corner where it was.
+  if (ann.type === 'stamp') {
+    const { w, h } = stampBoxOf(ann);
+    const p = ann.points[0];
+    const sc = stampScaleOf(ann);
+    const baseW = w / sc, baseH = h / sc;         // box size at scale 1
+    const left = p.x - w/2, right = p.x + w/2, top = p.y - h/2, bottom = p.y + h/2;
+    let newW, anchorX, anchorY, pinRight, pinBottom;
+    switch (handleIdx) {
+      case 0: newW = right - newPagePt.x; anchorX = right; anchorY = bottom; pinRight = true;  pinBottom = true;  break; // TL → pin BR
+      case 1: newW = newPagePt.x - left;  anchorX = left;  anchorY = bottom; pinRight = false; pinBottom = true;  break; // TR → pin BL
+      case 2: newW = right - newPagePt.x; anchorX = right; anchorY = top;    pinRight = true;  pinBottom = false; break; // BL → pin TR
+      default: newW = newPagePt.x - left; anchorX = left;  anchorY = top;    pinRight = false; pinBottom = false; break; // BR → pin TL
+    }
+    const ns = Math.max(0.2, Math.min(12, newW / baseW));
+    const nw = baseW * ns, nh = baseH * ns;
+    ann.stampScale = ns;
+    ann.points[0] = {
+      x: pinRight  ? anchorX - nw/2 : anchorX + nw/2,
+      y: pinBottom ? anchorY - nh/2 : anchorY + nh/2
+    };
+    ann._stampW = nw; ann._stampH = nh;   // keep handles accurate mid-drag
     return;
   }
 
@@ -4934,6 +5019,9 @@ function onCanvasMouseUp(e) {
   // Handle resize completion
   if (resizeAnnotation) {
     const wasMeasurement = ['measure','polyline','area','dimension'].includes(resizeAnnotation.type);
+    // v3.10 — a stamp corner-drag changes ann.stampScale, so the Size % box and
+    // slider in the open Properties panel would otherwise show a stale figure.
+    const wasStamp = resizeAnnotation.type === 'stamp';
     resizeAnnotation = null;
     resizeHandleIndex = -1;
     dragLast = null;
@@ -4941,6 +5029,7 @@ function onCanvasMouseUp(e) {
     redrawAnnotations();
     // Refresh stale measurement value in the open properties panel + tallies
     if (wasMeasurement) { rebuildMeasurements(); openPropertiesPanel(); refreshMeasurementsPanel(); if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel(); }
+    else if (wasStamp) openPropertiesPanel();
     return;
   }
 
@@ -5883,7 +5972,9 @@ function addStamp(point) {
   if (stampInitials && stampInitials.trim()) text += ' — ' + stampInitials.trim();
   const ann = {
     id: generateId(), type: 'stamp', page: currentPage, points: [pagePoint],
-    text, stampColor: colors[selectedStamp] || '#E5432E', color: '#E5432E'
+    text, stampColor: colors[selectedStamp] || '#E5432E', color: '#E5432E',
+    stampScale: stampDefaultScale,      // v3.10 — size, 1 = original 18px text
+    opacity: stampDefaultOpacity        // v3.10 — 100 = solid, lower = see-through
   };
   annotations.push(ann); saveToHistory(); redrawAnnotations();
 }
@@ -6387,10 +6478,9 @@ function hitTest(x, y, ann, tol) {
       return x >= px - tol && x <= px + maxW + tol && y >= py - tol && y <= py + lines.length * lineH + tol;
     }
     case 'stamp': {
-      const t = ann.text || 'APPROVED';
-      const w = (t.length * 11) + 20;
+      const { w, h } = stampBoxOf(ann);
       const cx = ann.points[0].x, cy = ann.points[0].y;
-      return x >= cx - w/2 - tol && x <= cx + w/2 + tol && y >= cy - 14 - tol && y <= cy + 14 + tol;
+      return x >= cx - w/2 - tol && x <= cx + w/2 + tol && y >= cy - h/2 - tol && y <= cy + h/2 + tol;
     }
     case 'tick': {
       const c = ann.points[0];
@@ -9485,10 +9575,21 @@ function getAnnotationPropertiesHTML(ann) {
   }
 
   if (ann.type === 'stamp') {
+    const sPct = Math.round(stampScaleOf(ann) * 100);
+    const sTrans = 100 - (ann.opacity !== undefined ? ann.opacity : DEFAULT_STAMP_OPACITY);
     html += `<div class="properties-section"><div class="properties-section-title">Stamp</div><div class="properties-section-content">
       <div class="property-row"><div class="property-label">Text:</div><input type="text" id="prop-stamp-text" class="property-input" value="${(ann.text||'APPROVED').replace(/"/g,'&quot;')}"></div>
       <div class="property-row"><div class="property-label">Color:</div><input type="color" id="prop-stamp-color" class="color-picker" value="${ann.stampColor||ann.color||'#E5432E'}"></div>
       <div class="color-swatches" data-target="prop-stamp-color"></div>
+      <div class="slider-group"><div class="slider-label"><span>Size:</span><span id="prop-stamp-size-val">${sPct}%</span></div>
+        <input type="range" id="prop-stamp-size" class="slider" min="25" max="500" step="5" value="${Math.max(25, Math.min(500, sPct))}"></div>
+      <div class="property-row"><div class="property-label" title="Type an exact size, or drag a corner handle on the drawing">Size %:</div>
+        <input type="number" id="prop-stamp-size-num" class="property-input" min="20" max="1200" step="10" value="${sPct}" style="width:64px">
+        <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="resetStampSize()" title="Back to the original stamp size">Reset</button></div>
+      <div class="slider-group"><div class="slider-label"><span>Transparency:</span><span id="prop-stamp-trans-val">${sTrans}%</span></div>
+        <input type="range" id="prop-stamp-transparency" class="slider" min="0" max="95" step="5" value="${sTrans}"></div>
+      <div class="property-row"><button class="modal-btn secondary" style="width:100%;font-size:11px" onclick="useStampAsDefault()" title="Remember this size and transparency for every new stamp you place">Use as default for new stamps</button></div>
+      <div style="font-size:10px;color:var(--text-muted);padding:2px 2px 0">Transparency 0% = solid ink; higher = more see-through, so the drawing shows through. Drag a corner handle on the drawing to resize.</div>
     </div></div>`;
   }
 
@@ -9502,8 +9603,11 @@ function getAnnotationPropertiesHTML(ann) {
   }
 
   if (ann.type === 'signature') {
+    const sigTrans = 100 - (ann.opacity !== undefined ? ann.opacity : 100);
     html += `<div class="properties-section"><div class="properties-section-title">Signature</div><div class="properties-section-content">
       <div style="font-size:11px;color:var(--text-secondary)">Drag a corner handle to resize — proportions are kept automatically. Drag the body to move.</div>
+      <div class="slider-group"><div class="slider-label"><span>Transparency:</span><span id="prop-sig-trans-val">${sigTrans}%</span></div>
+        <input type="range" id="prop-sig-transparency" class="slider" min="0" max="95" step="5" value="${sigTrans}"></div>
       <button onclick="fixSelectedSignatureAspect()" class="modal-btn" style="width:100%;margin-top:6px;font-size:11px" title="Snap a stretched signature back to the image's real shape (keeps its width)">Fix proportions</button>
     </div></div>`;
   }
@@ -9803,6 +9907,44 @@ function attachAnnotationListeners(ann) {
   const opSlider = document.getElementById('prop-opacity');
   if (opSlider) opSlider.addEventListener('input', e => { ann.opacity = parseInt(e.target.value); document.getElementById('prop-op-val').textContent = e.target.value+'%'; redrawAnnotations(); pushHistorySoon(); });
 
+  // Stamp size — slider and number box drive the same ann.stampScale and keep
+  // each other in step. Resizing from the centre, so the stamp grows in place.
+  const _applyStampSize = pct => {
+    const v = Math.max(20, Math.min(1200, parseFloat(pct) || 100));
+    ann.stampScale = v / 100;
+    delete ann._stampW; delete ann._stampH;   // force a re-measure on next draw
+    const sv = document.getElementById('prop-stamp-size-val');
+    if (sv) sv.textContent = Math.round(v) + '%';
+    redrawAnnotations(); pushHistorySoon();
+    return v;
+  };
+  const stSize = document.getElementById('prop-stamp-size');
+  const stSizeNum = document.getElementById('prop-stamp-size-num');
+  if (stSize) stSize.addEventListener('input', e => { const v = _applyStampSize(e.target.value); if (stSizeNum) stSizeNum.value = Math.round(v); });
+  if (stSizeNum) stSizeNum.addEventListener('input', e => {
+    const v = _applyStampSize(e.target.value);
+    if (stSize) stSize.value = Math.max(25, Math.min(500, v));
+  });
+  // Signature transparency — same inverse-of-opacity slider as the stamp.
+  const sgTrans = document.getElementById('prop-sig-transparency');
+  if (sgTrans) sgTrans.addEventListener('input', e => {
+    const t = Math.max(0, Math.min(95, parseInt(e.target.value) || 0));
+    ann.opacity = 100 - t;
+    const tv = document.getElementById('prop-sig-trans-val');
+    if (tv) tv.textContent = t + '%';
+    redrawAnnotations(); pushHistorySoon();
+  });
+  // Stamp transparency — the slider reads as "how see-through", which is the
+  // inverse of the stored opacity percentage.
+  const stTrans = document.getElementById('prop-stamp-transparency');
+  if (stTrans) stTrans.addEventListener('input', e => {
+    const t = Math.max(0, Math.min(95, parseInt(e.target.value) || 0));
+    ann.opacity = 100 - t;
+    const tv = document.getElementById('prop-stamp-trans-val');
+    if (tv) tv.textContent = t + '%';
+    redrawAnnotations(); pushHistorySoon();
+  });
+
   const foSlider = document.getElementById('prop-fill-opacity');
   if (foSlider) foSlider.addEventListener('input', e => { ann.fillOpacity = parseInt(e.target.value); document.getElementById('prop-fo-val').textContent = e.target.value+'%'; redrawAnnotations(); pushHistorySoon(); });
 
@@ -9978,8 +10120,13 @@ function getToolPropertiesHTML(tool) {
       </label>
       <div class="property-row"><div class="property-label">Initials:</div>
         <input type="text" id="stamp-initials" class="property-input" maxlength="6" placeholder="e.g. JG" value="${(stampInitials||'').replace(/"/g,'&quot;')}"></div>
+      <div class="slider-group"><div class="slider-label"><span>Size:</span><span id="stamp-def-size-val">${Math.round(stampDefaultScale*100)}%</span></div>
+        <input type="range" id="stamp-def-size" class="slider" min="25" max="500" step="5" value="${Math.max(25, Math.min(500, Math.round(stampDefaultScale*100)))}"></div>
+      <div class="slider-group"><div class="slider-label"><span>Transparency:</span><span id="stamp-def-trans-val">${100 - stampDefaultOpacity}%</span></div>
+        <input type="range" id="stamp-def-transparency" class="slider" min="0" max="95" step="5" value="${100 - stampDefaultOpacity}"></div>
       <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
-        Tip: tick "Include today's date" and add your initials, then place the stamp — perfect for approving invoices or marking documents as paid.</div>
+        Tip: tick "Include today's date" and add your initials, then place the stamp — perfect for approving invoices or marking documents as paid.<br>
+        Size and Transparency above apply to the next stamp you place and are remembered. To change one already on the page, click it with the arrow tool (or drag its corner handles).</div>
     </div>`;
   } else if (tool === 'tick') {
     html += `<div style="display:flex;flex-direction:column;gap:8px">
@@ -10109,6 +10256,22 @@ function attachToolListeners() {
   if (sd) sd.addEventListener('change', e => { stampIncludeDate = e.target.checked; });
   const si = document.getElementById('stamp-initials');
   if (si) si.addEventListener('input', e => { stampInitials = e.target.value; });
+  // Default size / transparency for the NEXT stamp placed (persisted)
+  const sds = document.getElementById('stamp-def-size');
+  if (sds) sds.addEventListener('input', e => {
+    stampDefaultScale = Math.max(0.2, Math.min(12, (parseInt(e.target.value) || 100) / 100));
+    const l = document.getElementById('stamp-def-size-val');
+    if (l) l.textContent = Math.round(stampDefaultScale * 100) + '%';
+    saveStampPrefs();
+  });
+  const sdt = document.getElementById('stamp-def-transparency');
+  if (sdt) sdt.addEventListener('input', e => {
+    const t = Math.max(0, Math.min(95, parseInt(e.target.value) || 0));
+    stampDefaultOpacity = 100 - t;
+    const l = document.getElementById('stamp-def-trans-val');
+    if (l) l.textContent = t + '%';
+    saveStampPrefs();
+  });
 
   // Tick tool options — store on toolProperties so they persist across placements
   const tc = document.getElementById('tool-tick-color');
@@ -10146,6 +10309,23 @@ function removeCustomStamp(idx) {
   openPropertiesPanel();
 }
 
+// Reset the selected stamp back to its original size.
+function resetStampSize() {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  if (!a || a.type !== 'stamp') return;
+  a.stampScale = 1; delete a._stampW; delete a._stampH;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+// Remember the selected stamp's size + transparency for every new stamp.
+function useStampAsDefault() {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  if (!a || a.type !== 'stamp') return;
+  stampDefaultScale = stampScaleOf(a);
+  stampDefaultOpacity = a.opacity !== undefined ? a.opacity : DEFAULT_STAMP_OPACITY;
+  saveStampPrefs();
+  showToast(`New stamps will be ${Math.round(stampDefaultScale*100)}% size, ${100 - stampDefaultOpacity}% transparent`);
+}
+
 function selectStamp(s) {
   selectedStamp = s;
   const el = document.getElementById('sel-stamp');
@@ -10161,6 +10341,7 @@ function _annotationsForSnapshot() {
   return annotations.map(a => {
     const c = Object.assign({}, a);
     delete c._labelRect; delete c._perimRect; delete c._legendW; delete c._legendH; delete c._annBox;
+    delete c._stampW; delete c._stampH;
     return c;
   });
 }
