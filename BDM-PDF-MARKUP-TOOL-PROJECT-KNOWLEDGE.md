@@ -616,3 +616,36 @@ James asked "what should I build next?" and picked autosave/crash-recovery plus 
 - Verified: gap-off fill correctly refuses (leak detected); gap-medium seals the gap and measures to the wall face; tool panel renders the Gap closing control.
 
 **Deploy note:** files saved to BOTH `C:\Git Hub\bdm-pdf-tool` (deploy source of truth — James commits + pushes) and the OneDrive project folder, per the standing instruction.
+
+---
+
+### v3.12 — one arrowhead size across the whole app (12 Aug 2026)
+
+**Reported by James:** "The arrow tool produces a different size arrow to the callout text with arrow tool. It'd be good if these were the same size."
+
+**Cause:** three separate places each hard-coded their own arrowhead geometry, and they had drifted apart:
+
+| Drawn by | Head length | Half-angle | Style |
+|---|---|---|---|
+| `drawArrowShape` (committed Arrow) | 15 | `Math.PI/6` (60° included) | filled triangle |
+| Arrow drag preview (in `drawInProgress`) | 12 | `Math.PI/6` | stroked open "V" |
+| `drawCalloutAnn` leader head | 10 | `Math.PI/7` (~51° included) | filled triangle |
+
+So a callout head measured 8.7 × 9.0 page units against the arrow tool's 15 × 13.0 — about a third shorter and visibly narrower. An arrow and a callout pointing at the same detail read as two different tools.
+
+**Fix:** two module-level constants declared immediately above `drawArrowShape`, and all three call sites now read from them:
+
+```js
+const ARROWHEAD_LEN  = 15;         // page units, tip back to the barbs
+const ARROWHEAD_HALF = Math.PI/6;  // half the included angle
+```
+
+- `drawCalloutAnn` head: `hl = 10` → `ARROWHEAD_LEN`, `Math.PI/7` → `ARROWHEAD_HALF`.
+- Arrow drag preview: `headlen = 12` → `ARROWHEAD_LEN`, and it now draws the same CLOSED, FILLED triangle the committed arrow gets (`closePath()` + `fillStyle = toolProperties.color` + `fill()`) instead of two stroked barbs — so what you drag is what you drop. The preview's `setLineDash([4,4])` doesn't affect a fill, so no dash reset was needed.
+- **Deliberately NOT changed:** `drawDimensionAnn` keeps its own smaller `al = 8` head. Dimension arrows are conventionally smaller than annotation arrows and sit between extension lines; matching them to 15 would crowd short dimensions. If James ever wants them unified too, that's the third call site.
+
+**Why constants rather than editing three numbers:** this exact drift is how the bug happened. Any future resize is now one edit in one place, and a new arrowhead-drawing site has an obvious thing to reference.
+
+**Verified:** head geometry computed off-canvas for both tools at horizontal, reversed and diagonal leader angles — all return an identical 15.000 wide × 12.990 long triangle (old callout: 8.678 × 9.010). Both `<script>` blocks extracted and `node --check`ed clean. `APP_VERSION` bumped `v3.11` → `v3.12`.
+
+**Deploy note:** saved to BOTH `C:\Git Hub\bdm-pdf-tool` (deploy source of truth — James commits + pushes) and the OneDrive project folder, per the standing instruction.
