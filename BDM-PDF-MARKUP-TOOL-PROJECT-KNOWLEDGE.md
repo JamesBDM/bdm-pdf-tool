@@ -649,3 +649,66 @@ const ARROWHEAD_HALF = Math.PI/6;  // half the included angle
 **Verified:** head geometry computed off-canvas for both tools at horizontal, reversed and diagonal leader angles — all return an identical 15.000 wide × 12.990 long triangle (old callout: 8.678 × 9.010). Both `<script>` blocks extracted and `node --check`ed clean. `APP_VERSION` bumped `v3.11` → `v3.12`.
 
 **Deploy note:** saved to BOTH `C:\Git Hub\bdm-pdf-tool` (deploy source of truth — James commits + pushes) and the OneDrive project folder, per the standing instruction.
+
+---
+
+### v3.13 — text boxes shrink properly, resizable arrow heads, Text Color actually works (13 Aug 2026)
+
+**Reported by James (three things in one message):**
+1. "The text box can't reduce in size to a point, ie at size 8 text it won't go any thinner."
+2. "I can't adjust size of the arrow head."
+3. "When I add a text box it has text colour and appearance colour in properties but text colour doesn't work (you need to change appearance colour). Appearance colour should be the text box outline if you want to add one — maybe call it Outline not Appearance."
+
+---
+
+#### 1. Text / callout boxes wouldn't shrink
+
+**Cause:** the resize floor was a flat literal, unrelated to the font. `applyResize` passed `minW = 30, minH = fs + 2` for text and `minW = 30 + pad*2, minH = fs + 3 + pad*2` for a callout, and the callout's `pad` was a hard-coded `6`. At 8pt text that's a 30-unit floor for text (~4 characters) and a 42-unit floor for a callout — the box hit a wall long before it looked tight. The typed Box W×H inputs enforced the same thing (`min="30"` / `min="10"`, and the bind rejected anything under 30/10 back to "auto").
+
+**Fix — two new helpers next to the arrowhead constants:**
+
+```js
+function BOX_MIN(fontSize) { return Math.max(4, Math.round((fontSize || 14) * 0.6)); }
+function calloutPad(ann)   { return Math.max(2, Math.round(((ann && ann.fontSize) || 12) * 0.5)); }
+```
+
+- `BOX_MIN` replaces the literal floors in BOTH branches of `applyResize` (text and callout) and in the `prop-boxw` / `prop-boxh` binds and `min=` attributes. 8pt → 5 units, 14pt → 8 units.
+- `calloutPad` replaces every hard-coded `6` in the callout path: `drawCalloutAnn`, `applyResize`'s callout branch, `showCalloutTextInput` and `editTextAnnotationInline` (the last two also set `overlay.style.padding` explicitly so the WYSIWYG editor from v3.7 still lines up — `.callout-edit` CSS hard-codes `padding:6px`, which is now overridden per-annotation).
+- **`fontSize: 12` still returns exactly 6**, so every callout ever drawn (default 12pt) is pixel-identical. Verified: a 12pt callout's `_annBox` is byte-for-byte the same as v3.12's; an 8pt one goes 75×23 → 71×19.
+- Font size inputs (`prop-fontsize`, `tool-fontsize`) dropped `min="8"` → `min="4"` as well, covering the other reading of "won't go any thinner".
+
+Measured floors: text 30 → 5 wide, 10 → 5 tall; callout 42 → 13 wide, 23 → 13 tall (at 8pt).
+
+#### 2. Arrow head size is now per-annotation
+
+v3.12 unified the head at `ARROWHEAD_LEN = 15` but left it a constant. v3.13 adds an **`ann.arrowScale` multiplier** on top, read through one accessor so all three call sites stay in step:
+
+```js
+function arrowHeadLen(ann) {
+  const v = parseFloat(ann && ann.arrowScale);
+  const sc = (isFinite(v) && v > 0) ? Math.max(0.2, Math.min(6, v)) : 1;
+  return ARROWHEAD_LEN * sc;
+}
+```
+
+- `drawArrowShape` and `drawCalloutAnn` call `arrowHeadLen(ann)`; the drag preview calls `arrowHeadLen({arrowScale: toolProperties.arrowScale})` so the preview matches what you'll drop.
+- **`undefined` → scale 1**, so nothing drawn before v3.13 changes. Verified: arrow and callout at default both measure 49 × 15 px on canvas, identical to v3.12.
+- UI: Properties → Appearance gains an "Arrow Head" slider (20–400%) + exact "Head %" box (20–600%) + Reset, on `arrow` AND `callout`. The Arrow and Callout **tool** panels gain an "Arrow Head %" default (`toolProperties.arrowScale`), baked onto the annotation at creation so changing the default later doesn't resize arrows already on the page.
+- `drawDimensionAnn` still keeps its own smaller `al = 8` head — same deliberate exclusion as v3.12.
+
+#### 3. Text Color did nothing; Appearance Colour was the real one
+
+**Cause:** `drawTextAnn` set `ctx.fillStyle = ann.color`. The panel's "Text Color" swatch bound to `ann.textColor`, which `drawTextAnn` never read — only `drawCalloutAnn` did (`ann.textColor || color`). So on a plain text box the labelled control was dead and the generic Appearance → Colour was doing the job.
+
+**Fix:**
+- New `_textInkColor(ann)` = `ann.textColor || ann.color || '#E5432E'`, used by `drawTextAnn` for the glyphs, the underline stroke, and the colour restored after the box fill; `editTextAnnotationInline` uses it too so the inline editor matches. **`ann.color` stays as the fallback** — text written before v3.13 has no `textColor` and renders exactly as it always did (verified pixel-identical).
+- New text annotations get `textColor: toolProperties.color` alongside `color`, so both agree from birth.
+- **Appearance for `type:'text'` no longer shows a bare "Colour" row.** It shows **Outline:** — a checkbox + colour picker writing `ann.boxStroke`, which `drawTextAnn` strokes around the box at `ann.thickness` when set. Off unless set, so no existing text gains a border. The box rect is now computed ONCE and shared by the fill, the outline, `_annBox` (hit-test) and the resize handles, instead of being recalculated inside the fill branch.
+- Callout's Appearance row is relabelled **"Leader/Border"** with a tooltip, since for a callout that colour genuinely is the leader + arrow head + border (its Text Color already worked).
+- The Text **tool** panel's "Colour" is relabelled "Text Colour" for the same reason.
+
+**Vocabulary trap for this file, now three deep:** `boxFill` = the text box's fill colour, `fillColor` = a shape's fill colour (v3.9.1), and now `boxStroke` = the text box's border colour while `color` is the legacy text-ink fallback. Don't cross them.
+
+**Verified:** control-first Playwright, old build vs new, rendering annotations onto an offscreen canvas (the `drawTextAnn`-is-on-window shortcut) plus a real end-to-end run — blank PDF served over local http, CDN routed to local npm `pdfjs-dist@3.11.174` / `pdf-lib`, text placed, resized and recoloured through the actual Properties panel. Results: Text Color red → blue in the pixels (old build stayed red); legacy `color`-only text byte-identical; outline pixel present only with `boxStroke`; heads 15/30/7.5 at 100/200/50%; arrow and callout equal at 100%; text box floor 30 → 5; callout floor 42 → 13; 12pt callout box unchanged; `_annBox` still stripped from the save snapshot; zero page errors. Both `<script>` blocks `node --check` clean. `APP_VERSION` bumped `v3.12` → `v3.13`.
+
+**Deploy note:** saved to BOTH `C:\Git Hub\bdm-pdf-tool` (deploy source of truth — James commits + pushes) and the OneDrive project folder, per the standing instruction.

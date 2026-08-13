@@ -1781,7 +1781,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.12';
+const APP_VERSION = 'v3.13';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3927,9 +3927,37 @@ function drawCloudShape(ctx, ann) {
 const ARROWHEAD_LEN  = 15;         // page units, tip back to the barbs
 const ARROWHEAD_HALF = Math.PI/6;  // half the included angle (30deg => 60deg total)
 
+// v3.13: every arrow and callout can now size its OWN head. `ann.arrowScale`
+// is a multiplier on ARROWHEAD_LEN (1 = the standard 15-unit head; undefined
+// means 1, so every markup drawn before v3.13 looks exactly as it did),
+// clamped so a hand-edited or corrupt save can't make a head the size of the
+// sheet.
+function arrowHeadLen(ann) {
+  const v = parseFloat(ann && ann.arrowScale);
+  const sc = (isFinite(v) && v > 0) ? Math.max(0.2, Math.min(6, v)) : 1;
+  return ARROWHEAD_LEN * sc;
+}
+
+// Gap between a callout's text and its box edge. v3.13: scales with the font
+// so a small note can actually BE small — at the old fixed 6 an 8pt callout
+// carried more padding than text and refused to shrink. fontSize 12 (the
+// default, and what every existing callout uses) still returns exactly 6.
+function calloutPad(ann) {
+  const fs = (ann && ann.fontSize) || 12;
+  return Math.max(2, Math.round(fs * 0.5));
+}
+
+// v3.13: smallest a text / callout box may be dragged, in page units. Was a
+// flat 30 wide, which at 8pt text is nearly four characters — the box hit a
+// wall long before it looked tight. Tie it to the font instead: about one
+// character each way, never below 4 units.
+function BOX_MIN(fontSize) {
+  return Math.max(4, Math.round((fontSize || 14) * 0.6));
+}
+
 function drawArrowShape(ctx, ann) {
   const [p1, p2] = ann.points;
-  const hl = ARROWHEAD_LEN, angle = Math.atan2(p2.y-p1.y, p2.x-p1.x);
+  const hl = arrowHeadLen(ann), angle = Math.atan2(p2.y-p1.y, p2.x-p1.x);
   ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(p2.x, p2.y);
   ctx.lineTo(p2.x - hl*Math.cos(angle-ARROWHEAD_HALF), p2.y - hl*Math.sin(angle-ARROWHEAD_HALF));
@@ -3980,9 +4008,19 @@ function _textBoxFillColor(ann) {
   return ann.boxFill;
 }
 
+// v3.13: THE colour of the letters in a text box. Properties → Text Formatting
+// → Text Color writes `ann.textColor`, and that is what wins. Text drawn before
+// v3.13 has no textColor and stored its colour in `ann.color` (which the panel
+// now offers as the box OUTLINE colour), so `ann.color` stays as the fallback
+// and every existing markup renders exactly as it always did.
+function _textInkColor(ann) {
+  return ann.textColor || ann.color || '#E5432E';
+}
+
 function drawTextAnn(ctx, ann) {
   ctx.globalAlpha = 1;
-  ctx.fillStyle = ann.color || '#E5432E';
+  const ink = _textInkColor(ann);
+  ctx.fillStyle = ink;
   const ff = ann.fontFamily || 'Arial';
   const fs = ann.fontSize || 14;
   const fw = ann.fontWeight || 'normal';
@@ -3991,19 +4029,33 @@ function drawTextAnn(ctx, ann) {
   ctx.textBaseline = 'top';
   // ann.boxW (drag the box handle) wraps the text to that width
   const lines = ann.boxW ? _wrapTextLines(ctx, ann.text || '', ann.boxW) : (ann.text||'').split('\n');
+  // Box geometry — ONE calculation now shared by the fill, the outline, the
+  // hit-test box and the resize handles. boxW/boxH (drag any of the 8 handles)
+  // fix the box size; text wraps to the width and the box keeps whatever height
+  // you set (square, tall, anything).
+  const bw = ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width));
+  const bh = ann.boxH || Math.max(fs + 2, lines.length * (fs + 2));
+  const bp = 3; // breathing room around the text
   // Optional fill behind the text (ann.boxFill — Properties → Appearance).
   // Separate property from shapes' fillColor so older text stays unfilled.
   const _boxFillCol = _textBoxFillColor(ann);
   if (_boxFillCol) {
-    const bp = 3; // breathing room around the text
-    const bw = (ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width))) + bp * 2;
-    const bh = (ann.boxH || Math.max(fs + 2, lines.length * (fs + 2))) + bp * 2;
     ctx.save();
     ctx.fillStyle = _boxFillCol;
     ctx.globalAlpha = (ann.fillOpacity !== undefined ? ann.fillOpacity : 100) / 100;
-    ctx.fillRect(ann.points[0].x - bp, ann.points[0].y - bp, bw, bh);
+    ctx.fillRect(ann.points[0].x - bp, ann.points[0].y - bp, bw + bp * 2, bh + bp * 2);
     ctx.restore();
-    ctx.fillStyle = ann.color || '#E5432E'; // text colour back after the fill
+    ctx.fillStyle = ink; // text colour back after the fill
+  }
+  // v3.13: optional border round the box (Properties → Appearance → Outline).
+  // Off unless boxStroke is set, so nothing drawn before v3.13 gains a border.
+  if (ann.boxStroke && ann.boxStroke !== 'none') {
+    ctx.save();
+    ctx.strokeStyle = ann.boxStroke;
+    ctx.lineWidth = ann.thickness || 1;
+    ctx.strokeRect(ann.points[0].x - bp, ann.points[0].y - bp, bw + bp * 2, bh + bp * 2);
+    ctx.restore();
+    ctx.fillStyle = ink;
   }
   lines.forEach((line, i) => {
     ctx.fillText(line, ann.points[0].x, ann.points[0].y + i * (fs + 2));
@@ -4013,14 +4065,10 @@ function drawTextAnn(ctx, ann) {
       const w = ctx.measureText(line).width;
       const y = ann.points[0].y + (i+1)*(fs+2) - 2;
       ctx.beginPath(); ctx.moveTo(ann.points[0].x, y); ctx.lineTo(ann.points[0].x+w, y);
-      ctx.strokeStyle = ann.color||'#E5432E'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.stroke();
     });
   }
   // Cache the drawn box for hit-testing + the resize handles.
-  // boxW/boxH (drag any of the 8 handles) fix the box size; text wraps to the
-  // width and the box keeps whatever height you set (square, tall, anything).
-  const bw = ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width));
-  const bh = ann.boxH || Math.max(fs + 2, lines.length * (fs + 2));
   ann._annBox = { x: ann.points[0].x, y: ann.points[0].y, w: bw, h: bh };
 }
 
@@ -4036,7 +4084,7 @@ function drawCalloutAnn(ctx, ann) {
   {
     const next = (ann.knees && ann.knees.length) ? ann.knees[0] : ann.textPos;
     const angle = Math.atan2(ann.anchor.y - next.y, ann.anchor.x - next.x);
-    const hl = ARROWHEAD_LEN;   // v3.12: same head as the Arrow tool
+    const hl = arrowHeadLen(ann);   // v3.12: same head as the Arrow tool; v3.13: resizable
     ctx.beginPath();
     ctx.moveTo(ann.anchor.x, ann.anchor.y);
     ctx.lineTo(ann.anchor.x - hl*Math.cos(angle - ARROWHEAD_HALF), ann.anchor.y - hl*Math.sin(angle - ARROWHEAD_HALF));
@@ -4058,7 +4106,7 @@ function drawCalloutAnn(ctx, ann) {
   // text inside it; without it the box auto-sizes to the longest line.
   const lines = ann.boxW ? _wrapTextLines(ctx, text, ann.boxW) : text.split('\n');
   const maxW = ann.boxW ? ann.boxW : Math.max(60, ...lines.map(l => ctx.measureText(l).width));
-  const pad = 6;
+  const pad = calloutPad(ann);   // v3.13: scales with the font (12pt still = 6)
   // boxH (drag any box handle) fixes the depth — square it off, stretch it
   // down, whatever; without it the box hugs the wrapped text.
   const boxW = maxW + pad*2, boxH = (ann.boxH ? ann.boxH : lines.length * (fs+3)) + pad*2;
@@ -4515,9 +4563,12 @@ function applyResize(ann, handleIdx, newPagePt) {
       allPts[handleIdx].x = newPagePt.x;
       allPts[handleIdx].y = newPagePt.y;
     } else if (ann._annBox && handleIdx >= allPts.length && handleIdx < allPts.length + 8) {
-      // Box handle — resize the text box freely; text wraps to its width
-      const pad = 6, fs = ann.fontSize || 12;
-      const nb = _resizeBox(ann._annBox, handleIdx - allPts.length, newPagePt, 30 + pad * 2, fs + 3 + pad * 2);
+      // Box handle — resize the text box freely; text wraps to its width.
+      // v3.13: the floor is font-relative (was a flat 30 wide) so an 8pt note
+      // can be dragged genuinely narrow instead of stopping half a box early.
+      const pad = calloutPad(ann), fs = ann.fontSize || 12;
+      const nb = _resizeBox(ann._annBox, handleIdx - allPts.length, newPagePt,
+                            BOX_MIN(fs) + pad * 2, BOX_MIN(fs) + pad * 2);
       ann.textPos = { x: nb.x + pad, y: nb.y + pad };  // box top-left (leader follows)
       ann.boxW = nb.w - pad * 2;                        // content width  → wrap
       ann.boxH = nb.h - pad * 2;                        // content height → box depth
@@ -4529,7 +4580,7 @@ function applyResize(ann, handleIdx, newPagePt) {
   if (ann.type === 'text') {
     if (!ann._annBox) { ann.points[0] = { x: newPagePt.x, y: newPagePt.y }; return; }
     const fs = ann.fontSize || 14;
-    const nb = _resizeBox(ann._annBox, handleIdx, newPagePt, 30, fs + 2);
+    const nb = _resizeBox(ann._annBox, handleIdx, newPagePt, BOX_MIN(fs), BOX_MIN(fs));
     ann.points[0] = { x: nb.x, y: nb.y };
     ann.boxW = nb.w;
     ann.boxH = nb.h;
@@ -4685,7 +4736,7 @@ function drawInProgress(ctx) {
         // v3.12: preview the SAME filled head the finished arrow gets, so what
         // you drag is what you drop (was a smaller open V at headlen 12).
         const angle = Math.atan2(move.y-start.y, move.x-start.x);
-        const headlen = ARROWHEAD_LEN;
+        const headlen = arrowHeadLen({ arrowScale: toolProperties.arrowScale });
         ctx.beginPath();
         ctx.moveTo(move.x, move.y);
         ctx.lineTo(move.x - headlen*Math.cos(angle-ARROWHEAD_HALF), move.y - headlen*Math.sin(angle-ARROWHEAD_HALF));
@@ -5980,6 +6031,9 @@ function addAnnotation(type, points) {
   };
   if (type === 'highlight') { ann.color = toolProperties.color || '#fbbf24'; ann.fillOpacity = toolProperties.fillOpacity || 40; }
   if (type === 'cutcontent') { ann.color = '#ffffff'; }
+  // v3.13: bake the tool's head size in so changing the default later doesn't
+  // resize arrows already on the page.
+  if (type === 'arrow') ann.arrowScale = toolProperties.arrowScale || 1;
   annotations.push(ann);
   saveToHistory();
 }
@@ -6316,7 +6370,10 @@ function showTextInput(screenPt) {
     const text = overlay.innerText.trim();
     if (text && !overlay._cancelled) {
       const ann = { id: generateId(), type: 'text', page: currentPage, points: [pagePt], text,
-        color: toolProperties.color, fontSize: toolProperties.fontSize, fontFamily: toolProperties.fontFamily,
+        // v3.13: textColor is what drawTextAnn reads; color stays in step so
+        // legacy code paths and the layer/markup colour dots still match.
+        color: toolProperties.color, textColor: toolProperties.color,
+        fontSize: toolProperties.fontSize, fontFamily: toolProperties.fontFamily,
         fontWeight: toolProperties.fontWeight, fontStyle: toolProperties.fontStyle,
         textDecoration: toolProperties.textDecoration, opacity: toolProperties.opacity };
       annotations.push(ann); saveToHistory(); redrawAnnotations();
@@ -6337,7 +6394,10 @@ function showCalloutTextInput(anchor, knees, textPos) {
   overlay.className = 'text-input-overlay callout-edit';
   overlay.contentEditable = true;
   const screenTextPos = toScreen(textPos);
-  const CALLOUT_PAD = 6;
+  // v3.13: the finished callout's padding scales with the font, so the editor's
+  // must too — otherwise the text jumps when you finish typing a small note.
+  const CALLOUT_PAD = calloutPad({ fontSize: toolProperties.fontSize || 12 });
+  overlay.style.padding = CALLOUT_PAD + 'px';
   overlay.style.left = (screenTextPos.x - CALLOUT_PAD) + 'px';
   overlay.style.top  = (screenTextPos.y - CALLOUT_PAD) + 'px';
   _styleTextOverlay(overlay, {
@@ -6365,6 +6425,7 @@ function showCalloutTextInput(anchor, knees, textPos) {
       textDecoration: toolProperties.textDecoration,
       // Callout default: black text in a solid white box (still editable in Properties)
       textColor: '#000000', textAlign: 'left',
+      arrowScale: toolProperties.arrowScale || 1,
       fillColor: '#ffffff', fillOpacity: 100 };
     annotations.push(ann); saveToHistory(); redrawAnnotations();
     overlay.remove();
@@ -6398,7 +6459,8 @@ function editTextAnnotationInline(ann, e) {
   overlay.contentEditable = true;
   // Same WYSIWYG rule as showTextInput: zero chrome offset, so the existing
   // text stays put the instant you start editing it (no visible jump).
-  const pad = isCallout ? 6 : 0;
+  const pad = isCallout ? calloutPad(ann) : 0;   // v3.13: font-scaled, matches the drawn box
+  if (isCallout) overlay.style.padding = pad + 'px';
   overlay.style.left = (screenPos.x - pad) + 'px';
   overlay.style.top = (screenPos.y - pad) + 'px';
   _styleTextOverlay(overlay, {
@@ -6407,7 +6469,8 @@ function editTextAnnotationInline(ann, e) {
     fontWeight: ann.fontWeight,
     fontStyle: ann.fontStyle,
     textDecoration: ann.textDecoration,
-    color: isCallout ? (ann.textColor || ann.color || '#000000') : (ann.color || '#E5432E'),
+    // v3.13: plain text now honours Text Color too (was ann.color only)
+    color: isCallout ? (ann.textColor || ann.color || '#000000') : _textInkColor(ann),
     lineGap: isCallout ? 3 : 2
   });
   if (isCallout && ann.fillColor) overlay.style.background = ann.fillColor;
@@ -9660,7 +9723,7 @@ function getAnnotationPropertiesHTML(ann) {
         <option value="Courier New" ${ann.fontFamily==='Courier New'?'selected':''}>Courier New</option>
         <option value="Georgia" ${ann.fontFamily==='Georgia'?'selected':''}>Georgia</option>
       </select></div>
-      <div class="property-row"><div class="property-label">Size:</div><input type="number" id="prop-fontsize" class="property-input" min="8" max="72" value="${ann.fontSize||14}"></div>
+      <div class="property-row"><div class="property-label" title="Text size in points. Goes down to 4 for tight annotation on a busy drawing.">Size:</div><input type="number" id="prop-fontsize" class="property-input" min="4" max="72" value="${ann.fontSize||14}"></div>
       <div class="property-row" style="gap:12px">
         <label style="font-size:11px;color:var(--text-secondary)"><input type="checkbox" class="checkbox-input" id="prop-bold" ${ann.fontWeight==='bold'?'checked':''}> Bold</label>
         <label style="font-size:11px;color:var(--text-secondary)"><input type="checkbox" class="checkbox-input" id="prop-italic" ${ann.fontStyle==='italic'?'checked':''}> Italic</label>
@@ -9671,11 +9734,11 @@ function getAnnotationPropertiesHTML(ann) {
         <option value="center" ${ann.textAlign==='center'?'selected':''}>Center</option>
         <option value="right" ${ann.textAlign==='right'?'selected':''}>Right</option>
       </select></div>
-      <div class="property-row"><div class="property-label">Text Color:</div><input type="color" id="prop-textcolor" class="color-picker" value="${ann.textColor||ann.color||'#E5432E'}"></div>
+      <div class="property-row"><div class="property-label" title="The colour of the letters themselves.">Text Color:</div><input type="color" id="prop-textcolor" class="color-picker" value="${ann.textColor||ann.color||'#E5432E'}"></div>
       <div class="color-swatches" data-target="prop-textcolor"></div>
       <div class="property-row"><div class="property-label" title="Fixed box size — text wraps to the width; the height is yours to set (drag any of the 8 handles on the drawing, or type values). Auto = hug the text.">Box W×H:</div>
-        <input type="number" id="prop-boxw" class="property-input" min="30" step="5" value="${ann.boxW ? Math.round(ann.boxW) : ''}" placeholder="auto" style="width:56px">
-        <input type="number" id="prop-boxh" class="property-input" min="10" step="5" value="${ann.boxH ? Math.round(ann.boxH) : ''}" placeholder="auto" style="width:56px">
+        <input type="number" id="prop-boxw" class="property-input" min="${BOX_MIN(ann.fontSize)}" step="5" value="${ann.boxW ? Math.round(ann.boxW) : ''}" placeholder="auto" style="width:56px">
+        <input type="number" id="prop-boxh" class="property-input" min="${BOX_MIN(ann.fontSize)}" step="5" value="${ann.boxH ? Math.round(ann.boxH) : ''}" placeholder="auto" style="width:56px">
         <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){delete a.boxW; delete a.boxH; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}">Auto</button></div>
     </div></div>`;
   }
@@ -9763,9 +9826,31 @@ function getAnnotationPropertiesHTML(ann) {
   }
 
   if (ann.type !== 'cutcontent' && ann.type !== 'count' && ann.type !== 'stamp' && ann.type !== 'tick' && ann.type !== 'signature' && ann.type !== 'legend' && ann.type !== 'table') {
-    html += `<div class="properties-section"><div class="properties-section-title">Appearance</div><div class="properties-section-content">
-      <div class="property-row"><div class="property-label">Colour:</div><input type="color" id="prop-color" class="color-picker" value="${ann.color||'#E5432E'}"></div>
+    html += `<div class="properties-section"><div class="properties-section-title">Appearance</div><div class="properties-section-content">`;
+
+    if (ann.type === 'text') {
+      // v3.13: a plain text box has no line work, so a bare "Colour" here was
+      // confusing (it looked like the text colour but is only the legacy
+      // fallback). Offer the one thing Appearance can actually draw: a border.
+      const osOn = !!(ann.boxStroke && ann.boxStroke !== 'none');
+      html += `<div class="property-row"><div class="property-label" title="Draw a border around the text box. The colour of the letters is set above under Text Formatting → Text Color.">Outline:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
+        <input type="checkbox" id="prop-textstroke-on" class="checkbox-input" ${osOn ? 'checked' : ''}>
+        <input type="color" id="prop-textstroke-color" class="color-picker" value="${osOn ? ann.boxStroke : (ann.color || '#E5432E')}" ${osOn ? '' : 'disabled'}>
+      </div></div>
+      <div class="color-swatches" data-target="prop-textstroke-color"></div>`;
+    } else {
+      html += `<div class="property-row"><div class="property-label"${ann.type === 'callout' ? ' title="Colour of the leader line, the arrow head and the box border. The text colour is set above under Text Formatting."' : ''}>${ann.type === 'callout' ? 'Leader/Border' : 'Colour'}:</div><input type="color" id="prop-color" class="color-picker" value="${ann.color||'#E5432E'}"></div>
       <div class="color-swatches" data-target="prop-color"></div>`;
+    }
+
+    if (ann.type === 'arrow' || ann.type === 'callout') {
+      const aPct = Math.round(arrowHeadLen(ann) / ARROWHEAD_LEN * 100);
+      html += `<div class="slider-group"><div class="slider-label"><span>Arrow Head:</span><span id="prop-arrowsize-val">${aPct}%</span></div>
+        <input type="range" id="prop-arrowsize" class="slider" min="20" max="400" step="5" value="${Math.max(20, Math.min(400, aPct))}"></div>
+      <div class="property-row"><div class="property-label" title="Size of the arrow head, as a percentage of Datum's standard head. Arrows and callouts share the same standard, so 100% on both matches.">Head %:</div>
+        <input type="number" id="prop-arrowsize-num" class="property-input" min="20" max="600" step="10" value="${aPct}" style="width:64px">
+        <button class="modal-btn" style="font-size:10px;padding:3px 8px" onclick="const a=annotations.find(x=>x.id===selectedAnnotationId); if(a){delete a.arrowScale; saveToHistory(); redrawAnnotations(); openPropertiesPanel();}" title="Back to the standard head size">Reset</button></div>`;
+    }
 
     if (ann.type === 'callout') {
       html += `<div class="property-row"><div class="property-label">Box Fill:</div><input type="color" id="prop-callout-fill" class="color-picker" value="${ann.fillColor && ann.fillColor !== 'none' ? ann.fillColor : '#ffffff'}"></div>
@@ -9986,8 +10071,10 @@ function attachAnnotationListeners(ann) {
   bind('prop-underline', 'textDecoration', t => t.checked ? 'underline' : 'none');
   bind('prop-textalign', 'textAlign');
   bind('prop-textcolor', 'textColor');
-  bind('prop-boxw', 'boxW', t => { const v = parseFloat(t.value); return (isFinite(v) && v >= 30) ? v : undefined; });
-  bind('prop-boxh', 'boxH', t => { const v = parseFloat(t.value); return (isFinite(v) && v >= 10) ? v : undefined; });
+  // v3.13: floors are font-relative (BOX_MIN) instead of a flat 30 × 10, so a
+  // small-font box can be typed as small as it can be dragged.
+  bind('prop-boxw', 'boxW', t => { const v = parseFloat(t.value); const m = BOX_MIN(ann.fontSize); return (isFinite(v) && v >= m) ? v : undefined; });
+  bind('prop-boxh', 'boxH', t => { const v = parseFloat(t.value); const m = BOX_MIN(ann.fontSize); return (isFinite(v) && v >= m) ? v : undefined; });
   bind('prop-color', 'color');
   bind('prop-stamp-text', 'text');
   bind('prop-stamp-color', 'stampColor');
@@ -10078,6 +10165,32 @@ function attachAnnotationListeners(ann) {
     pushHistorySoon();
   });
   if (tfC) tfC.addEventListener('change', e => { ann.boxFill = e.target.value; redrawAnnotations(); pushHistorySoon(); });
+
+  // Text box outline (v3.13) — boxStroke, drawn by drawTextAnn at ann.thickness
+  const tsOn = document.getElementById('prop-textstroke-on');
+  const tsC = document.getElementById('prop-textstroke-color');
+  if (tsOn) tsOn.addEventListener('change', e => {
+    if (e.target.checked) { ann.boxStroke = tsC.value; tsC.disabled = false; }
+    else { ann.boxStroke = 'none'; tsC.disabled = true; }
+    redrawAnnotations();
+    pushHistorySoon();
+  });
+  if (tsC) tsC.addEventListener('change', e => { ann.boxStroke = e.target.value; redrawAnnotations(); pushHistorySoon(); });
+
+  // Arrow head size (v3.13) — slider and number box drive the same
+  // ann.arrowScale and keep each other in step, like the stamp size pair.
+  const _applyArrowSize = pct => {
+    const v = Math.max(20, Math.min(600, parseFloat(pct) || 100));
+    ann.arrowScale = v / 100;
+    const l = document.getElementById('prop-arrowsize-val');
+    if (l) l.textContent = Math.round(v) + '%';
+    redrawAnnotations(); pushHistorySoon();
+    return v;
+  };
+  const arR = document.getElementById('prop-arrowsize');
+  const arN = document.getElementById('prop-arrowsize-num');
+  if (arR) arR.addEventListener('input', e => { const v = _applyArrowSize(e.target.value); if (arN) arN.value = Math.round(v); });
+  if (arN) arN.addEventListener('input', e => { const v = _applyArrowSize(e.target.value); if (arR) arR.value = Math.max(20, Math.min(400, v)); });
   const tfo = document.getElementById('prop-textfill-opacity');
   if (tfo) tfo.addEventListener('input', e => {
     ann.fillOpacity = parseInt(e.target.value);
@@ -10294,8 +10407,15 @@ function getToolPropertiesHTML(tool) {
   } else {
     // Generic tool properties
     html += `<div style="display:flex;flex-direction:column;gap:8px">
-      <div class="property-row"><div class="property-label">Colour:</div><input type="color" id="tool-color" class="color-picker" value="${toolProperties.color}"></div>
+      <div class="property-row"><div class="property-label"${tool === 'text' ? ' title="Colour of the letters in the text boxes you place next."' : ''}>${tool === 'text' ? 'Text Colour' : 'Colour'}:</div><input type="color" id="tool-color" class="color-picker" value="${toolProperties.color}"></div>
       <div class="color-swatches" data-target="tool-color"></div>`;
+
+    // v3.13: default arrow head size for the NEXT arrow / callout you draw.
+    if (['arrow','callout'].includes(tool)) {
+      const aPct = Math.round((toolProperties.arrowScale || 1) * 100);
+      html += `<div class="property-row"><div class="property-label" title="Size of the arrow head on new arrows and callouts, as a percentage of Datum's standard head. Change one already on the page from Properties.">Arrow Head %:</div>
+        <input type="number" id="tool-arrowsize" class="property-input" min="20" max="600" step="10" value="${aPct}"></div>`;
+    }
 
     if (['rectangle','ellipse','polygon','area'].includes(tool)) {
       html += `<div class="property-row"><div class="property-label">Fill:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
@@ -10327,7 +10447,7 @@ function getToolPropertiesHTML(tool) {
         <option value="Times New Roman" ${toolProperties.fontFamily==='Times New Roman'?'selected':''}>Times New Roman</option>
         <option value="Courier New" ${toolProperties.fontFamily==='Courier New'?'selected':''}>Courier New</option>
       </select></div>
-      <div class="property-row"><div class="property-label">Size:</div><input type="number" id="tool-fontsize" class="property-input" min="8" max="72" value="${toolProperties.fontSize}"></div>
+      <div class="property-row"><div class="property-label">Size:</div><input type="number" id="tool-fontsize" class="property-input" min="4" max="72" value="${toolProperties.fontSize}"></div>
       <div class="property-row" style="gap:10px">
         <label style="font-size:11px;color:var(--text-secondary)"><input type="checkbox" class="checkbox-input" id="tool-bold" ${toolProperties.fontWeight==='bold'?'checked':''}> B</label>
         <label style="font-size:11px;color:var(--text-secondary)"><input type="checkbox" class="checkbox-input" id="tool-italic" ${toolProperties.fontStyle==='italic'?'checked':''}> I</label>
@@ -10349,6 +10469,7 @@ function attachToolListeners() {
     });
   };
   bind('tool-color', 'color');
+  bind('tool-arrowsize', 'arrowScale', t => Math.max(0.2, Math.min(6, (parseFloat(t.value) || 100) / 100)));
   bind('tool-thickness', 'thickness', t => parseFloat(t.value));
   bind('tool-linestyle', 'lineStyle');
   bind('tool-fontfamily', 'fontFamily');
