@@ -16,7 +16,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Archivo:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-<!-- Datum PDF decryptor (v3.5): unlock password-protected PDFs so they open, measure and save like any other file -->
+<!-- Datum PDF decryptor (v3.5, ObjStm fix v3.14): unlock password-protected PDFs so they open, measure and save like any other file -->
 <script>
 // ============================================================
 // Datum PDF decryptor — dependency-free (Standard security handler)
@@ -349,6 +349,9 @@
 
     const pieces=[]; pieces.push(strBytes('%PDF-'+detectVersion(whole)+'\n%\xe2\xe3\xcf\xd3\n'));
     const offsets={};
+    // Objects unpacked out of /ObjStm bundles can carry numbers beyond the highest
+    // top-level one, so the xref /Size has to account for them too (v3.14).
+    let extraMax = 0;
     for (let oi=0; oi<objs.length; oi++){
       const o=objs[oi];
       const end = oi+1<objs.length ? objs[oi+1].hdrStart : whole.length;
@@ -373,12 +376,40 @@
       if (isStreamObj){
         const isXRef=/\/Type\s*\/XRef\b/.test(dictText);
         const isMeta=/\/Type\s*\/Metadata\b/.test(dictText);
+        const isObjStm=/\/Type\s*\/ObjStm\b/.test(dictText);
+        // The rebuild emits a classic xref table + trailer, so the file's original
+        // cross-reference STREAMS are dead weight — and a stale one still carrying
+        // /Encrypt and /Prev can mislead a recovering parser. Blank them out.
+        if (isXRef){ offsets[o.num]=totalLen(pieces); pieces.push(strBytes(o.num+' '+o.gen+' obj\nnull\nendobj\n')); continue; }
         let dec;
-        if (isXRef) dec = streamData;
-        else if (isMeta && !enc.encryptMetadata) dec = streamData;
+        if (isMeta && !enc.encryptMetadata) dec = streamData;
         else if (streamData.length===0) dec = streamData;
         else if (isAES||v5) dec = aesCbcDecrypt(oKey, streamData);
         else dec = rc4(oKey, streamData);
+        // PDF 1.5+ writers (Acrobat especially) pack ordinary objects — often the
+        // page tree and the Catalog's children — inside compressed /ObjStm bundles,
+        // reachable only through a cross-reference STREAM's type-2 entries. A classic
+        // xref table can't point inside a bundle, so those objects used to come out
+        // marked free and the document died with "Invalid Root reference". Unpack the
+        // bundle into plain top-level objects instead (v3.14). Strings inside an ObjStm
+        // are covered by the stream's own decryption, so they need no further work.
+        if (isObjStm){
+          const unpacked = await expandObjStm(dictText, dec);
+          if (unpacked){
+            offsets[o.num]=totalLen(pieces);
+            pieces.push(strBytes(o.num+' '+o.gen+' obj\nnull\nendobj\n'));
+            for (const sub of unpacked){
+              offsets[sub.num]=totalLen(pieces);
+              if (sub.num>extraMax) extraMax=sub.num;
+              pieces.push(strBytes(sub.num+' 0 obj\n'));
+              pieces.push(strBytes(sub.body));
+              pieces.push(strBytes('\nendobj\n'));
+            }
+            continue;
+          }
+          // Couldn't unpack (exotic filter, no DecompressionStream): fall through and
+          // keep the bundle as-is rather than losing the stream entirely.
+        }
         let df = newDict.replace(/\/Length\s+\d+\s+\d+\s+R/, '/Length '+dec.length);
         if (df===newDict) df = newDict.replace(/\/Length\s+\d+/, '/Length '+dec.length);
         if (!/\/Length\s+\d+/.test(df)) df = df.replace(/>>\s*$/, ' /Length '+dec.length+' >>');
@@ -393,7 +424,7 @@
         pieces.push(strBytes('\nendobj\n'));
       }
     }
-    const maxNum = Math.max.apply(null, objs.map(o=>o.num));
+    const maxNum = Math.max(Math.max.apply(null, objs.map(o=>o.num)), extraMax);
     const size = maxNum+1;
     const xrefOffset = totalLen(pieces);
     let xref='xref\n0 '+size+'\n0000000000 65535 f \n';
@@ -436,6 +467,46 @@
     if (b.length===0) return b;
     if (isAES||v5) return aesCbcDecrypt(oKey, b);
     return rc4(oKey, b);
+  }
+
+  // ---------- /ObjStm unpacking (v3.14) ----------
+  // Inflate with the browser's own decompressor — keeps this file dependency-free.
+  async function inflateFlate(data){
+    if (typeof DecompressionStream === 'undefined' || typeof Response === 'undefined') return null;
+    for (const fmt of ['deflate','deflate-raw']){
+      try{
+        const ds = new DecompressionStream(fmt);
+        const rs = new ReadableStream({ start(c){ c.enqueue(data); c.close(); } });
+        const ab = await new Response(rs.pipeThrough(ds)).arrayBuffer();
+        return new Uint8Array(ab);
+      }catch(e){ /* try the next wrapping */ }
+    }
+    return null;
+  }
+  // Returns [{num, body}] for every object packed inside an object stream, or null
+  // if it can't be read safely (in which case the caller leaves the bundle alone).
+  async function expandObjStm(dictText, streamBytes){
+    try{
+      const fm = dictText.match(/\/Filter\s*(\/\w+|\[[^\]]*\])/);
+      const filters = fm ? fm[1] : '';
+      if (/(LZW|ASCII85|ASCIIHex|RunLength|DCT|JPX|CCITTFax|JBIG2|Crypt)Decode/.test(filters)) return null;
+      if (/\/Predictor/.test(dictText)) return null;
+      let raw = streamBytes;
+      if (/FlateDecode/.test(filters)){ raw = await inflateFlate(streamBytes); if (!raw) return null; }
+      else if (filters.replace(/[\[\]\s]/g,'')) return null;
+      const n = intOf(dictText,'/N'), first = intOf(dictText,'/First');
+      if (!n || n<1 || first==null || first>raw.length) return null;
+      const nums = asText(raw.subarray(0, first)).trim().split(/\s+/).map(Number);
+      if (nums.length < n*2 || nums.some(v=>!isFinite(v))) return null;
+      const out=[];
+      for (let i=0;i<n;i++){
+        const num=nums[i*2], start=first+nums[i*2+1];
+        const end = (i+1<n) ? first+nums[i*2+3] : raw.length;
+        if (!(num>0) || start<first || end<start || end>raw.length) return null;
+        out.push({ num, body: asText(raw.subarray(start,end)).trim() });
+      }
+      return out;
+    }catch(e){ return null; }
   }
 
   function detectVersion(whole){ const m=whole.match(/%PDF-(\d\.\d)/); return m?m[1]:'1.5'; }
@@ -1781,7 +1852,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.13';
+const APP_VERSION = 'v3.14';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
