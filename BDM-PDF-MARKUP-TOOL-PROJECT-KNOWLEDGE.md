@@ -818,3 +818,25 @@ Two absolutely positioned 1px divs (`#xhair-v`, `#xhair-h`) over `#canvas-area`,
 Shortcut is **H** — every other letter in the tool-shortcut chain was taken (`x` is Delete Markups, `g` is Highlight). Guarded by `!mod && !e.altKey`, and `onKeyDown` already returns early for INPUT / TEXTAREA / SELECT / contentEditable, so typing "h" in the workbook doesn't toggle it (verified).
 
 **Verified** with Chromium at 1500×950: bottom dock 1500×300 under a 1433×516 canvas → left dock 380×816 beside a 1053×816 canvas (both fully visible at once), resizer relocates to the right edge, drag widens to 560px, position AND width survive a reload, flipping back restores the bottom dock exactly. Crosshair: display none→block on toggle, follows the pointer, SURVIVES a tool change plus a space-pan cycle (the regression that the class-placement fix exists for), H toggles it, a synthetic `h` keydown inside an input leaves it alone, zero page errors. `APP_VERSION` → `v3.16`.
+
+---
+
+### v3.17 — tool rail repacked to two columns; Open/Save/Undo/Redo moved to the menu bar (18 Aug 2026)
+
+James: "the set out of the tool bar is a bit uneven. plus i need to scroll a lot to access all tools, bluebeams tool layout is cleaner. also move the open/save/undo buttons to top bar, the middle bar is getting too full." Note the vocabulary: **"top bar" = `#menubar`** (the File/Edit/View strip), **"middle bar" = `#topbar`** (the icon quick bar). Don't read `#topbar` as the thing he calls the top bar.
+
+**1. The unevenness was a 1px border.** `.tool-group` carried `border-left: 2px solid transparent` (left over from the abandoned per-group colour tints, which the later theme block had already reset to `transparent` / `background: none`). A border on the group narrows its content box, so every grouped button was centred 1px right of the ungrouped Select/Pan pair. Fixed by deleting the border and the dead tint rules outright, and by putting **every** button block — grouped or not — through the same grid, so there is exactly one set of column positions in the rail. Verified: 30 buttons resolve to exactly 2 distinct `left` values.
+
+**2. Two columns, driven by CSS vars.** `#toolbar` now declares `--rail-btn-w: 34px; --rail-btn-h: 26px; --rail-cols: 2; --rail-gap: 2px`, and `.tool-group-body` / the new `.tool-row` are `display: grid; grid-template-columns: repeat(var(--rail-cols), var(--rail-btn-w))`. `--toolbar-width` 66px → 78px. Select/Pan and the bottom Thumbnails button were bare children of `#toolbar`; both are now wrapped in `.tool-row` so they inherit the same grid. Content height **~1150px → 579px** at 1440×900 — the whole kit fits with no scrolling down to a 700px-tall window.
+
+Measuring the rail height is fiddly: `#toolbar` contains a `flex:1` spacer, so `scrollHeight` always equals `clientHeight` and reports "no scroll" even when it overflows. Measure the **bottom of the last real child relative to the rail's top** instead.
+
+**3. Group headings are now a slim full-width row** — red square bullet, mono uppercase name in a `.tg-label-text` span, chevron pushed right with `margin-left: auto`, plus `.tool-group + .tool-group { border-top: 1px solid var(--line) }` as the separator that the deleted tinted blocks used to provide. Collapse/expand and its `bdm-toolgroup-*` persistence are untouched.
+
+**4. Top dock still flattens to one row.** `#toolbar.dock-top` has to override `display: grid` back to `display: flex; flex-direction: row` on BOTH `.tool-group-body` and `.tool-row` — the old rule only said `flex-direction: row`, which does nothing to a grid. Left / top / right all verified.
+
+**5. `Spc` is the one three-character shortcut chip** and it overflowed the narrower button; `.tool-btn[data-tool="pan"] .shortcut` gets `font-size: 6.5px`.
+
+**6. Open / Save / Undo / Redo moved from `#topbar` to `#menubar`**, icons only, sitting just right of the Help menu behind a `.m-sep` hairline (new `#menubar .mb-btn` / `.m-sep` styles). `id="btn-undo"` / `id="btn-redo"` moved with them — nothing in JS references those ids, so nothing else needed touching. The worded entries in `File ▸ Open/Save` and `Edit ▸ Undo/Redo` are unchanged, so the actions are still discoverable by name. `#topbar` now starts at Snap.
+
+**Verified** in Chromium at 1440×900/800/768/700, dark and light: 30 rail buttons on exactly 2 column positions, no rail scrolling, `setTool('rectangle')` still sets `.active` and `#canvas-area.className`, group collapse writes `bdm-toolgroup-shapes=1` and re-expands, `cycleRailDock` walks top → right → left cleanly, the 4 menu-bar buttons carry the right `onclick`s and the menu bar does not overflow, zero page errors. Both inline `<script>` blocks pass `node --check`. `APP_VERSION` → `v3.17`.

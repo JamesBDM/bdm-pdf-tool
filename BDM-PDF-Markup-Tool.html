@@ -561,7 +561,7 @@
   --warning: var(--secondary);
   --danger: #E5432E;
   --info: #3E6DE6;
-  --toolbar-width: 66px; /* was 52 — group headings + shortcut letters were clipped */
+  --toolbar-width: 78px; /* v3.17: two columns of 34px buttons + gaps + padding */
   --sidebar-width: 300px;
   --statusbar-height: 30px;
   --thumbnail-width: 80px;
@@ -627,50 +627,53 @@ input, select, textarea { font: inherit; color: inherit; }
 /* MAIN AREA */
 #main { display: flex; flex: 1; overflow: hidden; }
 
-/* LEFT TOOLBAR */
+/* LEFT TOOLBAR — v3.17: two-column compact grid.
+   Button size and column count live in CSS vars on #toolbar so the top dock
+   can flatten the same buttons into one row without touching the markup. */
 #toolbar {
+  --rail-btn-w: 34px; --rail-btn-h: 26px; --rail-cols: 2; --rail-gap: 2px;
   display: flex; flex-direction: column; width: var(--toolbar-width); min-width: var(--toolbar-width);
   background: var(--bg-secondary); border-right: 1px solid var(--border-color);
-  padding: 6px 0; gap: 2px; align-items: center; overflow-y: auto;
+  padding: 4px 0 6px; gap: 0; align-items: center; overflow-y: auto;
 }
 .tool-btn {
-  width: 52px; height: 36px; display: flex; align-items: center; justify-content: center;
+  width: var(--rail-btn-w); height: var(--rail-btn-h); display: flex; align-items: center; justify-content: center;
   border-radius: 6px; transition: all .15s; position: relative;
 }
 .tool-btn:hover { background: var(--bg-hover); }
 .tool-btn.active { background: var(--accent-dim); color: var(--accent); }
 .tool-btn svg { width: 15px; height: 15px; } /* v3.2.1: match the quick-bar icon size (Print/Save etc.) */
 .tool-btn .shortcut {
-  position: absolute; bottom: 2px; right: 3px; font-size: 9px; line-height: 1;
+  position: absolute; bottom: 1px; right: 2px; font-size: 8px; line-height: 1;
   color: var(--text-secondary); font-weight: 700;
-  background: rgba(0,0,0,0.4); border-radius: 3px; padding: 1px 3px;
+  background: rgba(0,0,0,0.4); border-radius: 3px; padding: 0 2px;
 }
 .tool-btn.active .shortcut { color: var(--accent); }
-.tool-divider { width: 28px; height: 1px; background: var(--border-color); margin: 3px 0; }
+.tool-btn[data-tool="pan"] .shortcut { font-size: 6.5px; letter-spacing: -0.02em; } /* 'Spc' is the one 3-char chip */
+.tool-divider { width: calc(var(--rail-btn-w) * 2 + var(--rail-gap)); height: 1px; background: var(--border-color); margin: 3px 0; }
 
-/* Tool groups — Measure / Shapes / Markup / Edit. Each group has a coloured
-   stripe + tinted background so they read as distinct blocks, and the label
-   is clickable to collapse the group (state remembered per machine). */
-.tool-group { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 1px 0 4px; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; }
+/* Tool groups — Measure / Shapes / Markup / Edit. The heading is one slim
+   full-width row (bullet + name + chevron) and the buttons below it sit in a
+   grid, so every button in the rail lines up on the same two columns.
+   NOTE: no border-left here — a border on the group shifted its buttons 1px
+   right of the ungrouped ones and made the rail look ragged (v3.17 fix). */
+.tool-group { width: 100%; display: flex; flex-direction: column; align-items: center; gap: var(--rail-gap); padding: 0 0 3px; }
 .tool-group-label {
-  width: 100%; text-align: center; font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
-  color: var(--text-muted); cursor: pointer; user-select: none; padding: 5px 1px 3px;
-  display: flex; align-items: center; justify-content: center; gap: 2px;
+  width: 100%; font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  color: var(--text-muted); cursor: pointer; user-select: none; padding: 4px 6px 2px;
+  display: flex; align-items: center; gap: 4px;
   white-space: nowrap; overflow: hidden;
 }
 .tool-group-label:hover { filter: brightness(1.35); }
-.tool-group-label .tg-chevron { font-size: 8px; transition: transform .15s; }
+.tool-group-label .tg-label-text { overflow: hidden; text-overflow: clip; }
+.tool-group-label .tg-chevron { font-size: 7px; transition: transform .15s; margin-left: auto; }
 .tool-group.collapsed .tool-group-body { display: none; }
 .tool-group.collapsed .tg-chevron { transform: rotate(-90deg); }
-.tool-group-body { display: flex; flex-direction: column; gap: 2px; align-items: center; width: 100%; }
-.tool-group[data-group="measure"] { border-left-color: #2dd4bf; background: rgba(45,212,191,0.08); }
-.tool-group[data-group="measure"] .tool-group-label { color: #5eead4; }
-.tool-group[data-group="shapes"] { border-left-color: #e8875f; background: rgba(232,135,95,0.08); }
-.tool-group[data-group="shapes"] .tool-group-label { color: #f4a988; }
-.tool-group[data-group="markup"] { border-left-color: #a78bfa; background: rgba(167,139,250,0.08); }
-.tool-group[data-group="markup"] .tool-group-label { color: #c4b5fd; }
-.tool-group[data-group="edit"] { border-left-color: #f87171; background: rgba(248,113,113,0.08); }
-.tool-group[data-group="edit"] .tool-group-label { color: #fca5a5; }
+/* The two-column grid used by every button block in the rail. */
+.tool-group-body, .tool-row {
+  display: grid; grid-template-columns: repeat(var(--rail-cols), var(--rail-btn-w));
+  gap: var(--rail-gap); justify-content: center; width: 100%;
+}
 
 /* THUMBNAIL STRIP */
 .thumbnail-strip {
@@ -1211,14 +1214,15 @@ canvas { display: block; }
 .tool-btn .shortcut, .status-cal { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* Tool rail: unified groups — mono uppercase labels with a redline square
-   bullet; no per-group tints (Datum reference rail is a single quiet surface) */
-.tool-group[data-group="measure"], .tool-group[data-group="shapes"],
-.tool-group[data-group="markup"], .tool-group[data-group="edit"] { border-left-color: transparent; background: none; }
+   bullet; no per-group tints (Datum reference rail is a single quiet surface).
+   v3.17: the heading also carries a hairline rule that runs to the right edge,
+   which is what separates the groups now that the tinted blocks are gone. */
 .tool-group[data-group="measure"] .tool-group-label, .tool-group[data-group="shapes"] .tool-group-label,
 .tool-group[data-group="markup"] .tool-group-label, .tool-group[data-group="edit"] .tool-group-label {
-  color: var(--text-muted); font-family: var(--font-mono); font-size: 8px; font-weight: 600; letter-spacing: 0.14em;
+  color: var(--text-muted); font-family: var(--font-mono); font-size: 8px; font-weight: 600; letter-spacing: 0.12em;
 }
 .tool-group-label::before { content: ''; width: 5px; height: 5px; background: var(--accent); flex-shrink: 0; }
+.tool-group + .tool-group, .tool-divider + .tool-group { border-top: 1px solid var(--line); }
 #toolbar svg { stroke-width: 1.7; }
 .tool-btn { border-radius: 9px; }
 .tool-btn.active { background: var(--accent); color: var(--accent-on); }
@@ -1281,13 +1285,20 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .ami .k { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
 .ami:hover .k { color: var(--accent-on); }
 .am-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+/* v3.17: Open / Save / Undo / Redo moved up here off the (overfull) toolbar.
+   Icons only — the same actions keep their worded entries in File and Edit. */
+#menubar .m-sep { width: 1px; height: 16px; background: var(--line); margin: 0 6px; flex-shrink: 0; }
+#menubar .mb-btn { width: 28px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--text-secondary); flex-shrink: 0; }
+#menubar .mb-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+#menubar .mb-btn svg { width: 15px; height: 15px; }
 #menubar .m-spring { flex: 1; }
 #menubar .m-file { color: var(--text-muted); font-size: 11px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 
 /* Movable tool rail: right dock + top dock */
 #toolbar.dock-right { order: 99; border-right: none; border-left: 1px solid var(--line); }
 #toolbar.dock-top { flex-direction: row; width: 100%; min-width: 0; height: auto; min-height: 46px; border-right: none; border-bottom: 1px solid var(--line); padding: 4px 8px; overflow-y: visible; overflow-x: auto; align-items: center; }
-#toolbar.dock-top .tool-group, #toolbar.dock-top .tool-group-body { flex-direction: row; width: auto; padding: 0; }
+#toolbar.dock-top .tool-group { flex-direction: row; width: auto; padding: 0; align-items: center; border-top: none; }
+#toolbar.dock-top .tool-group-body, #toolbar.dock-top .tool-row { display: flex; flex-direction: row; width: auto; padding: 0; }
 #toolbar.dock-top .tool-group-label { width: auto; padding: 0 6px; }
 #toolbar.dock-top .tool-group-label .tg-chevron { display: none; }
 #toolbar.dock-top .tool-divider { width: 1px; height: 26px; margin: 0 4px; }
@@ -1423,28 +1434,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();showShortcutsHelp()">Keyboard Shortcuts…</div>
       <div class="ami" onclick="amClose();alert('Datum ' + APP_VERSION + ' — PDF markup & measurement for construction teams.\nBuilt in-house at BDM.')">About Datum</div>
     </div></div>
+    <div class="m-sep"></div>
+    <button class="mb-btn" onclick="openFile()" title="Open PDF (Ctrl+O)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button>
+    <button class="mb-btn" onclick="saveProject()" title="Save (Ctrl+S) — overwrites the original file when opened via the app, otherwise downloads a copy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
+    <div class="m-sep"></div>
+    <button class="mb-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg></button>
+    <button class="mb-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7L21 13"/></svg></button>
     <div class="m-spring"></div>
     <span class="m-file" id="menubar-file"></span>
   </div>
   <!-- TOP BAR -->
   <div id="topbar">
-    <button class="topbar-btn" onclick="openFile()" title="Open PDF (Ctrl+O)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      Open
-    </button>
-    <button class="topbar-btn" onclick="saveProject()" title="Save (Ctrl+S) — overwrites the original file when opened via the app, otherwise downloads a copy">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-      Save
-    </button>
-    <div class="separator"></div>
-    <button class="topbar-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg>
-      Undo
-    </button>
-    <button class="topbar-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7L21 13"/></svg>
-      Redo
-    </button>
     <button class="topbar-btn" id="btn-snap" onclick="toggleSnap()" title="Snap to your markups' points (endpoints / midpoints / corners)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
       Snap
@@ -1513,11 +1513,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <!-- TOOL RAIL (dockable: left / top / right — drag grip cycles position) -->
     <div id="toolbar">
       <div id="rail-grip" onclick="cycleRailDock()" title="Move the tool rail — click to cycle left → top → right">⠿</div>
-      <button class="tool-btn" data-tool="select" onclick="setTool('select')" title="Select (V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg><span class="shortcut">V</span></button>
-      <button class="tool-btn" data-tool="pan" onclick="setTool('pan')" title="Pan (hold Space)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 00-4 0v5m0 0V4a2 2 0 00-4 0v7m0 0V6a2 2 0 00-4 0v7m12-1v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3"/></svg><span class="shortcut">Spc</span></button>
+      <div class="tool-row">
+        <button class="tool-btn" data-tool="select" onclick="setTool('select')" title="Select (V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg><span class="shortcut">V</span></button>
+        <button class="tool-btn" data-tool="pan" onclick="setTool('pan')" title="Pan (hold Space)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 00-4 0v5m0 0V4a2 2 0 00-4 0v7m0 0V6a2 2 0 00-4 0v7m12-1v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3"/></svg><span class="shortcut">Spc</span></button>
+      </div>
       <div class="tool-divider"></div>
       <div class="tool-group" data-group="measure">
-        <div class="tool-group-label" onclick="toggleToolGroup('measure')" title="Measuring tools — click to collapse/expand">MEASURE <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-label" onclick="toggleToolGroup('measure')" title="Measuring tools — click to collapse/expand"><span class="tg-label-text">MEASURE</span><span class="tg-chevron">▼</span></div>
         <div class="tool-group-body">
           <button class="tool-btn" data-tool="calibrate" onclick="setTool('calibrate')" title="Calibrate (K)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 12h18"/><path d="M12 3v18"/></svg><span class="shortcut">K</span></button>
           <button class="tool-btn" data-tool="measure" onclick="setTool('measure')" title="Measure Length (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20L20 2"/><path d="M6.5 15.5l2-2m2.5-2.5l2-2m2.5-2.5l2-2"/></svg><span class="shortcut">M</span></button>
@@ -1529,7 +1531,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
         </div>
       </div>
       <div class="tool-group" data-group="shapes">
-        <div class="tool-group-label" onclick="toggleToolGroup('shapes')" title="Shape tools — click to collapse/expand">SHAPES <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-label" onclick="toggleToolGroup('shapes')" title="Shape tools — click to collapse/expand"><span class="tg-label-text">SHAPES</span><span class="tg-chevron">▼</span></div>
         <div class="tool-group-body">
           <button class="tool-btn" data-tool="line" onclick="setTool('line')" title="Line (N)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/></svg><span class="shortcut">N</span></button>
           <button class="tool-btn" data-tool="arrow" onclick="setTool('arrow')" title="Arrow (W)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="10,5 19,5 19,14"/></svg><span class="shortcut">W</span></button>
@@ -1541,7 +1543,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
         </div>
       </div>
       <div class="tool-group" data-group="markup">
-        <div class="tool-group-label" onclick="toggleToolGroup('markup')" title="Markup tools — click to collapse/expand">MARKUP <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-label" onclick="toggleToolGroup('markup')" title="Markup tools — click to collapse/expand"><span class="tg-label-text">MARKUP</span><span class="tg-chevron">▼</span></div>
         <div class="tool-group-body">
           <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
           <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
@@ -1556,7 +1558,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
         </div>
       </div>
       <div class="tool-group" data-group="edit">
-        <div class="tool-group-label" onclick="toggleToolGroup('edit')" title="Editing tools — click to collapse/expand">EDIT <span class="tg-chevron">▼</span></div>
+        <div class="tool-group-label" onclick="toggleToolGroup('edit')" title="Editing tools — click to collapse/expand"><span class="tg-label-text">EDIT</span><span class="tg-chevron">▼</span></div>
         <div class="tool-group-body">
           <button class="tool-btn" data-tool="cutcontent" onclick="setTool('cutcontent')" title="Cut Content (E)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg><span class="shortcut">E</span></button>
           <button class="tool-btn" data-tool="eraser" onclick="setTool('eraser')" title="Delete Annotation (X)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 5H9l-7 7 7 7h11a2 2 0 002-2V7a2 2 0 00-2-2z"/><line x1="18" y1="9" x2="12" y2="15"/><line x1="12" y1="9" x2="18" y2="15"/></svg><span class="shortcut">X</span></button>
@@ -1564,7 +1566,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
         </div>
       </div>
       <div style="flex:1"></div>
-      <button class="tool-btn" onclick="toggleThumbnails()" title="Toggle Thumbnails"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+      <div class="tool-row"><button class="tool-btn" onclick="toggleThumbnails()" title="Toggle Thumbnails"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button></div>
     </div>
 
     <!-- THUMBNAIL STRIP -->
@@ -1892,7 +1894,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.16';
+const APP_VERSION = 'v3.17';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
