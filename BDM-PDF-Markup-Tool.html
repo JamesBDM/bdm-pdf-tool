@@ -934,6 +934,28 @@ input, select, textarea { font: inherit; color: inherit; }
 #workbook-resizer:hover, #workbook-resizer.dragging { opacity: 1; background: var(--accent); }
 #workbook-toolbar { display: flex; align-items: center; gap: 6px; padding: 3px 10px; border-bottom: 1px solid var(--border-color); flex: none; }
 #workbook-body { flex: 1; overflow: auto; min-height: 0; }
+/* Workbook docked LEFT (v3.16) — a full-height column beside the drawing, so
+   the whole BOQ and the plan are readable at once. Same DOM, different axis:
+   the resizer becomes an absolutely-positioned right edge and the toolbar
+   wraps, because it is a long single row built for the bottom dock. */
+#workbook-dock.dock-left { position: relative; width: 380px; min-width: 220px; max-width: 70vw; height: auto !important; max-height: none; border-top: none; border-right: 1px solid var(--border-color); }
+#workbook-dock.dock-left #workbook-resizer { position: absolute; right: 0; top: 0; bottom: 0; width: 5px; height: auto; cursor: ew-resize; z-index: 4; }
+#workbook-dock.dock-left #workbook-toolbar { flex-wrap: wrap; gap: 4px 6px; padding: 5px 8px 6px; }
+#workbook-dock.dock-left #workbook-toolbar .separator,
+#workbook-dock.dock-left #workbook-toolbar .topbar-spacer { display: none; }
+#workbook-dock.dock-left #wb-table { font-size: 11px; }
+
+/* Crosshair guides (v3.16) — full-width/height rules through the pointer so a
+   measurement can be lined up with something across the sheet. DOM overlay,
+   not canvas: no redraw per mouse move. The white halo keeps the line visible
+   over black linework and over dark fills alike. */
+/* NB: the "on" class lives on the guides themselves, never on #canvas-area —
+   setTool() and the space-pan handlers ASSIGN #canvas-area.className outright
+   (it carries the tool name), which would silently wipe a state class there. */
+.xhair { position: absolute; display: none; pointer-events: none; z-index: 6; }
+.xhair.on { display: block; }
+#xhair-v { top: 0; bottom: 0; width: 1px; background: var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.5); opacity: .85; }
+#xhair-h { left: 0; right: 0; height: 1px; background: var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.5); opacity: .85; }
 #wb-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
 #wb-table th { position: sticky; top: 0; z-index: 2; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--border-color); }
 #wb-table th.wb-left { text-align: left; }
@@ -1109,7 +1131,7 @@ canvas { display: block; }
 
 /* Print styles */
 @media print {
-  #topbar, #toolbar, #panel, #statusbar, .thumbnail-strip, #calibration-banner, #merge-drop-overlay, #drop-zone, #split-pane, #split-divider, #workbook-dock { display: none !important; }
+  #topbar, #toolbar, #panel, #statusbar, .thumbnail-strip, #calibration-banner, #merge-drop-overlay, #drop-zone, #split-pane, #split-divider, #workbook-dock, .xhair { display: none !important; }
   #main { display: block !important; }
   #canvas-area { overflow: visible !important; }
   #canvas-wrapper { overflow: visible !important; }
@@ -1353,6 +1375,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();togglePanelVisible()">Right Panel <span class="k">F4</span></div>
       <div class="ami" onclick="amClose();toggleMarkupsList()">Markups List</div>
       <div class="ami" onclick="amClose();toggleWorkbook()">Estimate Workbook</div>
+      <div class="ami" onclick="amClose();toggleWorkbookDock()">Workbook Position (bottom / left)</div>
+      <div class="ami" onclick="amClose();toggleCrosshair()">Crosshair Guides <span class="k">H</span></div>
       <div class="am-sep"></div>
       <div class="ami" onclick="amClose();cycleRailDock()">Move Tool Rail (left / top / right)</div>
       <div class="ami" onclick="amClose();toggleTopbarCompact()">Compact Toolbar</div>
@@ -1428,6 +1452,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <button class="topbar-btn" id="btn-snap-lines" onclick="toggleContentSnap()" title="Snap to the drawing's lines (walls, gridlines) while measuring — on/off">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17L9 11L13 15L21 7"/><circle cx="9" cy="11" r="2.5"/></svg>
       Snap Lines
+    </button>
+    <button class="topbar-btn" id="btn-crosshair" onclick="toggleCrosshair()" title="Crosshair guides (H) — full-width and full-height lines through the pointer for lining up with the drawing">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><circle cx="12" cy="12" r="4"/></svg>
+      Crosshair
     </button>
     <button class="topbar-btn" onclick="openSearchDialog()" title="Search text (Ctrl+F)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1599,6 +1627,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
         <div class="merge-drop-text">Drop PDF to add pages</div>
         <div class="merge-drop-sub">New pages will be appended to the current document</div>
       </div>
+      <!-- Crosshair guides (v3.16) — moved by _moveCrosshair on mousemove -->
+      <div id="xhair-v" class="xhair"></div>
+      <div id="xhair-h" class="xhair"></div>
     </div>
 
     <!-- RIGHT PANEL -->
@@ -1616,7 +1647,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     </div>
   </div>
 
-  <!-- ESTIMATE WORKBOOK (v2.8) — Cubit-style spreadsheet linked to the drawings -->
+  <!-- ESTIMATE WORKBOOK (v2.8) — Cubit-style spreadsheet linked to the drawings.
+       #workbook-home marks its bottom-dock slot; setWorkbookDock() moves the
+       dock itself into #main for the left dock and back here for the bottom. -->
+  <div id="workbook-home" style="display:none"></div>
   <div id="workbook-dock">
     <div id="workbook-resizer" title="Drag to resize the workbook"></div>
     <div id="workbook-toolbar">
@@ -1640,6 +1674,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <button class="topbar-btn" onclick="exportTakeoffXLSX()" title="Export the estimate to Excel (formulas + package tree)">Export Excel</button>
       <button class="topbar-btn" onclick="exportTakeoffCSV()" title="Export CSV">CSV</button>
       <button class="topbar-btn" onclick="syncQuantityLink()" oncontextmenu="event.preventDefault();syncQuantityLink(true)" title="Quantity Link — write live quantities into YOUR estimate spreadsheet (a 'BDM Quantities' sheet + a named range per item, e.g. =QTY_Footings). Click again after measuring to re-sync. Right-click to link a different file.">Sync Excel</button>
+      <button class="topbar-btn" id="wb-dock-btn" onclick="toggleWorkbookDock()" title="Move the workbook between the bottom of the window and a full-height column on the left">▯ Dock left</button>
       <button class="modal-close" onclick="toggleWorkbook(false)" title="Close workbook">×</button>
     </div>
     <div id="workbook-body"></div>
@@ -1857,7 +1892,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.15.2';
+const APP_VERSION = 'v3.16';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -1885,6 +1920,8 @@ let _swapDocIdx = -1;            // which doc the swapped-in globals belong to
 
 // Estimate workbook (Cubit-style spreadsheet dock under the drawing)
 let workbookOpen = false;                 // dock visibility (persisted)
+let workbookDockPos = 'bottom';           // 'bottom' | 'left' (persisted, v3.16)
+let crosshairOn = false;                  // pointer guide lines (persisted, v3.16)
 let wbCollapsed = {};                     // package path → true when collapsed
 let wbExpandedItems = {};                 // item id → true when its measurements are shown
 let _wbLastSyncedSel = null;              // last selection the workbook scrolled to
@@ -2386,8 +2423,10 @@ document.addEventListener('DOMContentLoaded', () => {
   initThumbResize();
   // Restore collapsed tool groups + compact topbar preference
   restoreToolbarLayout();
-  // Restore estimate workbook dock (open state + height)
+  // Restore estimate workbook dock (open state + position + size)
   restoreWorkbookState();
+  // Crosshair guides — restore the saved on/off and start tracking the pointer
+  restoreCrosshairState();
   // Show the app version in the top bar
   const verEl = document.getElementById('app-version');
   if (verEl) verEl.textContent = APP_VERSION;
@@ -5973,7 +6012,8 @@ function onKeyDown(e) {
   else if (key === 'i') setTool('dimension');
   else if (key === 'f') setTool('magicarea');
 
-  if (key === 'f4') { e.preventDefault(); togglePanelVisible(); }
+  if (key === 'h' && !mod && !e.altKey) { e.preventDefault(); toggleCrosshair(); }
+  else if (key === 'f4') { e.preventDefault(); togglePanelVisible(); }
   else if ((key === 'delete' || key === 'backspace') && selectedAnnotationId) { e.preventDefault(); deleteSelectedAnnotation(); }
   else if ((e.ctrlKey||e.metaKey) && (key === '=' || key === '+')) { e.preventDefault(); zoomIn(); }
   else if ((e.ctrlKey||e.metaKey) && key === '-') { e.preventDefault(); zoomOut(); }
@@ -8527,14 +8567,89 @@ function workbookSyncSelection() {
   if (row) { row.classList.add('wb-sel', 'wb-flash'); row.scrollIntoView({ block: 'nearest' }); }
 }
 
+// ============================================================
+// CROSSHAIR GUIDES (v3.16)
+// Full-width / full-height rules through the pointer, for lining a
+// measurement up with something on the far side of the sheet. Two absolutely
+// positioned divs over #canvas-area rather than canvas drawing — a canvas
+// redraw per mousemove on a big sheet is far too expensive, and this way the
+// guides sit above BOTH the main canvas and the split pane for free.
+// ============================================================
+function toggleCrosshair(force) {
+  crosshairOn = (force !== undefined) ? !!force : !crosshairOn;
+  ['xhair-v', 'xhair-h'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('on', crosshairOn);
+  });
+  const btn = document.getElementById('btn-crosshair');
+  if (btn) btn.style.color = crosshairOn ? 'var(--accent)' : '';
+  try { localStorage.setItem('bdm-crosshair', crosshairOn ? '1' : '0'); } catch (e) {}
+  if (!crosshairOn) _hideCrosshair();
+  showToast('Crosshair guides ' + (crosshairOn ? 'ON — press H to turn off' : 'off'));
+}
+function _hideCrosshair() {
+  const v = document.getElementById('xhair-v'), h = document.getElementById('xhair-h');
+  if (v) v.style.visibility = 'hidden';
+  if (h) h.style.visibility = 'hidden';
+}
+function _moveCrosshair(e) {
+  if (!crosshairOn) return;
+  const area = document.getElementById('canvas-area');
+  if (!area || !pdfDoc) { _hideCrosshair(); return; }
+  const r = area.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const inside = x >= 0 && y >= 0 && x <= r.width && y <= r.height;
+  const v = document.getElementById('xhair-v'), h = document.getElementById('xhair-h');
+  if (v) { v.style.left = Math.round(x) + 'px'; v.style.visibility = inside ? 'visible' : 'hidden'; }
+  if (h) { h.style.top = Math.round(y) + 'px'; h.style.visibility = inside ? 'visible' : 'hidden'; }
+}
+function restoreCrosshairState() {
+  try { if (localStorage.getItem('bdm-crosshair') === '1') { crosshairOn = false; toggleCrosshair(true); } } catch (e) {}
+  document.addEventListener('mousemove', _moveCrosshair, { passive: true });
+}
+
 // Restore persisted dock state (called once from DOMContentLoaded)
 function restoreWorkbookState() {
   try {
-    const h = parseInt(localStorage.getItem('bdm-workbook-h'));
-    const dock = document.getElementById('workbook-dock');
-    if (dock && h >= 120) dock.style.height = Math.min(h, Math.round(window.innerHeight * 0.75)) + 'px';
+    // Position first — setWorkbookDock applies the saved size for that axis
+    setWorkbookDock(localStorage.getItem('bdm-workbook-dock') === 'left' ? 'left' : 'bottom', true);
     if (localStorage.getItem('bdm-workbook-open') === '1') toggleWorkbook(true);
   } catch (e) {}
+}
+
+// Bottom dock (default) or a full-height column on the left, so the whole BOQ
+// and the drawing are legible at the same time. The dock is the SAME element in
+// both cases — only its parent, its class and which dimension it sizes change.
+function setWorkbookDock(pos, quiet) {
+  workbookDockPos = (pos === 'left') ? 'left' : 'bottom';
+  const dock = document.getElementById('workbook-dock');
+  const home = document.getElementById('workbook-home');
+  const main = document.getElementById('main');
+  if (!dock || !home || !main) return;
+  if (workbookDockPos === 'left') {
+    dock.classList.add('dock-left');
+    // First child of #main: if the tool rail is docked left it re-inserts
+    // itself ahead of this, which is the order we want anyway.
+    if (dock.parentElement !== main || dock !== main.firstElementChild) main.insertBefore(dock, main.firstElementChild);
+    const w = parseInt(localStorage.getItem('bdm-workbook-w'));
+    dock.style.height = '';
+    dock.style.width = (w >= 220 ? Math.min(w, Math.round(window.innerWidth * 0.7)) : 380) + 'px';
+  } else {
+    dock.classList.remove('dock-left');
+    if (dock.previousElementSibling !== home) home.parentElement.insertBefore(dock, home.nextSibling);
+    const h = parseInt(localStorage.getItem('bdm-workbook-h'));
+    dock.style.width = '';
+    dock.style.height = (h >= 120 ? Math.min(h, Math.round(window.innerHeight * 0.75)) : 300) + 'px';
+  }
+  try { localStorage.setItem('bdm-workbook-dock', workbookDockPos); } catch (e) {}
+  const btn = document.getElementById('wb-dock-btn');
+  if (btn) btn.textContent = workbookDockPos === 'left' ? '▭ Dock bottom' : '▯ Dock left';
+  if (workbookOpen) refreshWorkbook();
+  if (!quiet) showToast('Workbook docked ' + (workbookDockPos === 'left' ? 'LEFT' : 'BOTTOM'));
+}
+function toggleWorkbookDock() {
+  setWorkbookDock(workbookDockPos === 'left' ? 'bottom' : 'left');
+  if (!workbookOpen) toggleWorkbook(true);
 }
 function wireWorkbookResizer() {
   if (_wbListenersWired) return;
@@ -8544,20 +8659,34 @@ function wireWorkbookResizer() {
   if (!rez || !dock) return;
   let from = null;
   rez.addEventListener('mousedown', e => {
-    from = { y: e.clientY, h: dock.getBoundingClientRect().height };
+    const r = dock.getBoundingClientRect();
+    // Which edge is being dragged depends on where the dock is: the bottom
+    // dock grows upward from its top edge, the left dock rightward from its
+    // right edge. Captured at mousedown so a mid-drag re-dock can't confuse it.
+    from = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, left: dock.classList.contains('dock-left') };
     rez.classList.add('dragging');
     e.preventDefault();
   });
   window.addEventListener('mousemove', e => {
     if (!from) return;
-    const h = Math.max(120, Math.min(Math.round(window.innerHeight * 0.75), from.h + (from.y - e.clientY)));
-    dock.style.height = h + 'px';
+    if (from.left) {
+      const w = Math.max(220, Math.min(Math.round(window.innerWidth * 0.7), from.w + (e.clientX - from.x)));
+      dock.style.width = w + 'px';
+    } else {
+      const h = Math.max(120, Math.min(Math.round(window.innerHeight * 0.75), from.h + (from.y - e.clientY)));
+      dock.style.height = h + 'px';
+    }
   });
   window.addEventListener('mouseup', () => {
     if (!from) return;
+    const wasLeft = from.left;
     from = null;
     rez.classList.remove('dragging');
-    try { localStorage.setItem('bdm-workbook-h', String(Math.round(dock.getBoundingClientRect().height))); } catch (e) {}
+    const r = dock.getBoundingClientRect();
+    try {
+      localStorage.setItem(wasLeft ? 'bdm-workbook-w' : 'bdm-workbook-h',
+                           String(Math.round(wasLeft ? r.width : r.height)));
+    } catch (e) {}
   });
 }
 

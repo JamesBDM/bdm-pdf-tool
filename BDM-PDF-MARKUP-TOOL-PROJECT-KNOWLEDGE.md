@@ -794,3 +794,27 @@ function arrowHeadLen(ann) {
 **Persistence:** the UNTICKED ids are stored (`prefs.excluded`) rather than the ticked ones, so any item added to the estimate later defaults to ON. The counter in the header is what makes a remembered exclusion visible instead of mysterious.
 
 **Verified** end-to-end: picker renders 4 items / 4 trades and reports `4 of 4 selected`; unticking a whole trade plus a manual item leaves `2 of 4` and the generated PDF contains only those two items, with both trade headings, subtotals and the grand total recomputed ($12,893.50 vs $27,293.50); reopening the dialog restores `2 of 4`; ticking nothing refuses to generate and leaves the modal open; a trade holding two items shows `indeterminate` on its head box when only one child is on. `APP_VERSION` → `v3.15.2`.
+
+### v3.16 — workbook docks left, and crosshair guides (18 Aug 2026)
+
+Two James requests in one message: "the workbook is currently fixed to the bottom of the page, add option to add to left so you can see full list of BOQ and drawings at the same time" and "add a option to add vertical and horizontal lines to a pointer so you can line up with drawings easier."
+
+**1. Workbook dock: bottom (default) or left.**
+
+The dock is the SAME element in both positions — only its parent, one class and which dimension it sizes change. `#workbook-home` is an empty hidden marker left in the bottom slot; `setWorkbookDock('left')` moves `#workbook-dock` to `main.firstElementChild`, `setWorkbookDock('bottom')` puts it back immediately after the marker. Position persists in `localStorage['bdm-workbook-dock']`, and the two axes keep SEPARATE saved sizes (`bdm-workbook-w` / `bdm-workbook-h`) so flipping back and forth doesn't destroy either.
+
+`.dock-left` CSS: `width: 380px` (min 220, max 70vw), `height: auto !important`, `border-right` instead of `border-top`. The resizer becomes `position:absolute; right:0; top:0; bottom:0; width:5px; cursor:ew-resize` — the drag handle has to be the RIGHT edge on the left dock and the TOP edge on the bottom dock, and `wireWorkbookResizer` now captures which one at mousedown (`from.left`) rather than reading the class mid-drag. The workbook toolbar is one long row built for a full-width dock, so left mode adds `flex-wrap: wrap` and hides the `.separator` / `.topbar-spacer` elements (a `flex:1` spacer inside a wrapping row throws everything onto its own line).
+
+Entry points: a `▯ Dock left` / `▭ Dock bottom` button in the workbook toolbar, and `View ▸ Workbook Position (bottom / left)` — the menu item also opens the workbook if it was closed, since otherwise it appears to do nothing.
+
+Interaction with the tool rail: `applyRailDock` inserts the rail at `main.firstElementChild` when docked left, so with both on the left the order is rail, then workbook, then canvas. That is the wanted order and needed no special-casing.
+
+**2. Crosshair guides (H).**
+
+Two absolutely positioned 1px divs (`#xhair-v`, `#xhair-h`) over `#canvas-area`, moved by a `passive` document `mousemove` handler. DOM overlay, NOT canvas drawing: re-rendering a large sheet's annotation canvas on every mouse move is far too expensive, and this way the guides sit above both the main canvas and the split pane for free. Each line carries `box-shadow: 0 0 0 1px rgba(255,255,255,.5)` so it stays visible over black linework and over dark fills alike. Hidden when the pointer leaves the area, when no document is open, and in the print stylesheet.
+
+**THE TRAP, and why the state class is on the guides:** `#canvas-area.className` is ASSIGNED outright in four places — `setTool` (line ~6639, `className = tool`) and the three space-pan handlers. Any state class parked on `#canvas-area` is silently wiped the moment the user picks a tool or taps Space. The first cut used `#canvas-area.xhair-on .xhair { display:block }` and the guides vanished on the next tool change. The `on` class now lives on the two guide divs themselves. **Anything else that ever wants a persistent class on `#canvas-area` has to solve this too — or those four assignments need converting to `classList` operations.**
+
+Shortcut is **H** — every other letter in the tool-shortcut chain was taken (`x` is Delete Markups, `g` is Highlight). Guarded by `!mod && !e.altKey`, and `onKeyDown` already returns early for INPUT / TEXTAREA / SELECT / contentEditable, so typing "h" in the workbook doesn't toggle it (verified).
+
+**Verified** with Chromium at 1500×950: bottom dock 1500×300 under a 1433×516 canvas → left dock 380×816 beside a 1053×816 canvas (both fully visible at once), resizer relocates to the right edge, drag widens to 560px, position AND width survive a reload, flipping back restores the bottom dock exactly. Crosshair: display none→block on toggle, follows the pointer, SURVIVES a tool change plus a space-pan cycle (the regression that the class-placement fix exists for), H toggles it, a synthetic `h` keydown inside an input leaves it alone, zero page errors. `APP_VERSION` → `v3.16`.
