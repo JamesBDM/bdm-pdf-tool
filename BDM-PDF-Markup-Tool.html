@@ -1905,7 +1905,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.18';
+const APP_VERSION = 'v3.19';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2603,7 +2603,8 @@ function closeDoc(idx, force) {
     takeoffItems = [];
     activeTakeoffItemId = null;
     takeoffDeductMode = false;
-    highlightTakeoffItemId = null;
+    highlightTakeoffItemId = null; highlightTakeoffPkgKey = null; highlightTakeoffShapeId = null;
+    hiddenTakeoffShapeIds.clear();
     viewports = [];
     takeoffZones = [];
     takeoffHeadings = [];
@@ -3092,7 +3093,8 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
       activeTakeoffItemId = null;
       activeTakeoffZoneId = null;
       takeoffDeductMode = false;
-      highlightTakeoffItemId = null;
+      highlightTakeoffItemId = null; highlightTakeoffPkgKey = null; highlightTakeoffShapeId = null;
+      hiddenTakeoffShapeIds.clear();
     }
     cancelInProgressDrawing();
     currentFilename = filename || 'document.pdf';
@@ -3446,12 +3448,14 @@ function redrawAnnotations() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   // Viewport regions go underneath the markups
   drawViewportOverlays(ctx);
+  const _hiPkgSet = (typeof highlightTakeoffPkgKey !== 'undefined' && highlightTakeoffPkgKey) ? new Set(_pkgMeasuredItemIds(highlightTakeoffPkgKey)) : null;
   annotations.forEach(ann => {
     if (ann.page !== currentPage) return;
     ctx.save();
     ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
-    // Takeoff highlight — glow every shape linked to the highlighted item
-    if (highlightTakeoffItemId && annLinkedToItem(ann, highlightTakeoffItemId)) {
+    // Takeoff highlight — glow every shape linked to the highlighted item /
+    // heading / single shape (v3.19)
+    if (typeof annHighlighted === 'function' && annHighlighted(ann, _hiPkgSet)) {
       ctx.shadowColor = ann.color || '#E5432E';
       ctx.shadowBlur = 12;
     }
@@ -7545,7 +7549,9 @@ function compatibleTakeoffItems(ann) {
 
 // Toggle the on-canvas glow for an item's shapes
 function toggleTakeoffHighlight(id) {
-  highlightTakeoffItemId = (highlightTakeoffItemId === id) ? null : id;
+  const on = highlightTakeoffItemId !== id;
+  if (typeof clearTakeoffHighlights === 'function') clearTakeoffHighlights();
+  highlightTakeoffItemId = on ? id : null;
   // Jump to the first shape so the glow is actually visible — prefer one in
   // the current document, else switch to the doc that has one (job-level).
   if (highlightTakeoffItemId) {
@@ -8082,20 +8088,101 @@ let hiddenLayers = new Set();
 // v3.3: per-takeoff-item shape visibility — hide one trade's measurement
 // shapes while measuring another (eye buttons on the workbook rows)
 let hiddenTakeoffItemIds = new Set();
-function toggleTakeoffItemShapes(itemId) {
-  if (hiddenTakeoffItemIds.has(itemId)) hiddenTakeoffItemIds.delete(itemId);
-  else hiddenTakeoffItemIds.add(itemId);
+// v3.19: the same hide / highlight buttons on workbook HEADINGS and on each
+// individual measurement row. Heading hide = every measured item under that
+// package (recursively) goes into hiddenTakeoffItemIds, so the existing
+// "Show all shapes" chip and annVisible() gate cover it for free. Shape hide
+// is a second set keyed by annotation id (ids are unique across documents).
+let hiddenTakeoffShapeIds = new Set();
+let highlightTakeoffPkgKey = null;   // heading whose items' shapes are glowing
+let highlightTakeoffShapeId = null;  // single shape that is glowing
+function _refreshShapeVisibilityUI() {
   redrawAnnotations(); refreshTakeoffPanel();
   if (typeof refreshMarkupsList === 'function' && markupsListOpen) refreshMarkupsList();
 }
-function showAllTakeoffShapes() {
-  hiddenTakeoffItemIds.clear();
+function toggleTakeoffItemShapes(itemId) {
+  if (hiddenTakeoffItemIds.has(itemId)) hiddenTakeoffItemIds.delete(itemId);
+  else hiddenTakeoffItemIds.add(itemId);
+  _refreshShapeVisibilityUI();
+}
+function toggleTakeoffShapeHidden(annId) {
+  if (hiddenTakeoffShapeIds.has(annId)) hiddenTakeoffShapeIds.delete(annId);
+  else hiddenTakeoffShapeIds.add(annId);
+  _refreshShapeVisibilityUI();
+}
+// Package membership by trade path — mirrors buildTakeoffTree's key rules
+// (segments trimmed, joined " / ", empty → General, case-insensitive merge).
+function _itemPkgKey(item) {
+  let segs = String(item.trade || '').split('/').map(x => x.trim()).filter(Boolean);
+  if (!segs.length) segs = ['General'];
+  return segs.join(' / ');
+}
+function _itemInPkg(item, key) {
+  const k = _itemPkgKey(item).toLowerCase(), K = String(key || '').toLowerCase();
+  return !!K && (k === K || k.startsWith(K + ' / '));
+}
+function _pkgMeasuredItemIds(key) {
+  return takeoffItems.filter(it => !it.manual && _itemInPkg(it, key)).map(it => it.id);
+}
+function pkgShapesHidden(key) {
+  const ids = _pkgMeasuredItemIds(key);
+  return ids.length > 0 && ids.every(id => hiddenTakeoffItemIds.has(id));
+}
+function toggleTakeoffPkgShapes(idx) {
+  const key = _wbPkgKeys[idx];
+  if (key === undefined) return;
+  const ids = _pkgMeasuredItemIds(key);
+  if (!ids.length) { showToast('No measured items under this heading yet'); return; }
+  if (pkgShapesHidden(key)) ids.forEach(id => hiddenTakeoffItemIds.delete(id));
+  else ids.forEach(id => hiddenTakeoffItemIds.add(id));
+  _refreshShapeVisibilityUI();
+}
+function clearTakeoffHighlights() {
+  highlightTakeoffItemId = null; highlightTakeoffPkgKey = null; highlightTakeoffShapeId = null;
+}
+// Is this shape glowing? hiPkgSet = precomputed Set of item ids under the
+// highlighted heading (pass it from a redraw loop so it isn't rebuilt per shape).
+function annHighlighted(ann, hiPkgSet) {
+  if (highlightTakeoffItemId && annLinkedToItem(ann, highlightTakeoffItemId)) return true;
+  if (highlightTakeoffShapeId && ann.id === highlightTakeoffShapeId) return true;
+  if (highlightTakeoffPkgKey) {
+    const set = hiPkgSet || new Set(_pkgMeasuredItemIds(highlightTakeoffPkgKey));
+    if (annTakeoffIds(ann).some(id => set.has(id))) return true;
+  }
+  return false;
+}
+function toggleTakeoffPkgHighlight(idx) {
+  const key = _wbPkgKeys[idx];
+  if (key === undefined) return;
+  const on = highlightTakeoffPkgKey !== key;
+  clearTakeoffHighlights();
+  if (on) {
+    highlightTakeoffPkgKey = key;
+    // Jump so the glow is visible — a local shape first, else the first doc that has one
+    const set = new Set(_pkgMeasuredItemIds(key));
+    const local = annotations.find(a => annTakeoffIds(a).some(id => set.has(id)));
+    if (local) { if (local.page !== currentPage) goToPage(local.page); }
+    else {
+      const hit = allTakeoffShapes(null, true).find(e => annTakeoffIds(e.a).some(id => set.has(id)));
+      if (hit && hit.docIdx !== activeDocIndex) { switchToDoc(hit.docIdx); if (hit.a.page !== currentPage) goToPage(hit.a.page); }
+    }
+  }
   redrawAnnotations(); refreshTakeoffPanel();
-  if (typeof refreshMarkupsList === 'function' && markupsListOpen) refreshMarkupsList();
+}
+function toggleTakeoffShapeHighlight(docIdx, annId) {
+  const on = highlightTakeoffShapeId !== annId;
+  clearTakeoffHighlights();
+  if (on) { highlightTakeoffShapeId = annId; jumpToTakeoffShape(docIdx, annId); }
+  redrawAnnotations(); refreshTakeoffPanel();
+}
+function showAllTakeoffShapes() {
+  hiddenTakeoffItemIds.clear(); hiddenTakeoffShapeIds.clear();
+  _refreshShapeVisibilityUI();
 }
 function annLayer(a) { return a.layer || 'Markups'; }
 function annVisible(a) {
   if (hiddenLayers.has(annLayer(a))) return false;
+  if (hiddenTakeoffShapeIds.size && hiddenTakeoffShapeIds.has(a.id)) return false;
   if (hiddenTakeoffItemIds.size) {
     const ids = annTakeoffIds(a);
     // hidden only when EVERY item this shape feeds is hidden
@@ -8370,7 +8457,7 @@ async function openWorkbookFile() {
     takeoffItems = data.takeoffItems;
     takeoffZones = Array.isArray(data.takeoffZones) ? data.takeoffZones : [];
     takeoffHeadings = Array.isArray(data.takeoffHeadings) ? data.takeoffHeadings : [];
-    activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null;
+    activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null; highlightTakeoffPkgKey = null; highlightTakeoffShapeId = null;
     workbookFileHandle = h;
     workbookFileName = file.name;
     saveToHistory();              // snapshot for undo (marks dirty)…
@@ -8398,7 +8485,7 @@ async function closeWorkbookFile() {
   workbookFileHandle = null; workbookFileName = ''; workbookFileDirty = false;
   // The estimate leaves the session with the file — back to embedded mode with a clean slate
   takeoffItems = []; takeoffZones = []; takeoffHeadings = [];
-  activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null;
+  activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null; highlightTakeoffPkgKey = null; highlightTakeoffShapeId = null;
   saveToHistory();
   refreshTakeoffPanel();
   showToast('Workbook closed — estimate stays in the file. PDFs saved from now embed their own estimate again.');
@@ -8440,7 +8527,7 @@ function wbEditPackage(itemId) {
 function refreshWorkbook() {
   _wbFileChipRefresh(); // workbook-file mode chip (v3.2)
   const sa = document.getElementById('wb-showall'); // v3.3 hidden-shapes chip
-  if (sa) sa.style.display = hiddenTakeoffItemIds.size ? '' : 'none';
+  if (sa) sa.style.display = (hiddenTakeoffItemIds.size || hiddenTakeoffShapeIds.size) ? '' : 'none';
   const body = document.getElementById('workbook-body');
   if (!body || !workbookOpen) return;
   body.innerHTML = getWorkbookHTML();
@@ -8476,14 +8563,17 @@ function getWorkbookHTML() {
       const zone = a.zoneId && getTakeoffZone(a.zoneId);
       const local = docIdx === activeDocIndex;
       const shared = annTakeoffIds(a).length > 1;
-      return `<tr class="wb-meas" data-ann-id="${a.id}" onclick="jumpToTakeoffShape(${docIdx},'${a.id}')" title="Click to jump to this shape on the drawing">
+      const shHid = hiddenTakeoffShapeIds.has(a.id);
+      const shLit = highlightTakeoffShapeId === a.id;
+      const shBtns = `<button onclick="event.stopPropagation();toggleTakeoffShapeHidden('${a.id}')" title="${shHid ? 'This measurement is HIDDEN on the drawing — click to show it again' : 'Hide just this measurement on the drawing'}" style="color:${shHid ? 'var(--warning)' : 'var(--text-muted)'}">${shHid ? '⊘' : '👁'}</button><button onclick="event.stopPropagation();toggleTakeoffShapeHighlight(${docIdx},'${a.id}')" title="Highlight just this measurement on the drawing" style="color:${shLit ? (a.color || item.color) : 'var(--text-muted)'}">${shLit ? '◉' : '◎'}</button>`;
+      return `<tr class="wb-meas" data-ann-id="${a.id}" onclick="jumpToTakeoffShape(${docIdx},'${a.id}')" title="Click to jump to this shape on the drawing"${shHid ? ' style="opacity:.5"' : ''}>
         <td></td>
         <td colspan="2" style="padding-left:${22 + (depth + 1) * 14}px">${multiDoc ? escapeHtml(_docShortLabel(docIdx)) + ' · ' : ''}p${a.page + 1}${zone ? ' · ' + escapeHtml(zone.name) : ''}${a.isDeduction ? ' · <span style="color:#e74c3c">deduct</span>' : ''}${shared ? ' <span title="Shared with other items">⇄</span>' : ''}</td>
         <td class="wb-num">${escapeHtml((a.label || a.type))}</td>
         <td></td><td></td><td></td><td></td>
         <td class="wb-act">${local
           ? `<button onclick="event.stopPropagation();toggleShapeDeduction('${a.id}')" title="Flip deduction">±</button><button onclick="event.stopPropagation();unassignTakeoffShape('${a.id}','${item.id}')" title="Unlink from this item">⤴</button>`
-          : `<span title="In ${escapeHtml(_docLabel(docIdx))} — click the row to jump there">↗</span>`}</td>
+          : `<span title="In ${escapeHtml(_docLabel(docIdx))} — click the row to jump there">↗</span>`}${shBtns}</td>
       </tr>`;
     }).join('');
   };
@@ -8563,6 +8653,8 @@ function getWorkbookHTML() {
     const idx = _wbPkgKeys.push(node.key) - 1;
     const amt = pkgAmount(node);
     const collapsed = !!wbCollapsed[node.key];
+    const pkgHid = pkgShapesHidden(node.key);
+    const pkgLit = highlightTakeoffPkgKey === node.key;
     rows += `<tr class="wb-pkg" onclick="wbTogglePkgIdx(${idx})" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(node.key)}">
       <td class="wb-code">${code}</td>
       <td colspan="5" style="padding-left:${8 + depth * 14}px">${collapsed ? '▸' : '▾'} ${escapeHtml(node.name.toUpperCase())} <span style="color:var(--text-muted);font-weight:400;font-size:10px">(${node.items.length + node.children.length ? countPkgItems(node) + ' items' : 'empty'})</span></td>
@@ -8570,6 +8662,8 @@ function getWorkbookHTML() {
       <td></td>
       <td class="wb-act" onclick="event.stopPropagation()">
         <button onclick="wbAddMeasuredItem(_wbPkgKeys[${idx}])" title="Add a MEASURED line in this package — arms it so you can draw on the plan straight away">＋▱</button>
+        <button onclick="toggleTakeoffPkgShapes(${idx})" title="${pkgHid ? 'Shapes under this heading are HIDDEN — click to show them again' : 'Hide every measurement under this heading on the drawings'}" style="color:${pkgHid ? 'var(--warning)' : 'var(--text-muted)'}">${pkgHid ? '⊘' : '👁'}</button>
+        <button onclick="toggleTakeoffPkgHighlight(${idx})" title="Highlight every measurement under this heading on the drawing" style="color:${pkgLit ? 'var(--warning)' : 'var(--text-muted)'}">${pkgLit ? '◉' : '◎'}</button>
         <button onclick="wbAddManualItem(_wbPkgKeys[${idx}])" title="Add a MANUAL line in this package (typed qty)">＋</button>
         <button onclick="wbAddHeading(_wbPkgKeys[${idx}])" title="Add a sub-heading under this heading — works at any depth (sub-sub-headings too)">＋§</button>
         <button onclick="wbRenameHeading(_wbPkgKeys[${idx}])" title="Rename this heading (items and sub-headings follow)">✎</button>
