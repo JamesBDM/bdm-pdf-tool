@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Datum — PDF Markup & Measurement</title>
 <!-- Installable PWA: when this file is hosted at a real URL (e.g. GitHub Pages), -->
 <!-- Chrome/Edge let the user install it and register it as the default PDF handler. -->
@@ -10,6 +10,14 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <meta name="theme-color" content="#0E1830">
+<!-- v3.20: iPad / iPhone "Add to Home Screen" opens Datum full-screen with its own icon -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Datum">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="512x512" href="icon-512.png">
 <!-- Datum brand fonts: Zilla Slab (display) · Archivo (UI) · Spline Sans Mono (numerics) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -999,6 +1007,35 @@ canvas { display: block; }
 #pdf-canvas { position: relative; z-index: 1; background: white; }
 #annotation-canvas { position: absolute; top: 0; left: 0; z-index: 2; background: transparent; pointer-events: auto; }
 
+/* ---- v3.20: touch & Apple Pencil ------------------------------------------
+   The drawing canvases suppress iOS's own long-press callout / text-selection
+   so a stroke is never interrupted by a system popup. touch-action:none is set
+   in JS (attachCanvasInputHandlers) only on touch-capable devices -- Datum then
+   owns pan and pinch itself. Everything below is behind body.touch-ui, which is
+   added ONLY when the primary pointer is coarse (iPad, phone), so the desktop
+   layout is untouched on a mouse-driven machine, touchscreen laptops included. */
+#annotation-canvas, .page-ann-canvas {
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Three columns, not two: finger-sized buttons in 2 columns run ~790px tall and
+   fall off the bottom of an iPad in landscape. Three columns brings the rail
+   back inside the viewport; overflow-y is the safety net for a shorter screen. */
+body.touch-ui { --toolbar-width: 146px; }
+body.touch-ui #toolbar { --rail-btn-w: 44px; --rail-btn-h: 38px; --rail-cols: 3; --toolbar-width: 146px; --rail-gap: 3px; overflow-y: auto; }
+body.touch-ui .tool-divider { width: calc(var(--rail-btn-w) * 3 + var(--rail-gap) * 2); }
+body.touch-ui .tool-btn svg { width: 19px; height: 19px; }
+body.touch-ui .tool-btn .shortcut { display: none; }   /* no keyboard, no point */
+body.touch-ui .topbar-btn { padding: 9px 11px; }
+body.touch-ui .topbar-btn svg { width: 18px; height: 18px; }
+body.touch-ui #menubar { height: 42px; }
+body.touch-ui #menubar .mb-btn { width: 38px; height: 34px; }
+body.touch-ui #menubar .mb-btn svg { width: 18px; height: 18px; }
+body.touch-ui .panel-tab { padding-top: 10px; padding-bottom: 10px; }
+body.touch-ui .menu-item { padding-top: 8px; padding-bottom: 8px; }
+/* Fat scrollbars are hard to grab with a fingertip and Datum pans by gesture. */
+body.touch-ui #canvas-wrapper { scrollbar-width: thin; }
+
 #drop-zone {
   /* Overlays the whole canvas area (including the split-view row added
      behind it) so the empty state always fills and centres correctly. */
@@ -1905,7 +1942,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.19';
+const APP_VERSION = 'v3.20';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2031,6 +2068,262 @@ function cancelInProgressDrawing() {
   textSelStart = null;
   textSelRect = null;
   if (typeof redrawAnnotations === 'function') { try { redrawAnnotations(); } catch(e) {} }
+}
+
+
+// ============================================================
+// TOUCH & APPLE PENCIL INPUT (v3.20)
+// ------------------------------------------------------------
+// Datum was mouse-only: every canvas listener was mousedown/mousemove/mouseup,
+// so on an iPad a finger drag scrolled the sheet instead of drawing. The three
+// canvas wiring sites now all go through attachCanvasInputHandlers(), which
+// listens on POINTER events -- the one API that covers mouse, finger and Apple
+// Pencil -- and forwards each to the UNCHANGED onCanvasMouse* handlers. A mouse
+// takes the exact v3.19 path (first line, early return, zero bookkeeping), so
+// desktop behaviour cannot drift.
+//
+// Touch rules:
+//   - one finger OR the Pencil draws with the current tool (James's choice)
+//   - two fingers pan and pinch-zoom; anything the first finger had started is
+//     ROLLED BACK, so a gesture never leaves a stray markup behind
+//   - while the Pencil is on the glass every finger contact is ignored -- that
+//     is palm rejection, and it is why you can rest your hand on the screen
+//   - a contact wider/taller than PALM_MAX_PX is ignored outright (palm first)
+//   - a second tap within DBLTAP_MS synthesises the dblclick desktop gets for
+//     free, which is what finishes a polyline/area and edits a text markup
+// ============================================================
+const DATUM_TOUCH = (navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+// Enlarge hit targets only where the PRIMARY pointer is coarse (iPad, phone).
+// A Windows laptop with a touchscreen reports (any-pointer: coarse) but keeps a
+// mouse as its primary pointer, so it holds the desktop layout it always had.
+const DATUM_TOUCH_UI = (() => {
+  try { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }
+  catch (_) { return false; }
+})();
+const HANDLE_TOL_PX = DATUM_TOUCH_UI ? 15 : 8;   // resize / rotate handle grab radius
+const TAP_TOL_PX    = DATUM_TOUCH_UI ? 16 : 10;  // annotation body hit tolerance
+const PALM_MAX_PX   = 45;   // contact bigger than this is a palm, not a fingertip
+const PINCH_MIN_PX  = 6;    // separation change before a pinch counts as a zoom
+const DBLTAP_MS     = 320;  // max gap between taps for a synthesised double-click
+const DBLTAP_SLOP   = 28;   // max px between taps for a synthesised double-click
+
+const _ptrs = new Map();        // live contacts: pointerId -> {x, y, type}
+let _drawPtrId = null;          // the one pointer allowed to drive the draw handlers
+let _penDown = false;           // a stylus is on the glass -> ignore fingers
+let _gesture = null;            // two-finger pan / pinch state
+let _dragSnap = null;           // rollback copy of a markup a gesture interrupted
+let _lastTap = null;            // {t, x, y} of the previous tap, for double-tap
+let _synthDblAt = 0;            // when we last synthesised a dblclick
+let _holdOffUntilAllUp = false; // after a gesture, ignore leftover finger(s)
+
+function _touchCount() {
+  let n = 0;
+  _ptrs.forEach(p => { if (p.type === 'touch') n++; });
+  return n;
+}
+function _gestureTouches() {
+  const out = [];
+  _ptrs.forEach(p => { if (p.type === 'touch') out.push(p); });
+  return out.slice(0, 2);
+}
+
+// Copy the mutable geometry of whatever markup a drag / resize / rotate just
+// grabbed, so a two-finger gesture arriving mid-drag can put it back exactly.
+// onCanvasMouseUp is what normally commits a drag to history; a gesture never
+// reaches it, so without this the markup would be left moved AND unrecorded --
+// Undo could not get it back.
+const _SNAP_KEYS = ['points', 'anchor', 'knees', 'textPos', 'labelOffset', 'rotation'];
+function _snapshotDragTarget() {
+  const a = dragAnnotation || resizeAnnotation || labelDragAnnotation || rotateAnnotation;
+  if (!a) { _dragSnap = null; return; }
+  const o = {};
+  _SNAP_KEYS.forEach(k => { if (a[k] !== undefined) o[k] = a[k]; });
+  try { _dragSnap = { ann: a, json: JSON.stringify(o) }; } catch (_) { _dragSnap = null; }
+}
+function _rollbackDragTarget() {
+  if (!_dragSnap) return;
+  try {
+    const o = JSON.parse(_dragSnap.json), a = _dragSnap.ann;
+    _SNAP_KEYS.forEach(k => { if (o[k] === undefined) delete a[k]; else a[k] = o[k]; });
+  } catch (_) {}
+  _dragSnap = null;
+}
+
+// Tear down every interaction a pointer may have started -- used when a gesture
+// takes over and when the browser cancels the pointer out from under us.
+function abortPointerInteraction() {
+  _rollbackDragTarget();
+  dragAnnotation = null; dragLast = null;
+  labelDragAnnotation = null;
+  resizeAnnotation = null; resizeHandleIndex = -1;
+  rotateAnnotation = null; rotateCenter = null; rotateOrigPoints = null;
+  if (panStart) {
+    panStart = null;
+    const ca = document.getElementById('canvas-area');
+    if (ca) ca.classList.remove('active');
+  }
+  cancelInProgressDrawing();
+}
+
+function _beginGesture() {
+  abortPointerInteraction();
+  _drawPtrId = null;
+  _holdOffUntilAllUp = true;
+  const t = _gestureTouches();
+  if (t.length < 2) return;
+  const [a, b] = t;
+  _gesture = {
+    d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+    s0: pendingZoom ? pendingZoom.targetScale : currentScale,
+    cx: (a.x + b.x) / 2,
+    cy: (a.y + b.y) / 2
+  };
+}
+function _updateGesture() {
+  if (!_gesture) return;
+  const t = _gestureTouches();
+  if (t.length < 2) return;
+  const [a, b] = t;
+  const wrapper = document.getElementById('canvas-wrapper');
+  if (!wrapper) return;
+  const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+  // Two fingers dragging scrolls the sheet ...
+  wrapper.scrollLeft -= (cx - _gesture.cx);
+  wrapper.scrollTop  -= (cy - _gesture.cy);
+  _gesture.cx = cx; _gesture.cy = cy;
+  // ... and spreading / closing them zooms about the midpoint. scheduleZoom is
+  // the same path Ctrl+wheel uses: it coalesces to one render per frame and
+  // stretches the existing canvas with CSS in between, so a pinch stays smooth
+  // even on a big sheet. The target is computed from the ORIGINAL separation,
+  // not accumulated per frame, so the zoom cannot drift during a long pinch.
+  const d = Math.hypot(a.x - b.x, a.y - b.y);
+  if (pdfDoc && Math.abs(d - _gesture.d0) > PINCH_MIN_PX) {
+    const target = Math.max(0.1, Math.min(10, _gesture.s0 * (d / _gesture.d0)));
+    const r = wrapper.getBoundingClientRect();
+    scheduleZoom(target, { mx: cx - r.left, my: cy - r.top });
+  }
+}
+function _endGesture() { _gesture = null; }
+
+function _pointerDown(e, beforeDown) {
+  // A mouse keeps the exact v3.19 path -- none of the touch bookkeeping runs.
+  if (e.pointerType === 'mouse') { if (beforeDown) beforeDown(e); onCanvasMouseDown(e); return; }
+
+  if (e.pointerType === 'pen') {
+    _penDown = true;
+    // The Pencil outranks a finger that was already mid-stroke.
+    const cur = (_drawPtrId !== null) ? _ptrs.get(_drawPtrId) : null;
+    if (cur && cur.type === 'touch') { abortPointerInteraction(); _drawPtrId = null; }
+  } else {
+    if (_penDown) return;                                         // palm rejection
+    if (e.width > PALM_MAX_PX || e.height > PALM_MAX_PX) return;  // palm landed first
+  }
+
+  _ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+
+  if (e.pointerType === 'touch' && _touchCount() >= 2) { _beginGesture(); return; }
+  if (_holdOffUntilAllUp || _gesture) return;  // leftover finger from a gesture
+  if (_drawPtrId !== null) return;             // one drawing pointer at a time
+
+  _drawPtrId = e.pointerId;
+  // Capture so the stroke keeps tracking if the finger leaves the canvas, and
+  // so e.target stays the canvas (every handler measures against its rect).
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+  if (beforeDown) beforeDown(e);
+  onCanvasMouseDown(e);
+  _snapshotDragTarget();
+}
+
+function _pointerMove(e) {
+  if (e.pointerType === 'mouse') { onCanvasMouseMove(e); return; }
+  const p = _ptrs.get(e.pointerId);
+  if (p) { p.x = e.clientX; p.y = e.clientY; }
+  if (_gesture) { _updateGesture(); return; }
+  if (e.pointerId !== _drawPtrId) return;
+  onCanvasMouseMove(e);
+}
+
+function _pointerUp(e) {
+  if (e.pointerType === 'mouse') { onCanvasMouseUp(e); return; }
+  _ptrs.delete(e.pointerId);
+  if (e.pointerType === 'pen') _penDown = false;
+
+  if (_gesture) {
+    if (_touchCount() < 2) _endGesture();
+    if (_ptrs.size === 0) _holdOffUntilAllUp = false;
+    return;
+  }
+  if (e.pointerId !== _drawPtrId) {
+    if (_ptrs.size === 0) _holdOffUntilAllUp = false;
+    return;
+  }
+  _drawPtrId = null;
+  _dragSnap = null;
+  onCanvasMouseUp(e);
+  if (_ptrs.size === 0) _holdOffUntilAllUp = false;
+
+  const now = Date.now();
+  if (_lastTap && (now - _lastTap.t) < DBLTAP_MS &&
+      Math.hypot(e.clientX - _lastTap.x, e.clientY - _lastTap.y) < DBLTAP_SLOP) {
+    _lastTap = null;
+    _synthDblAt = now;
+    try { onCanvasDoubleClick(e); } catch (_) {}
+  } else {
+    _lastTap = { t: now, x: e.clientX, y: e.clientY };
+  }
+}
+
+function _pointerCancel(e) {
+  if (e.pointerType === 'mouse') return;
+  _ptrs.delete(e.pointerId);
+  if (e.pointerType === 'pen') _penDown = false;
+  if (e.pointerId === _drawPtrId) { abortPointerInteraction(); _drawPtrId = null; }
+  if (_gesture && _touchCount() < 2) _endGesture();
+  if (_ptrs.size === 0) _holdOffUntilAllUp = false;
+}
+
+// A finger that lifts off-canvas never delivers pointerup TO the canvas (only
+// the captured drawing pointer is guaranteed to). This window-level sweeper
+// stops such a contact being counted forever as "still down". The _ptrs.has
+// guard makes it a no-op for pointers the canvas handler already cleaned up.
+function _pointerLostGlobal(e) {
+  if (e.pointerType === 'mouse') return;
+  if (!_ptrs.has(e.pointerId)) return;
+  _ptrs.delete(e.pointerId);
+  if (e.pointerType === 'pen') _penDown = false;
+  if (e.pointerId === _drawPtrId) { abortPointerInteraction(); _drawPtrId = null; }
+  if (_gesture && _touchCount() < 2) _endGesture();
+  if (_ptrs.size === 0) _holdOffUntilAllUp = false;
+}
+window.addEventListener('pointerup', _pointerLostGlobal);
+window.addEventListener('pointercancel', _pointerLostGlobal);
+
+// iOS can ALSO deliver a native dblclick after a double-tap. Ignore it when we
+// have just synthesised one, or a polyline would try to finish twice.
+function onCanvasDoubleClickGuarded(e) {
+  if (Date.now() - _synthDblAt < 500) return;
+  onCanvasDoubleClick(e);
+}
+
+// The single place canvas input is wired. beforeDown runs immediately before
+// onCanvasMouseDown -- continuous view uses it to set currentPage first.
+function attachCanvasInputHandlers(canvas, beforeDown) {
+  if (!canvas) return;
+  canvas.addEventListener('pointerdown', (e) => _pointerDown(e, beforeDown));
+  canvas.addEventListener('pointermove', _pointerMove);
+  canvas.addEventListener('pointerup', _pointerUp);
+  canvas.addEventListener('pointercancel', _pointerCancel);
+  canvas.addEventListener('dblclick', onCanvasDoubleClickGuarded);
+  canvas.addEventListener('contextmenu', onCanvasRightClick);
+  // Without this the browser claims a one-finger drag for scrolling and sends
+  // pointercancel instead of pointermove -- i.e. nothing would ever be drawn.
+  if (DATUM_TOUCH) canvas.style.touchAction = 'none';
+}
+
+if (DATUM_TOUCH_UI) {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.classList.add('touch-ui');
+  });
 }
 
 // ============================================================
@@ -2271,12 +2564,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Canvas events
-  annotationCanvas.addEventListener('mousedown', onCanvasMouseDown);
-  annotationCanvas.addEventListener('mousemove', onCanvasMouseMove);
-  annotationCanvas.addEventListener('mouseup', onCanvasMouseUp);
-  annotationCanvas.addEventListener('dblclick', onCanvasDoubleClick);
-  annotationCanvas.addEventListener('contextmenu', onCanvasRightClick);
+  // Canvas events — v3.20: one pointer-event path for mouse, finger and Pencil.
+  attachCanvasInputHandlers(annotationCanvas);
   canvasWrapper.addEventListener('wheel', onCanvasWheel, { passive: false });
 
   // Wrapper-level pan support — needed for continuous/side-by-side views
@@ -3202,13 +3491,8 @@ async function renderPage(pageNum) {
   container.style.width = '';
   if (!document.getElementById('pdf-canvas')) {
     container.innerHTML = '<canvas id="pdf-canvas"></canvas><canvas id="annotation-canvas"></canvas>';
-    // Re-attach mouse events to the new annotation canvas
-    const ac = document.getElementById('annotation-canvas');
-    ac.addEventListener('mousedown', onCanvasMouseDown);
-    ac.addEventListener('mousemove', onCanvasMouseMove);
-    ac.addEventListener('mouseup', onCanvasMouseUp);
-    ac.addEventListener('dblclick', onCanvasDoubleClick);
-    ac.addEventListener('contextmenu', onCanvasRightClick);
+    // Re-attach input events to the new annotation canvas
+    attachCanvasInputHandlers(document.getElementById('annotation-canvas'));
   }
 
   const page = await pdfDoc.getPage(pageNum + 1);
@@ -3285,7 +3569,7 @@ function updateSelectHoverCursor(screenPt) {
   const canvas = (typeof getActiveAnnotationCanvas === 'function') ? getActiveAnnotationCanvas() : document.getElementById('annotation-canvas');
   if (!canvas) return;
   const pagePt = toPage(screenPt);
-  const tol = 8 / currentScale;
+  const tol = HANDLE_TOL_PX / currentScale;
   let cursor = '';
   // Check the selected annotation's handles first
   if (selectedAnnotationId) {
@@ -3404,7 +3688,9 @@ function getActiveAnnotationCanvas() {
 function attachPageAnnotationListeners(annCanvas, pageIdx) {
   annCanvas.classList.add('page-ann-canvas');
   annCanvas.dataset.pageIdx = pageIdx;
-  annCanvas.addEventListener('mousedown', (e) => {
+  // v3.20: the page-switch bookkeeping below runs as attachCanvasInputHandlers'
+  // beforeDown hook, so it happens for a finger and a Pencil too — not just a mouse.
+  attachCanvasInputHandlers(annCanvas, (e) => {
     // Snapshot which page we're starting on. If currentPage actually changes
     // (the user clicked on a different page than they were viewing), wipe the
     // previous page's in-progress preview before the new draw begins.
@@ -3433,12 +3719,7 @@ function attachPageAnnotationListeners(annCanvas, pageIdx) {
       updatePageIndicator && updatePageIndicator();
       updateThumbnailHighlight && updateThumbnailHighlight();
     }
-    onCanvasMouseDown(e);
   });
-  annCanvas.addEventListener('mousemove', onCanvasMouseMove);
-  annCanvas.addEventListener('mouseup', onCanvasMouseUp);
-  annCanvas.addEventListener('dblclick', onCanvasDoubleClick);
-  annCanvas.addEventListener('contextmenu', onCanvasRightClick);
 }
 
 function redrawAnnotations() {
@@ -4963,7 +5244,7 @@ function onCanvasMouseDown(e) {
 
   if (currentTool === 'select') {
     const pagePt = toPage(screenPt);
-    const handleTol = 8 / currentScale;
+    const handleTol = HANDLE_TOL_PX / currentScale;  // v3.20: fatter on a touch screen
 
     // 0) "Add existing shapes" pick mode — clicks link shapes to the collecting
     //    item instead of selecting. Stays armed for bulk adding; Esc exits.
@@ -6714,7 +6995,7 @@ function updateToolIndicator() {
 // ============================================================
 // SELECTION & EDITING
 // ============================================================
-function getAnnotationAtPoint(x, y, tol = 10) {
+function getAnnotationAtPoint(x, y, tol = TAP_TOL_PX) {
   const screenPoint = { x, y };
   const pagePoint = toPage(screenPoint);
   const pageTol = tol / currentScale;
@@ -8428,7 +8709,7 @@ async function _writeWorkbookFile() {
 // New workbook / "Start workbook from this estimate" — captures whatever
 // estimate is currently in the session (possibly empty) into a new file.
 async function newWorkbookFile() {
-  if (typeof window.showSaveFilePicker !== 'function') { alert('Workbook files need Chrome or Edge.'); return; }
+  if (typeof window.showSaveFilePicker !== 'function') { alert('Workbook files need Chrome or Edge on a computer — Safari and iPad cannot write to a file in place. Markups and takeoff still save into the PDF here.'); return; }
   try {
     const h = await window.showSaveFilePicker({
       suggestedName: (takeoffItems.length ? 'Estimate' : 'New Estimate') + '.datumwb',
@@ -8442,7 +8723,7 @@ async function newWorkbookFile() {
   } catch (e) { if (e && e.name !== 'AbortError') alert('Could not create workbook: ' + (e.message || e)); }
 }
 async function openWorkbookFile() {
-  if (typeof window.showOpenFilePicker !== 'function') { alert('Workbook files need Chrome or Edge.'); return; }
+  if (typeof window.showOpenFilePicker !== 'function') { alert('Workbook files need Chrome or Edge on a computer — Safari and iPad cannot write to a file in place. Markups and takeoff still save into the PDF here.'); return; }
   try {
     if (takeoffItems.length && !workbookFileHandle &&
         !confirm('Opening a workbook replaces the estimate currently in this session.\n\n(To keep it, Cancel and use "New workbook" first — that lifts the current estimate into its own file.)\n\nContinue?')) return;
