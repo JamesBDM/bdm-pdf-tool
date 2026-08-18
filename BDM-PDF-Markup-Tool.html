@@ -1857,7 +1857,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.15';
+const APP_VERSION = 'v3.15.1';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -14064,7 +14064,7 @@ const BOQ_SNIPPET_H = { large: 250, medium: 170, small: 110 };
 const BOQ_PREF_KEY = 'bdm-boq-report-prefs';
 const BOQ_PREF_DEFAULTS = {
   money: true, subtotals: true, deductions: true, subitems: true,
-  snippets: true, ring: true, summary: true,
+  snippets: true, ring: true, summary: true, show: 'only',
   onlyMeasured: false, currentDocOnly: false,
   size: 'large', paper: 'a4p'
 };
@@ -14100,7 +14100,7 @@ function openBOQReport() {
           ${chk('boq-deductions', 'Flag deductions', p.deductions, 'Openings and voids shown as negative, marked DEDUCT')}
           ${chk('boq-summary', 'Summary table at the front', p.summary)}
           ${chk('boq-snippets', 'Plan snippets under each item', p.snippets)}
-          ${chk('boq-ring', 'Ring the measurement in its snippet', p.ring, 'Dashed box around the shape so it is obvious which one it is')}
+          ${chk('boq-ring', 'Ring the measurement in its snippet', p.ring, 'Dashed box around the shape - useful when several markups overlap')}
         </div>
       </div>
 
@@ -14109,6 +14109,18 @@ function openBOQReport() {
         <div style="display:flex;flex-direction:column;gap:8px;margin-top:7px">
           ${chk('boq-only-measured', 'Skip items with no measurements', p.onlyMeasured, 'Manual entries are always kept - they have no shapes by design')}
           ${chk('boq-current-doc', 'Current document only', p.currentDocOnly, 'Otherwise every open drawing in the estimate is included')}
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Each snippet shows</label>
+        <select id="boq-show" class="select-input" style="margin-top:4px">
+          <option value="only"${p.show === 'only' ? ' selected' : ''}>Only the measurement for that row</option>
+          <option value="faded"${p.show === 'faded' ? ' selected' : ''}>That measurement, other markups faded</option>
+          <option value="all"${p.show === 'all' ? ' selected' : ''}>All markups on the sheet</option>
+        </select>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;line-height:1.35">
+          The plan underneath is always the real drawing - this only controls which of your own markups are drawn over it.
         </div>
       </div>
 
@@ -14164,7 +14176,24 @@ function _boqDocSnapshots() {
   return snaps;
 }
 
-// Render every page that carries a wanted shape ONCE (markups baked in), then
+// Run a SYNCHRONOUS callback with another open document's state in the globals
+// (annotations / calibrations / viewports) so drawAnnotation renders that doc's
+// markups correctly. Never wrap an await in this — see _boqDocSnapshots.
+function _boqWithDocState(snap, fn) {
+  const sv = { annotations, pageCalibrations, defaultCalibration, viewports };
+  annotations = snap.annotations || [];
+  pageCalibrations = snap.pageCalibrations || {};
+  defaultCalibration = snap.defaultCalibration || null;
+  viewports = snap.viewports || [];
+  isBakingAnnotations = true;
+  try { fn(); }
+  finally {
+    isBakingAnnotations = false;
+    ({ annotations, pageCalibrations, defaultCalibration, viewports } = sv);
+  }
+}
+
+// Render every page that carries a wanted shape ONCE (clean), then
 // crop a snippet per shape. Returns { annKey: {data, w, h} } keyed docIdx:annId.
 async function _boqBuildSnippets(wanted, snaps, opts, onProgress) {
   const out = {};
@@ -14194,23 +14223,10 @@ async function _boqBuildSnippets(wanted, snaps, opts, onProgress) {
     // annotationMode 1 (ENABLE) — keep annotations already baked into the source
     // file, exactly as the Markup Report does since v3.6.
     await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
-    // Bake Datum's own markups for THIS document (globals swapped, all sync)
-    const sv = { annotations, pageCalibrations, defaultCalibration, viewports };
-    annotations = snap.annotations;
-    pageCalibrations = snap.pageCalibrations;
-    defaultCalibration = snap.defaultCalibration;
-    viewports = snap.viewports;
-    isBakingAnnotations = true;
-    try {
-      annotations.filter(a => a.page === pg).forEach(a => {
-        ctx.save(); ctx.setTransform(scale, 0, 0, scale, 0, 0);
-        try { drawAnnotation(ctx, a, false); } catch (e) {}
-        ctx.restore();
-      });
-    } finally {
-      isBakingAnnotations = false;
-      ({ annotations, pageCalibrations, defaultCalibration, viewports } = sv);
-    }
+    // NOTE: `c` is the CLEAN plan — source-PDF annotations only, none of Datum's
+    // own markups. Datum markups are baked per snippet below, because which ones
+    // belong in a snippet depends on the row it illustrates (opts.show).
+    const pageAnns = (snap.annotations || []).filter(a => a.page === pg);
     // Crop one snippet per wanted shape on this page
     for (const sh of byPage[k]) {
       const b = _annBounds(sh.a);
@@ -14237,6 +14253,37 @@ async function _boqBuildSnippets(wanted, snaps, opts, onProgress) {
       const tctx = tc.getContext('2d');
       tctx.fillStyle = 'white'; tctx.fillRect(0, 0, tc.width, tc.height);
       tctx.drawImage(c, x0, y0, w, h, 0, 0, tc.width, tc.height);
+      // ---- bake only the markups this row is about
+      // page point p -> crop pixel: p * scale * s2 - origin * s2
+      const setCropTransform = (cx) => cx.setTransform(scale * s2, 0, 0, scale * s2, -x0 * s2, -y0 * s2);
+      const others = opts.show === 'all' || opts.show === 'faded'
+        ? pageAnns.filter(a => a.id !== sh.a.id) : [];
+      _boqWithDocState(snap, () => {
+        if (others.length) {
+          if (opts.show === 'all') {
+            others.forEach(a => {
+              tctx.save(); setCropTransform(tctx);
+              try { drawAnnotation(tctx, a, false); } catch (e) {}
+              tctx.restore();
+            });
+          } else {
+            // Faded: drawAnnotation sets its own globalAlpha from ann.opacity, so
+            // fading has to happen on the composite, not on the context.
+            const oc = document.createElement('canvas');
+            oc.width = tc.width; oc.height = tc.height;
+            const octx = oc.getContext('2d');
+            others.forEach(a => {
+              octx.save(); setCropTransform(octx);
+              try { drawAnnotation(octx, a, false); } catch (e) {}
+              octx.restore();
+            });
+            tctx.save(); tctx.globalAlpha = 0.22; tctx.drawImage(oc, 0, 0); tctx.restore();
+          }
+        }
+        tctx.save(); setCropTransform(tctx);
+        try { drawAnnotation(tctx, sh.a, false); } catch (e) {}
+        tctx.restore();
+      });
       if (opts.ring) {
         // Dashed box around the shape itself, in crop pixels
         const rx = ((b.x - 6) * scale - x0) * s2, ry = ((b.y - 6) * scale - y0) * s2;
@@ -14269,6 +14316,7 @@ async function executeBOQReport() {
     ring: document.getElementById('boq-ring').checked,
     onlyMeasured: document.getElementById('boq-only-measured').checked,
     currentDocOnly: document.getElementById('boq-current-doc').checked,
+    show: document.getElementById('boq-show').value,
     size: document.getElementById('boq-size').value,
     paper: document.getElementById('boq-paper').value
   };

@@ -763,3 +763,22 @@ function arrowHeadLen(ann) {
 **Also fixed here:** `_winAnsiSafe` now maps U+2212 MINUS SIGN to ASCII `-`. Deduction labels are written with a real minus, so every deduction caption was printing `?18.67m²`. This helper is shared with the Markup Report, so that one benefits too.
 
 **Verified** with real Chromium end-to-end on the served page (CDN routed to local `pdfjs-dist@3.11.174` + `pdf-lib`, hand-built 2-page landscape test plan): a 4-item / 3-trade estimate spanning both sheets with length (vertical, with a per-shape height override), area (including a deduction), count and manual items → 5-page report, 276 KB, 7 snippets, zero page errors and zero alerts; extracted text confirms per-shape quantities, negative deduction rows marked DEDUCT, trade subtotals and a grand total that matches the panel. Second run with money / summary / snippets off and A3 landscape produced a clean quantities-only issue. Both inline `<script>` blocks pass `node --check`. `APP_VERSION` bumped `v3.14` → `v3.15`.
+
+### v3.15.1 — BOQ snippets show only the measurement they belong to (18 Aug 2026)
+
+**James, on the first v3.15 output:** "the images show all markups, not just the markup of the measure in question on each image." On a real architectural sheet with dozens of measurements stacked over each other, a snippet that bakes every markup is unreadable — you cannot tell which line the 1.24 m row is about.
+
+**Cause:** v3.15 copied the Markup Report's approach — render the page once with ALL Datum markups baked in, then crop. That is right for a page-grouped report and wrong for an item-grouped one, where the whole point of the snippet is to isolate one shape.
+
+**Fix:** the page canvas is now the CLEAN plan (source-PDF annotations only, `annotationMode: 1`), and Datum's markups are baked **per snippet, onto the crop canvas**, after the clean region is drawn in. New transform maps page points straight into crop pixels: `cx.setTransform(scale*s2, 0, 0, scale*s2, -x0*s2, -y0*s2)`. Still one `page.render` per sheet — only the (cheap) annotation draws repeat.
+
+**New option `Each snippet shows`** (`opts.show`, persisted in the prefs blob, default `only`):
+- `only` — just the measurement for that row (default);
+- `faded` — that measurement solid, every other markup at 22%;
+- `all` — v3.15's behaviour.
+
+**Gotcha worth remembering:** you cannot fade markups by setting `tctx.globalAlpha` before calling `drawAnnotation` — `drawAnnotation` assigns its own `ctx.globalAlpha` from `ann.opacity` (default 1) and clobbers it. The faded mode therefore draws the other markups to a same-size offscreen canvas first, then composites that canvas at `globalAlpha 0.22`. Same trap would bite any future "ghost/onion-skin" feature.
+
+**Refactor:** the globals swap is now `_boqWithDocState(snap, fn)` — one place that sets `annotations`/`pageCalibrations`/`defaultCalibration`/`viewports` + `isBakingAnnotations` and restores in a `finally`. It takes a SYNCHRONOUS callback only; putting an `await` inside it re-introduces the v3.15 cross-document bug.
+
+**Verified** with a deliberately cluttered fixture — 30 unrelated markups (measures, texts, rectangles) laid directly over the reported shapes — generating the same report in all three modes: 214 KB / 377 KB / 486 KB for only / faded / all, and visual check confirms `only` draws the single green area over an otherwise clean plan while `all` reproduces James's screenshot. `APP_VERSION` → `v3.15.1`.
