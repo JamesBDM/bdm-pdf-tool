@@ -782,3 +782,15 @@ function arrowHeadLen(ann) {
 **Refactor:** the globals swap is now `_boqWithDocState(snap, fn)` — one place that sets `annotations`/`pageCalibrations`/`defaultCalibration`/`viewports` + `isBakingAnnotations` and restores in a `finally`. It takes a SYNCHRONOUS callback only; putting an `await` inside it re-introduces the v3.15 cross-document bug.
 
 **Verified** with a deliberately cluttered fixture — 30 unrelated markups (measures, texts, rectangles) laid directly over the reported shapes — generating the same report in all three modes: 214 KB / 377 KB / 486 KB for only / faded / all, and visual check confirms `only` draws the single green area over an otherwise clean plan while `all` reproduces James's screenshot. `APP_VERSION` → `v3.15.1`.
+
+### v3.15.2 — choose which estimate items print in the BOQ Report (18 Aug 2026)
+
+**James:** "in the BOQ report print screen, allow option to choose which items in the takeoff print (currently it prints all)."
+
+**UI:** a new **Items to print** box at the top of the BOQ Report dialog — a scrolling checkbox tree grouped by trade, in the exact order the report prints. Each trade row toggles its own children and shows an *indeterminate* tick when only some are on; a live `n of N selected` counter sits in the section header next to **All** / **None** links. Colour swatch and unit are shown against each item so two similarly-named lines are distinguishable.
+
+**Plumbing:** the tree-flattening walk that the report used was extracted into `_boqGroups()` and is now shared by the picker and the builder — the tick boxes and the printed sections are generated from the same list, so they cannot fall out of step. New helpers: `_boqItemPickerHTML(excluded)`, `_boqItemBoxes()`, `_boqToggleTrade(gi)`, `_boqSetAllItems(on)`, `_boqSyncPicker()`. `executeBOQReport` reads the ticked ids before closing the modal, refuses with a toast if none are ticked (modal stays open), and skips unticked items in the gather loop — so trade headings, subtotals, the summary table and the grand total all reflect only what actually prints.
+
+**Persistence:** the UNTICKED ids are stored (`prefs.excluded`) rather than the ticked ones, so any item added to the estimate later defaults to ON. The counter in the header is what makes a remembered exclusion visible instead of mysterious.
+
+**Verified** end-to-end: picker renders 4 items / 4 trades and reports `4 of 4 selected`; unticking a whole trade plus a manual item leaves `2 of 4` and the generated PDF contains only those two items, with both trade headings, subtotals and the grand total recomputed ($12,893.50 vs $27,293.50); reopening the dialog restores `2 of 4`; ticking nothing refuses to generate and leaves the modal open; a trade holding two items shows `indeterminate` on its head box when only one child is on. `APP_VERSION` → `v3.15.2`.

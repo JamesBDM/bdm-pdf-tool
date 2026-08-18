@@ -1857,7 +1857,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.15.1';
+const APP_VERSION = 'v3.15.2';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -14064,7 +14064,7 @@ const BOQ_SNIPPET_H = { large: 250, medium: 170, small: 110 };
 const BOQ_PREF_KEY = 'bdm-boq-report-prefs';
 const BOQ_PREF_DEFAULTS = {
   money: true, subtotals: true, deductions: true, subitems: true,
-  snippets: true, ring: true, summary: true, show: 'only',
+  snippets: true, ring: true, summary: true, show: 'only', excluded: [],
   onlyMeasured: false, currentDocOnly: false,
   size: 'large', paper: 'a4p'
 };
@@ -14074,6 +14074,65 @@ function _boqPrefs() {
 }
 function _saveBoqPrefs(p) {
   try { localStorage.setItem(BOQ_PREF_KEY, JSON.stringify(p)); } catch (e) {}
+}
+
+// Trade-grouped list of the estimate's items, in the order the report prints
+// them. Used by both the item picker and the report builder so the tick boxes
+// and the printed sections can never fall out of step.
+function _boqGroups() {
+  const groups = [];
+  (function walk(node) {
+    if (node.items && node.items.length) groups.push({ key: node.key || 'General', items: node.items });
+    (node.children || []).forEach(walk);
+  })(buildTakeoffTree());
+  return groups;
+}
+
+// Checkbox tree for "Items to print" — trade rows toggle their own children.
+function _boqItemPickerHTML(excluded) {
+  const ex = Array.isArray(excluded) ? excluded : [];
+  let html = '';
+  _boqGroups().forEach((g, gi) => {
+    const allOn = g.items.every(it => !ex.includes(it.id));
+    html += `<div style="margin-top:8px">
+      <label style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;color:var(--text-primary);cursor:pointer">
+        <input type="checkbox" class="boq-trade" data-trade="${gi}" ${allOn ? 'checked' : ''} style="margin:0" onchange="_boqToggleTrade(${gi})">
+        ${_xmlEsc(g.key.toUpperCase())}
+      </label>`;
+    g.items.forEach(it => {
+      html += `<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-secondary);cursor:pointer;padding:2px 0 0 20px">
+        <input type="checkbox" class="boq-item" data-trade="${gi}" value="${_xmlEsc(it.id)}" ${ex.includes(it.id) ? '' : 'checked'} style="margin:0" onchange="_boqSyncPicker()">
+        <span style="display:inline-block;width:9px;height:9px;border-radius:2px;flex:0 0 auto;background:${_xmlEsc(it.color || '#888888')}"></span>
+        <span>${_xmlEsc(it.name || '(unnamed)')}</span>
+        <span style="color:var(--text-muted);font-size:10px">${_xmlEsc(takeoffItemUnit(it) || '')}</span>
+      </label>`;
+    });
+    html += '</div>';
+  });
+  return html;
+}
+function _boqItemBoxes() { return Array.from(document.querySelectorAll('.boq-item')); }
+function _boqToggleTrade(gi) {
+  const head = document.querySelector('.boq-trade[data-trade="' + gi + '"]');
+  if (!head) return;
+  document.querySelectorAll('.boq-item[data-trade="' + gi + '"]').forEach(b => { b.checked = head.checked; });
+  _boqSyncPicker();
+}
+function _boqSetAllItems(on) {
+  _boqItemBoxes().forEach(b => { b.checked = on; });
+  _boqSyncPicker();
+}
+// Keep each trade box in step with its children and refresh the "n of N" count
+function _boqSyncPicker() {
+  document.querySelectorAll('.boq-trade').forEach(head => {
+    const kids = Array.from(document.querySelectorAll('.boq-item[data-trade="' + head.dataset.trade + '"]'));
+    const on = kids.filter(k => k.checked).length;
+    head.checked = on === kids.length && kids.length > 0;
+    head.indeterminate = on > 0 && on < kids.length;
+  });
+  const boxes = _boqItemBoxes();
+  const el = document.getElementById('boq-item-count');
+  if (el) el.textContent = boxes.filter(b => b.checked).length + ' of ' + boxes.length + ' selected';
 }
 
 function openBOQReport() {
@@ -14089,6 +14148,20 @@ function openBOQReport() {
       <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px;line-height:1.45">
         Every item prints its total, then one large snippet per measurement that makes up that
         total — cropped from the sheet where it was taken. Big estimates take a little while.
+      </div>
+
+      <div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Items to print</label>
+          <span style="font-size:10px;color:var(--text-muted)">
+            <span id="boq-item-count"></span>
+            &nbsp;·&nbsp;<a href="javascript:void(0)" onclick="_boqSetAllItems(true)" style="color:var(--accent);text-decoration:none">All</a>
+            &nbsp;<a href="javascript:void(0)" onclick="_boqSetAllItems(false)" style="color:var(--accent);text-decoration:none">None</a>
+          </span>
+        </div>
+        <div style="margin-top:5px;max-height:190px;overflow:auto;border:1px solid var(--border-color);border-radius:4px;padding:6px 8px 10px">
+          ${_boqItemPickerHTML(p.excluded)}
+        </div>
       </div>
 
       <div>
@@ -14147,6 +14220,7 @@ function openBOQReport() {
     { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
     { text: 'Generate PDF', class: 'primary', onclick: 'executeBOQReport()' }
   ]);
+  setTimeout(_boqSyncPicker, 0);
 }
 
 // Live state for every open document, captured synchronously up-front so the
@@ -14320,6 +14394,13 @@ async function executeBOQReport() {
     size: document.getElementById('boq-size').value,
     paper: document.getElementById('boq-paper').value
   };
+  // Which estimate items were ticked. Everything unticked is remembered so the
+  // next run opens on the same selection.
+  const boxes = _boqItemBoxes();
+  const chosen = boxes.filter(b => b.checked).map(b => b.value);
+  if (!chosen.length) { showToast('Tick at least one item to print'); return; }
+  prefs.excluded = boxes.filter(b => !b.checked).map(b => b.value);
+  const chosenSet = chosen.slice();
   _saveBoqPrefs(prefs);
   closeCurrentModal();
   showToast('Building BOQ report…');
@@ -14330,17 +14411,14 @@ async function executeBOQReport() {
     const inScope = (docIdx) => !prefs.currentDocOnly || docIdx === homeIdx;
 
     // ---- gather items in trade order, each with its shapes and totals
-    const tree = buildTakeoffTree();
-    const groups = [];
-    (function walk(node) {
-      if (node.items && node.items.length) groups.push({ key: node.key || 'General', items: node.items });
-      (node.children || []).forEach(walk);
-    })(tree);
+    // Same grouping the picker used, minus anything the user unticked.
+    const groups = _boqGroups();
 
     const rows = [];   // [{group, item, totals, shapes:[{sh, qty}]}]
     let allWanted = [];
     groups.forEach(g => {
       g.items.forEach(item => {
+        if (!chosenSet.includes(item.id)) return;
         const filter = prefs.currentDocOnly ? ((a, di) => di === homeIdx) : null;
         const totals = computeTakeoffQty(item, filter);
         const shapes = allTakeoffShapes(item.id)
