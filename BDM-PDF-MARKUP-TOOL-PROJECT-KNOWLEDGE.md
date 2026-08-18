@@ -735,3 +735,31 @@ function arrowHeadLen(ann) {
 **General lesson for this codebase:** a rebuild that writes a classic `xref` must first flatten every `/ObjStm` — a classic table cannot address an object living inside a compressed bundle. And when building encryption test fixtures with pikepdf, always generate **both** `ObjectStreamMode.generate` and `.disable` variants; the flat-only corpus is what let this ship green in v3.5.
 
 **Deploy note:** saved to BOTH `C:\Git Hub\bdm-pdf-tool` (deploy source of truth — James commits + pushes) and the OneDrive project folder, per the standing instruction.
+
+### v3.15 — BOQ Report: every measurement printed with a snippet of where it sits on the plan (18 Aug 2026)
+
+**What James asked for:** "a PDF print version where each of the measurements in the bill of quantity are shown with a corresponding snippet of the image … everything for one item shown under that total with the screenshot of each image and where it sits on the plans."
+
+**Shape chosen (James picked from a shortlist):** one snippet per row, LARGE (≈2 per A4 page); every include-option is a checkbox in the dialog rather than baked in; entry point is the top menu — added BOTH a `Document ▸ BOQ Report… PDF` menu item and a `BOQ` topbar button next to `Report`.
+
+**Implementation — almost entirely reuse, no new arithmetic.**
+- **Quantities** come from the existing takeoff engine. The per-measurement figure is `computeTakeoffQty(item, (a2, di) => a2.id === sh.a.id && di === sh.docIdx)` — the same function that produces the item total, run with a single-shape `shapeFilter`. That means deduction signs, per-shape `takeoffFactor` overrides, per-page/viewport calibration and unit conversion are guaranteed to agree with the Takeoff panel; there is no second implementation to drift.
+- **Snippets** reuse the Markup Report's render-page-once-then-crop trick (`intent:'print'`, `annotationMode: 1` — see v3.6; mode 0 would drop annotations baked into the source file).
+- **Trade order** comes from `buildTakeoffTree()`, walked into flat `[{key, items}]` groups so trade headings, subtotals and the grand total all follow the panel's own hierarchy.
+
+**New functions** (inserted immediately before the `COMBINE PDFs` section): `openBOQReport()` / `executeBOQReport()` / `_boqBuildSnippets()` / `_boqDocSnapshots()` / `_boqShortName()` / `_boqPrefs()` / `_saveBoqPrefs()`, plus constants `BOQ_PAPERS`, `BOQ_SNIPPET_H`, `BOQ_PREF_KEY`, `BOQ_PREF_DEFAULTS`. Prefs persist in `localStorage['bdm-boq-report-prefs']`.
+
+**Options:** rates & amounts · trade subtotals + grand total · assembly sub-items · flag deductions · summary table at the front · plan snippets on/off · ring the measurement in its snippet · skip items with no measurements (manual entries always kept — they have no shapes by design) · current document only · snippet size (large/medium/small) · paper (A4 portrait / A4 landscape / A3 landscape).
+
+**The cross-document trap — `_boqDocSnapshots()` exists for a reason.** The takeoff is JOB-level (v2.8): `allTakeoffShapes` / `computeTakeoffQty` walk every open document through `_eachTakeoffDocState`, which swaps the `annotations` / `pageCalibrations` / `defaultCalibration` / `viewports` globals and restores them in a `finally`. That helper calls its callback **synchronously**, so *any* `await` inside it (and rendering a page is all awaits) resumes AFTER the restore and would bake the wrong document's markups. Fix: capture every doc's state (plus its `pdfDoc`, which `openDocs[i]` already carries) up-front into a plain map, then swap the globals by hand around the **synchronous** `drawAnnotation` bake only. `openDocs[i].pdfDoc` is the per-tab pdf.js document — that is what makes snippets from other open drawings possible at all.
+
+**Cropping rules learned from the first render:**
+- Padding is `max(28pt, 35% of the shape's own width/height)` so a big area gets proportionally more context than a door tag.
+- Minimum crop **300 × 200 page points** — the first cut used a pixel-based minimum and counts came out uselessly zoomed.
+- **Minimum aspect 1.45.** Without it a tall wall run cropped as a thin ribbon and printed as a sliver down the left of an otherwise empty row; widening the crop to at least 1.45:1 makes every snippet fill the width of its row.
+- Page render scale `min(3, 4800 / longest side)` — sharp enough to enlarge a small crop, capped so an A1 sheet can't blow the canvas (~16M px worst case, one page held at a time). Output JPEG capped at 1500 px on the long edge, quality 0.82.
+- `need(46 + min(maxImgH,130))` before an item header so an item never strands its heading alone at the foot of a page.
+
+**Also fixed here:** `_winAnsiSafe` now maps U+2212 MINUS SIGN to ASCII `-`. Deduction labels are written with a real minus, so every deduction caption was printing `?18.67m²`. This helper is shared with the Markup Report, so that one benefits too.
+
+**Verified** with real Chromium end-to-end on the served page (CDN routed to local `pdfjs-dist@3.11.174` + `pdf-lib`, hand-built 2-page landscape test plan): a 4-item / 3-trade estimate spanning both sheets with length (vertical, with a per-shape height override), area (including a deduction), count and manual items → 5-page report, 276 KB, 7 snippets, zero page errors and zero alerts; extracted text confirms per-shape quantities, negative deduction rows marked DEDUCT, trade subtotals and a grand total that matches the panel. Second run with money / summary / snippets off and A3 landscape produced a clean quantities-only issue. Both inline `<script>` blocks pass `node --check`. `APP_VERSION` bumped `v3.14` → `v3.15`.

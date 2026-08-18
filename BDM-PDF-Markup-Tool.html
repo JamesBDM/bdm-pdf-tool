@@ -1368,6 +1368,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="am-sep"></div>
       <div class="ami" onclick="amClose();openMeasurementSummary()">Measurement Summary</div>
       <div class="ami" onclick="amClose();openMarkupReport()">Markup Report… <span class="k">PDF</span></div>
+      <div class="ami" onclick="amClose();openBOQReport()">BOQ Report… <span class="k">PDF</span></div>
       <div class="ami" onclick="amClose();syncQuantityLink()">Sync Excel (Quantity Link)</div>
     </div></div>
     <div class="am"><button onclick="amToggle(this)">Tools</button><div class="am-drop">
@@ -1453,6 +1454,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <button class="topbar-btn" onclick="openMarkupReport()" title="Markup Report — a PDF summary of every markup with a thumbnail, its type, content and measurement, grouped by page">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
       Report
+    </button>
+    <button class="topbar-btn" onclick="openBOQReport()" title="BOQ Report — printable bill of quantities: every item's total followed by a plan snippet of each measurement that makes it up">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/><line x1="13" y1="13" x2="18" y2="13"/><line x1="13" y1="17" x2="18" y2="17"/></svg>
+      BOQ
     </button>
     <button class="topbar-btn" id="btn-markups-list" onclick="toggleMarkupsList()" title="Markups List — table of every markup: search, sort, jump-to, layers, CSV export">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
@@ -1852,7 +1857,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.14';
+const APP_VERSION = 'v3.15';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -13842,7 +13847,7 @@ function _annBounds(a) {
 // equivalents, then strip anything else they can't encode.
 function _winAnsiSafe(s) {
   return String(s)
-    .replace(/[–—]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+    .replace(/[–—−]/g, '-').replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
     .replace(/…/g, '...').replace(/[^\x20-\x7E\xA0-\xFF]/g, '?');
 }
 
@@ -14039,6 +14044,529 @@ async function executeMarkupReport() {
     console.error('Markup report failed:', e);
     alert('Markup report failed: ' + (e.message || e));
   }
+}
+
+// ============================================================
+// BOQ REPORT (v3.15) — a printable bill of quantities where every
+// item's total is followed by one large snippet per contributing
+// measurement, cropped from the plan exactly where it was taken.
+// Reuses the takeoff engine for the arithmetic (computeTakeoffQty
+// with a single-shape filter) and the Markup Report's render-page-
+// once-then-crop trick for the images.
+// ============================================================
+const BOQ_PAPERS = {
+  a4p: { w: 595.28, h: 841.89 },
+  a4l: { w: 841.89, h: 595.28 },
+  a3l: { w: 1190.55, h: 841.89 }
+};
+// Max printed height of a snippet, by size choice. "large" = ~2 per A4 page.
+const BOQ_SNIPPET_H = { large: 250, medium: 170, small: 110 };
+const BOQ_PREF_KEY = 'bdm-boq-report-prefs';
+const BOQ_PREF_DEFAULTS = {
+  money: true, subtotals: true, deductions: true, subitems: true,
+  snippets: true, ring: true, summary: true,
+  onlyMeasured: false, currentDocOnly: false,
+  size: 'large', paper: 'a4p'
+};
+function _boqPrefs() {
+  try { return Object.assign({}, BOQ_PREF_DEFAULTS, JSON.parse(localStorage.getItem(BOQ_PREF_KEY)) || {}); }
+  catch (e) { return Object.assign({}, BOQ_PREF_DEFAULTS); }
+}
+function _saveBoqPrefs(p) {
+  try { localStorage.setItem(BOQ_PREF_KEY, JSON.stringify(p)); } catch (e) {}
+}
+
+function openBOQReport() {
+  if (!takeoffItems.length) { showToast('No estimate items yet — add takeoff items first'); return; }
+  const p = _boqPrefs();
+  const chk = (id, label, on, hint) =>
+    `<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-secondary);cursor:pointer;line-height:1.35">
+       <input type="checkbox" id="${id}" ${on ? 'checked' : ''} style="margin:2px 0 0 0">
+       <span>${label}${hint ? `<br><span style="font-size:10px;color:var(--text-muted)">${hint}</span>` : ''}</span>
+     </label>`;
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:430px;max-height:62vh;overflow:auto">
+      <div style="font-size:11px;color:var(--text-muted);padding:8px;background:var(--bg-tertiary);border-radius:4px;line-height:1.45">
+        Every item prints its total, then one large snippet per measurement that makes up that
+        total — cropped from the sheet where it was taken. Big estimates take a little while.
+      </div>
+
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Include in the report</label>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:7px">
+          ${chk('boq-money', 'Rates and amounts', p.money, 'Rate, markup and $ per item — leave off for a quantities-only issue')}
+          ${chk('boq-subtotals', 'Trade subtotals and grand total', p.subtotals)}
+          ${chk('boq-subitems', 'Assembly sub-items', p.subitems, 'Derived rows under an item that has sub-items')}
+          ${chk('boq-deductions', 'Flag deductions', p.deductions, 'Openings and voids shown as negative, marked DEDUCT')}
+          ${chk('boq-summary', 'Summary table at the front', p.summary)}
+          ${chk('boq-snippets', 'Plan snippets under each item', p.snippets)}
+          ${chk('boq-ring', 'Ring the measurement in its snippet', p.ring, 'Dashed box around the shape so it is obvious which one it is')}
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Items</label>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:7px">
+          ${chk('boq-only-measured', 'Skip items with no measurements', p.onlyMeasured, 'Manual entries are always kept - they have no shapes by design')}
+          ${chk('boq-current-doc', 'Current document only', p.currentDocOnly, 'Otherwise every open drawing in the estimate is included')}
+        </div>
+      </div>
+
+      <div style="display:flex;gap:12px">
+        <div style="flex:1">
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Snippet size</label>
+          <select id="boq-size" class="select-input" style="margin-top:4px">
+            <option value="large"${p.size === 'large' ? ' selected' : ''}>Large (about 2 per page)</option>
+            <option value="medium"${p.size === 'medium' ? ' selected' : ''}>Medium (about 3 per page)</option>
+            <option value="small"${p.size === 'small' ? ' selected' : ''}>Small (about 5 per page)</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <label style="font-size:12px;font-weight:600;color:var(--text-secondary)">Paper</label>
+          <select id="boq-paper" class="select-input" style="margin-top:4px">
+            <option value="a4p"${p.paper === 'a4p' ? ' selected' : ''}>A4 portrait</option>
+            <option value="a4l"${p.paper === 'a4l' ? ' selected' : ''}>A4 landscape</option>
+            <option value="a3l"${p.paper === 'a3l' ? ' selected' : ''}>A3 landscape</option>
+          </select>
+        </div>
+      </div>
+    </div>`;
+  showModal('BOQ Report — quantities with plan snippets', body, [
+    { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
+    { text: 'Generate PDF', class: 'primary', onclick: 'executeBOQReport()' }
+  ]);
+}
+
+// Live state for every open document, captured synchronously up-front so the
+// async snippet renderer can swap globals around each (synchronous) bake
+// without fighting _eachTakeoffDocState's try/finally restore.
+function _boqDocSnapshots() {
+  const snaps = {};
+  if (activeDocIndex >= 0 && openDocs[activeDocIndex] && !_docStateSwapped) captureActiveDocState();
+  const live = () => ({
+    pdfDoc, annotations, pageCalibrations, defaultCalibration, viewports,
+    filename: currentFilename || 'Document'
+  });
+  if (!openDocs.length) { snaps[activeDocIndex < 0 ? 0 : activeDocIndex] = live(); return snaps; }
+  const home = _currentDocIdx();
+  for (let i = 0; i < openDocs.length; i++) {
+    if (i === home) { snaps[i] = live(); continue; }
+    const d = openDocs[i];
+    snaps[i] = {
+      pdfDoc: d.pdfDoc,
+      annotations: d.annotations || [],
+      pageCalibrations: d.pageCalibrations || {},
+      defaultCalibration: d.defaultCalibration || null,
+      viewports: d.viewports || [],
+      filename: d.currentFilename || ('Document ' + (i + 1))
+    };
+  }
+  return snaps;
+}
+
+// Render every page that carries a wanted shape ONCE (markups baked in), then
+// crop a snippet per shape. Returns { annKey: {data, w, h} } keyed docIdx:annId.
+async function _boqBuildSnippets(wanted, snaps, opts, onProgress) {
+  const out = {};
+  const byPage = {};
+  wanted.forEach(sh => {
+    const k = sh.docIdx + '|' + sh.a.page;
+    (byPage[k] = byPage[k] || []).push(sh);
+  });
+  const keys = Object.keys(byPage);
+  let done = 0;
+  for (const k of keys) {
+    const [docIdxStr, pgStr] = k.split('|');
+    const docIdx = Number(docIdxStr), pg = Number(pgStr);
+    const snap = snaps[docIdx];
+    if (!snap || !snap.pdfDoc) { done++; continue; }
+    let page;
+    try { page = await snap.pdfDoc.getPage(pg + 1); }
+    catch (e) { console.warn('BOQ report: page ' + (pg + 1) + ' unavailable', e); done++; continue; }
+    const vp1 = page.getViewport({ scale: 1 });
+    // Sharp enough to enlarge a small crop, capped so a big sheet cannot blow memory
+    const scale = Math.min(3, 4800 / Math.max(vp1.width, vp1.height));
+    const vp = page.getViewport({ scale });
+    const c = document.createElement('canvas');
+    c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
+    // annotationMode 1 (ENABLE) — keep annotations already baked into the source
+    // file, exactly as the Markup Report does since v3.6.
+    await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
+    // Bake Datum's own markups for THIS document (globals swapped, all sync)
+    const sv = { annotations, pageCalibrations, defaultCalibration, viewports };
+    annotations = snap.annotations;
+    pageCalibrations = snap.pageCalibrations;
+    defaultCalibration = snap.defaultCalibration;
+    viewports = snap.viewports;
+    isBakingAnnotations = true;
+    try {
+      annotations.filter(a => a.page === pg).forEach(a => {
+        ctx.save(); ctx.setTransform(scale, 0, 0, scale, 0, 0);
+        try { drawAnnotation(ctx, a, false); } catch (e) {}
+        ctx.restore();
+      });
+    } finally {
+      isBakingAnnotations = false;
+      ({ annotations, pageCalibrations, defaultCalibration, viewports } = sv);
+    }
+    // Crop one snippet per wanted shape on this page
+    for (const sh of byPage[k]) {
+      const b = _annBounds(sh.a);
+      if (!b) continue;
+      const padPts = Math.max(28, b.w * 0.35, b.h * 0.35);
+      let x0 = (b.x - padPts) * scale, y0 = (b.y - padPts) * scale;
+      let w = (b.w + padPts * 2) * scale, h = (b.h + padPts * 2) * scale;
+      // Always show a decent slab of surrounding plan, and keep the crop
+      // landscape-ish so a tall wall run still fills the width of its row
+      // instead of printing as a thin ribbon down the left margin.
+      const minW = 300 * scale, minH = 200 * scale;
+      if (w < minW) { x0 -= (minW - w) / 2; w = minW; }
+      if (h < minH) { y0 -= (minH - h) / 2; h = minH; }
+      const ASPECT = 1.45;
+      if (w / h < ASPECT) { const nw = h * ASPECT; x0 -= (nw - w) / 2; w = nw; }
+      x0 = Math.max(0, Math.min(x0, Math.max(0, c.width - 10)));
+      y0 = Math.max(0, Math.min(y0, Math.max(0, c.height - 10)));
+      w = Math.min(w, c.width - x0); h = Math.min(h, c.height - y0);
+      const maxOut = 1500;                       // output pixel cap on the long edge
+      const s2 = Math.min(maxOut / w, maxOut / h, 1.4);
+      const tc = document.createElement('canvas');
+      tc.width = Math.max(1, Math.round(w * s2));
+      tc.height = Math.max(1, Math.round(h * s2));
+      const tctx = tc.getContext('2d');
+      tctx.fillStyle = 'white'; tctx.fillRect(0, 0, tc.width, tc.height);
+      tctx.drawImage(c, x0, y0, w, h, 0, 0, tc.width, tc.height);
+      if (opts.ring) {
+        // Dashed box around the shape itself, in crop pixels
+        const rx = ((b.x - 6) * scale - x0) * s2, ry = ((b.y - 6) * scale - y0) * s2;
+        const rw = (b.w + 12) * scale * s2, rh = (b.h + 12) * scale * s2;
+        tctx.save();
+        tctx.strokeStyle = '#0E1830'; tctx.lineWidth = Math.max(1.5, 2 * s2);
+        tctx.setLineDash([9 * s2, 6 * s2]);
+        tctx.strokeRect(rx, ry, Math.max(6, rw), Math.max(6, rh));
+        tctx.restore();
+      }
+      out[sh.docIdx + ':' + sh.a.id] = {
+        data: tc.toDataURL('image/jpeg', 0.82),
+        w: tc.width, h: tc.height
+      };
+    }
+    done++;
+    if (onProgress) onProgress(done, keys.length);
+  }
+  return out;
+}
+
+async function executeBOQReport() {
+  const prefs = {
+    money: document.getElementById('boq-money').checked,
+    subtotals: document.getElementById('boq-subtotals').checked,
+    subitems: document.getElementById('boq-subitems').checked,
+    deductions: document.getElementById('boq-deductions').checked,
+    summary: document.getElementById('boq-summary').checked,
+    snippets: document.getElementById('boq-snippets').checked,
+    ring: document.getElementById('boq-ring').checked,
+    onlyMeasured: document.getElementById('boq-only-measured').checked,
+    currentDocOnly: document.getElementById('boq-current-doc').checked,
+    size: document.getElementById('boq-size').value,
+    paper: document.getElementById('boq-paper').value
+  };
+  _saveBoqPrefs(prefs);
+  closeCurrentModal();
+  showToast('Building BOQ report…');
+  try {
+    const snaps = _boqDocSnapshots();
+    const homeIdx = openDocs.length ? _currentDocIdx() : (activeDocIndex < 0 ? 0 : activeDocIndex);
+    const multiDoc = Object.keys(snaps).length > 1 && !prefs.currentDocOnly;
+    const inScope = (docIdx) => !prefs.currentDocOnly || docIdx === homeIdx;
+
+    // ---- gather items in trade order, each with its shapes and totals
+    const tree = buildTakeoffTree();
+    const groups = [];
+    (function walk(node) {
+      if (node.items && node.items.length) groups.push({ key: node.key || 'General', items: node.items });
+      (node.children || []).forEach(walk);
+    })(tree);
+
+    const rows = [];   // [{group, item, totals, shapes:[{sh, qty}]}]
+    let allWanted = [];
+    groups.forEach(g => {
+      g.items.forEach(item => {
+        const filter = prefs.currentDocOnly ? ((a, di) => di === homeIdx) : null;
+        const totals = computeTakeoffQty(item, filter);
+        const shapes = allTakeoffShapes(item.id)
+          .filter(sh => inScope(sh.docIdx) && sh.a.points && sh.a.points.length)
+          .map(sh => {
+            const per = computeTakeoffQty(item, (a2, di) => a2.id === sh.a.id && di === sh.docIdx);
+            return { sh, qty: per.qty };
+          })
+          .sort((p, q) => (p.sh.docIdx - q.sh.docIdx) || (p.sh.a.page - q.sh.a.page) ||
+                          ((_annBounds(p.sh.a) || { y: 0 }).y - (_annBounds(q.sh.a) || { y: 0 }).y));
+        if (prefs.onlyMeasured && !shapes.length && !item.manual) return;
+        rows.push({ group: g.key, item, totals, shapes });
+        if (prefs.snippets) allWanted = allWanted.concat(shapes.map(s => s.sh));
+      });
+    });
+    if (!rows.length) { showToast('Nothing to report with those options'); return; }
+
+    // ---- snippets
+    let snips = {};
+    if (prefs.snippets && allWanted.length) {
+      snips = await _boqBuildSnippets(allWanted, snaps, prefs, (d, t) => {
+        if (t > 2) showToast('Building BOQ report — sheet ' + d + ' of ' + t + '…');
+      });
+    }
+
+    // ---- report PDF
+    const paper = BOQ_PAPERS[prefs.paper] || BOQ_PAPERS.a4p;
+    const PW = paper.w, PH = paper.h, M = 40;
+    const CW = PW - M * 2;
+    const out = await PDFLib.PDFDocument.create();
+    const helv = await out.embedFont(PDFLib.StandardFonts.Helvetica);
+    const bold = await out.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const navy = PDFLib.rgb(14 / 255, 24 / 255, 48 / 255);
+    const gold = PDFLib.rgb(198 / 255, 56 / 255, 31 / 255);
+    const grey = PDFLib.rgb(0.42, 0.44, 0.47);
+    const lineGrey = PDFLib.rgb(0.85, 0.85, 0.85);
+    const bandGrey = PDFLib.rgb(0.945, 0.95, 0.96);
+    let page = out.addPage([PW, PH]);
+    let y = PH - M;
+    const newPage = () => { page = out.addPage([PW, PH]); y = PH - M; };
+    const need = (hgt) => { if (y - hgt < M + 26) newPage(); };
+    const T = (txt, x, yy, size, font, color) =>
+      page.drawText(_winAnsiSafe(String(txt)), { x, y: yy, size, font: font || helv, color: color || navy });
+    const wrap = (txt, font, size, width, maxLines) => {
+      const words = _winAnsiSafe(String(txt)).split(/\s+/);
+      const lines = []; let cur = '';
+      for (const wd of words) {
+        const trial = cur ? cur + ' ' + wd : wd;
+        if (font.widthOfTextAtSize(trial, size) <= width) cur = trial;
+        else {
+          if (cur) lines.push(cur);
+          cur = wd;
+          while (cur && font.widthOfTextAtSize(cur, size) > width) cur = cur.slice(0, -1);
+          if (lines.length >= maxLines) break;
+        }
+      }
+      if (cur && lines.length < maxLines) lines.push(cur);
+      return lines.length ? lines : ['-'];
+    };
+    const rightT = (txt, xRight, yy, size, font, color) => {
+      const s = _winAnsiSafe(String(txt));
+      const f = font || helv;
+      page.drawText(s, { x: xRight - f.widthOfTextAtSize(s, size), y: yy, size, font: f, color: color || navy });
+    };
+    const qtyTxt = (item, q) => item.resultType === 'count' && !item.manual
+      ? (Math.round(q * 100) / 100) + ''
+      : (Math.round(q * 1000) / 1000).toFixed(2);
+    const swatch = (hex, x, yy, sz) => {
+      try {
+        const h = String(hex || '#888888').replace('#', '');
+        const r = parseInt(h.slice(0, 2), 16) / 255, g2 = parseInt(h.slice(2, 4), 16) / 255, b2 = parseInt(h.slice(4, 6), 16) / 255;
+        if (isFinite(r) && isFinite(g2) && isFinite(b2))
+          page.drawRectangle({ x, y: yy, width: sz, height: sz, color: PDFLib.rgb(r, g2, b2) });
+      } catch (e) {}
+    };
+
+    // ---- title block
+    T('BILL OF QUANTITIES', M, y - 15, 17, bold, navy);
+    T((currentFilename || 'Estimate') + '  ·  ' + new Date().toLocaleDateString() +
+      '  ·  ' + rows.length + ' item' + (rows.length === 1 ? '' : 's'), M, y - 31, 9, helv, grey);
+    page.drawLine({ start: { x: M, y: y - 41 }, end: { x: PW - M, y: y - 41 }, thickness: 1.5, color: navy });
+    y -= 58;
+
+    const grand = { qty: 0, amount: 0 };
+    // ---- summary table
+    if (prefs.summary) {
+      const cQty = PW - M - (prefs.money ? 250 : 60);
+      const cUnit = cQty + 6;
+      const cRate = PW - M - 125;
+      const cAmt = PW - M;
+      const hdr = () => {
+        page.drawRectangle({ x: M, y: y - 15, width: CW, height: 16, color: bandGrey });
+        T('ITEM', M + 4, y - 11, 8, bold, navy);
+        rightT('QTY', cQty, y - 11, 8, bold, navy);
+        T('UNIT', cUnit + 4, y - 11, 8, bold, navy);
+        if (prefs.money) { rightT('RATE', cRate, y - 11, 8, bold, navy); rightT('AMOUNT', cAmt, y - 11, 8, bold, navy); }
+        y -= 21;
+      };
+      T('SUMMARY', M, y - 10, 11, bold, gold);
+      y -= 20;
+      hdr();
+      let curGroup = null, subTotal = 0;
+      const flushSub = () => {
+        if (curGroup === null || !prefs.subtotals) return;
+        page.drawLine({ start: { x: M, y: y + 3 }, end: { x: PW - M, y: y + 3 }, thickness: 0.5, color: lineGrey });
+        T(curGroup + ' subtotal', M + 8, y - 9, 8, bold, navy);
+        if (prefs.money) rightT(formatMoney(subTotal), cAmt, y - 9, 8, bold, navy);
+        y -= 16; subTotal = 0;
+      };
+      rows.forEach(r => {
+        need(30);
+        if (r.group !== curGroup) {
+          flushSub();
+          need(24);
+          curGroup = r.group;
+          T(curGroup.toUpperCase(), M, y - 10, 8.5, bold, gold);
+          y -= 15;
+        }
+        const nm = wrap(r.item.name || '(unnamed)', helv, 8.5, cQty - M - 14, 2);
+        nm.forEach((ln, i) => T(ln, M + 10, y - 9 - i * 10, 8.5, helv, navy));
+        rightT(qtyTxt(r.item, r.totals.qty), cQty, y - 9, 8.5, helv, navy);
+        T(String(takeoffItemUnit(r.item) || '-').slice(0, 8), cUnit + 4, y - 9, 8.5, helv, grey);
+        if (prefs.money) {
+          if (!r.totals.subRows) rightT(r.totals.rate ? formatMoney(r.totals.rate) : '-', cRate, y - 9, 8.5, helv, grey);
+          rightT(r.totals.amount ? formatMoney(r.totals.amount) : '-', cAmt, y - 9, 8.5, helv, navy);
+        }
+        subTotal += r.totals.amount || 0;
+        grand.amount += r.totals.amount || 0;
+        y -= Math.max(15, nm.length * 10 + 5);
+      });
+      flushSub();
+      if (prefs.money && prefs.subtotals) {
+        need(26);
+        page.drawLine({ start: { x: M, y: y + 2 }, end: { x: PW - M, y: y + 2 }, thickness: 1.2, color: navy });
+        T('TOTAL', M + 4, y - 12, 10, bold, navy);
+        rightT(formatMoney(grand.amount), PW - M, y - 12, 10, bold, navy);
+        y -= 24;
+      }
+      newPage();
+    } else {
+      rows.forEach(r => { grand.amount += r.totals.amount || 0; });
+    }
+
+    // ---- detail: item, then a big snippet per measurement
+    const maxImgH = BOQ_SNIPPET_H[prefs.size] || BOQ_SNIPPET_H.large;
+    let curGroup = null, itemNo = 0;
+    for (const r of rows) {
+      const item = r.item;
+      if (r.group !== curGroup) {
+        need(34);
+        curGroup = r.group;
+        page.drawRectangle({ x: M, y: y - 17, width: CW, height: 18, color: navy });
+        T(curGroup.toUpperCase(), M + 6, y - 12, 9, bold, PDFLib.rgb(1, 1, 1));
+        y -= 27;
+      }
+      itemNo++;
+      // item header band — reserve room for the top of the first snippet too,
+      // so an item never strands its heading alone at the foot of a page.
+      need(46 + (prefs.snippets && r.shapes.length ? Math.min(maxImgH, 130) : 0));
+      page.drawRectangle({ x: M, y: y - 30, width: CW, height: 31, color: bandGrey });
+      swatch(item.color, M + 6, y - 15, 9);
+      T(itemNo + '.  ' + (item.name || '(unnamed)'), M + 21, y - 13, 10.5, bold, navy);
+      const meta = [];
+      meta.push(item.manual ? 'Manual entry' : (TAKEOFF_TYPE_LABELS[item.resultType] || item.resultType));
+      if (item.factor) meta.push('height/depth ' + item.factor + ' mm');
+      if (!item.manual) meta.push(r.shapes.length + ' measurement' + (r.shapes.length === 1 ? '' : 's'));
+      if (r.totals.uncal) meta.push('NOT CALIBRATED');
+      T(meta.join('   ·   '), M + 21, y - 25, 8, helv, grey);
+      rightT(qtyTxt(item, r.totals.qty) + ' ' + (takeoffItemUnit(item) || ''), PW - M - (prefs.money ? 110 : 6), y - 15, 12, bold, navy);
+      if (prefs.money) {
+        rightT(r.totals.amount ? formatMoney(r.totals.amount) : '-', PW - M - 6, y - 13, 11, bold, navy);
+        const rt = [];
+        if (!r.totals.subRows && r.totals.rate) rt.push(formatMoney(r.totals.rate) + ' / ' + (takeoffItemUnit(item) || 'unit'));
+        if (parseFloat(item.markup)) rt.push('+' + item.markup + '% markup');
+        if (rt.length) rightT(rt.join('   '), PW - M - 6, y - 25, 8, helv, grey);
+      }
+      y -= 38;
+
+      // assembly sub-items
+      if (prefs.subitems && r.totals.subRows && r.totals.subRows.length) {
+        r.totals.subRows.forEach(s => {
+          need(14);
+          T('- ' + s.name + '   (' + (SUBITEM_BASIS_LABELS[s.basis] || s.basis) + ' x ' + s.factor + ')', M + 24, y - 9, 8, helv, grey);
+          rightT((Math.round(s.qty * 1000) / 1000).toFixed(2) + ' ' + (s.unit || ''), PW - M - (prefs.money ? 110 : 6), y - 9, 8, helv, navy);
+          if (prefs.money) rightT(s.amount ? formatMoney(s.amount) : '-', PW - M - 6, y - 9, 8, helv, navy);
+          y -= 13;
+        });
+        y -= 4;
+      }
+
+      if (item.manual) {
+        need(16);
+        T('Manual quantity — no measured shapes.', M + 24, y - 9, 8, helv, grey);
+        y -= 20;
+      } else if (!r.shapes.length) {
+        need(16);
+        T('No measurements linked to this item yet.', M + 24, y - 9, 8, helv, grey);
+        y -= 20;
+      }
+
+      // one row per measurement
+      let n = 0;
+      for (const s of r.shapes) {
+        n++;
+        const a = s.sh.a;
+        const key = s.sh.docIdx + ':' + a.id;
+        const snip = snips[key];
+        let imgW = 0, imgH = 0, img = null;
+        if (snip) {
+          try {
+            img = await out.embedJpg(snip.data);
+            const sc = Math.min((CW - 20) / img.width, maxImgH / img.height);
+            imgW = img.width * sc; imgH = img.height * sc;
+          } catch (e) { img = null; }
+        }
+        const capH = 26;
+        need(capH + imgH + 12);
+        // caption
+        const isDed = prefs.deductions && a.isDeduction;
+        const qv = qtyTxt(item, s.qty) + ' ' + (takeoffItemUnit(item) || '');
+        T(String(n).padStart(2, '0'), M + 6, y - 10, 8.5, bold, grey);
+        T(qv, M + 26, y - 10, 9.5, bold, isDed ? gold : navy);
+        const ref = [];
+        ref.push('Sheet ' + (a.page + 1));
+        if (multiDoc) ref.push(_boqShortName(snaps[s.sh.docIdx] ? snaps[s.sh.docIdx].filename : ''));
+        if (a.measLabel) ref.push(a.measLabel);
+        if (a.label) ref.push(a.label);
+        if (a.takeoffFactor) ref.push('h/d ' + a.takeoffFactor + ' mm');
+        if (isDed) ref.push('DEDUCT');
+        // measLabel and label are often the same text — don't print it twice
+        const seen = [];
+        const refParts = ref.filter(t => {
+          const k = String(t).replace(/\s+/g, '').toLowerCase();
+          if (!k || seen.includes(k)) return false;
+          seen.push(k); return true;
+        });
+        const refLine = wrap(refParts.join('   ·   '), helv, 8, CW - 150, 1)[0];
+        T(refLine, M + 130, y - 10, 8, helv, isDed ? gold : grey);
+        y -= 16;
+        if (img) {
+          page.drawImage(img, { x: M + 10, y: y - imgH, width: imgW, height: imgH });
+          page.drawRectangle({ x: M + 10, y: y - imgH, width: imgW, height: imgH, borderColor: lineGrey, borderWidth: 0.75 });
+          y -= imgH + 8;
+        } else if (prefs.snippets) {
+          T('(snippet unavailable)', M + 26, y - 8, 7.5, helv, grey);
+          y -= 14;
+        }
+        page.drawLine({ start: { x: M, y: y - 2 }, end: { x: PW - M, y: y - 2 }, thickness: 0.4, color: lineGrey });
+        y -= 8;
+      }
+      y -= 10;
+    }
+
+    // ---- footers
+    const pgs = out.getPages();
+    pgs.forEach((p, i) => {
+      p.drawText(_winAnsiSafe('Datum — Bill of Quantities  ·  ' + (currentFilename || 'Estimate')),
+        { x: M, y: 22, size: 7, font: helv, color: grey });
+      p.drawText((i + 1) + ' / ' + pgs.length, { x: PW - M - 34, y: 22, size: 7, font: helv, color: grey });
+    });
+
+    const bytesOut = await out.save();
+    const base = (currentFilename || 'estimate').replace(/\.pdf$/i, '');
+    downloadBlob(bytesOut, 'application/pdf', base + '-BOQ-Report.pdf');
+    showToast('BOQ report downloaded — ' + rows.length + ' item' + (rows.length === 1 ? '' : 's') +
+      (prefs.snippets ? ', ' + allWanted.length + ' snippet' + (allWanted.length === 1 ? '' : 's') : ''));
+  } catch (e) {
+    console.error('BOQ report failed:', e);
+    alert('BOQ report failed: ' + (e.message || e));
+  }
+}
+function _boqShortName(fn) {
+  const s = String(fn || '').replace(/\.pdf$/i, '');
+  return s.length > 28 ? s.slice(0, 27) + '…' : s;
 }
 
 // ============================================================
