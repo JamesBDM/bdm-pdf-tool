@@ -891,7 +891,7 @@ input, select, textarea { font: inherit; color: inherit; }
 #canvas-area.calibrate, #canvas-area.measure, #canvas-area.polyline, #canvas-area.polyshape, #canvas-area.area,
 #canvas-area.rectangle, #canvas-area.ellipse, #canvas-area.line, #canvas-area.polygon,
 #canvas-area.arrow, #canvas-area.highlight, #canvas-area.dimension,
-#canvas-area.snipregion, #canvas-area.viewport, #canvas-area.magicarea { cursor: crosshair; }
+#canvas-area.snipregion, #canvas-area.viewport, #canvas-area.magicarea, #canvas-area.visualsearch, #canvas-area.sheetregion { cursor: crosshair; }
 #canvas-area.count, #canvas-area.stamp, #canvas-area.tick, #canvas-area.signature, #canvas-area.symbol, #canvas-area.table { cursor: pointer; }
 #canvas-area.callout, #canvas-area.text { cursor: text; }
 #canvas-area.selecttext { cursor: text; }
@@ -1385,6 +1385,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();openPopoutWindow()">New Window (second screen)</div>
       <div class="ami" onclick="amClose();togglePanelVisible()">Right Panel <span class="k">F4</span></div>
       <div class="ami" onclick="amClose();toggleMarkupsList()">Markups List</div>
+      <div class="ami" onclick="amClose();openSheetsPanel()">Sheets Panel (index &amp; links)</div>
       <div class="ami" onclick="amClose();toggleWorkbook()">Estimate Workbook</div>
       <div class="ami" onclick="amClose();toggleWorkbookDock()">Workbook Position (bottom / left)</div>
       <div class="ami" onclick="amClose();toggleCrosshair()">Crosshair Guides <span class="k">H</span></div>
@@ -1398,6 +1399,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();addBlankPageAfterCurrent('same')">Insert Blank Page</div>
       <div class="am-sep"></div>
       <div class="ami" onclick="amClose();openCompareDialog()">Compare Drawings…</div>
+      <div class="ami" onclick="amClose();openRevisionDialog()">Replace Page with Revision… <span class="k">carry markups</span></div>
+      <div class="ami" onclick="amClose();openSheetsPanel()">Sheet Index &amp; Hyperlinks…</div>
       <div class="ami" onclick="amClose();openCompressDialog()">Compress…</div>
       <div class="ami" onclick="amClose();flattenAndDownload()">Flatten Markups</div>
       <div class="am-sep"></div>
@@ -1415,6 +1418,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();setTool('magicarea')">Room Fill <span class="k">F</span></div>
       <div class="ami" onclick="amClose();setTool('dimension')">Dimension Line <span class="k">I</span></div>
       <div class="ami" onclick="amClose();setTool('count')">Count <span class="k">C</span></div>
+      <div class="ami" onclick="amClose();setTool('count');setTimeout(()=>{const el=document.getElementById('ac-text');if(el)el.focus();},60)">Auto-count (by tag / symbol)…</div>
       <div class="am-sep"></div>
       <div class="ami" onclick="amClose();setTool('text')">Text <span class="k">T</span></div>
       <div class="ami" onclick="amClose();setTool('callout')">Callout <span class="k">B</span></div>
@@ -1426,6 +1430,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="am-sep"></div>
       <div class="ami" onclick="amClose();openSymbolsPanel()">Symbols — Construction Library</div>
       <div class="ami" onclick="amClose();openToolChest()">Tool Chest (saved presets)…</div>
+      <div class="ami" onclick="amClose();openThemeDialog()">Markup Colour Theme…</div>
     </div></div>
     <div class="am"><button onclick="amToggle(this)">Window</button><div class="am-drop" id="am-window-drop">
       <div class="ami" onclick="amClose()">No documents open</div>
@@ -1460,6 +1465,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <button class="topbar-btn" onclick="openSearchDialog()" title="Search text (Ctrl+F)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       Search
+    </button>
+    <button class="topbar-btn" onclick="openSheetsPanel()" title="Sheets — index of sheet numbers/titles read from the title blocks, with clickable cross-references">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg>
+      Sheets
     </button>
     <button class="topbar-btn" onclick="toggleSplitView()" title="Split view — show a second document (or another page of this one) beside the editor">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
@@ -1768,6 +1777,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   <div class="thumb-ctx-label">Page</div>
   <div class="thumb-ctx-item" onclick="thumbCtxInsertBlank()">Insert Blank Page</div>
   <div class="thumb-ctx-item" onclick="thumbCtxInsertPdf()">Insert Pages...</div>
+  <div class="thumb-ctx-item" onclick="thumbCtxReplaceRevision()">Replace with Revision…</div>
   <div class="thumb-ctx-sep"></div>
   <div class="thumb-ctx-item" onclick="thumbCtxRotateCW()">Rotate Clockwise</div>
   <div class="thumb-ctx-item" onclick="thumbCtxRotateCCW()">Rotate Counter-Clockwise</div>
@@ -1786,6 +1796,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 <input type="file" id="pdf-input" accept=".pdf" style="display:none" onchange="handleFileSelect(event)">
 <input type="file" id="merge-input" accept=".pdf" multiple style="display:none" onchange="handleMergeFiles(event)">
 <input type="file" id="compare-input" accept=".pdf" style="display:none" onchange="handleCompareFile(event)">
+<input type="file" id="rev-input" accept=".pdf" style="display:none" onchange="handleRevisionFile(event)">
 <input type="file" id="project-input" accept=".json" style="display:none" onchange="handleProjectLoad(event)">
 <input type="file" id="preset-import-input" accept=".json" style="display:none" onchange="handlePresetImport(event)">
 
@@ -1894,7 +1905,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.17';
+const APP_VERSION = 'v3.18';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2186,7 +2197,8 @@ const toolNames = {
   snipregion:'Snip Region', tick:'Tick / Check', signature:'Signature', symbol:'Symbols',
   viewport:'Viewport (region scale)', magicarea:'Room Fill (auto area)',
   selecttext:'Select Text (copy)', sequence:'Sequence (numbered labels)',
-  table:'Legend / Table'
+  table:'Legend / Table',
+  visualsearch:'Find Symbols (auto-count)', sheetregion:'Sheet Number Box'
 };
 
 // ============================================================
@@ -2429,6 +2441,7 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreWorkbookState();
   // Crosshair guides — restore the saved on/off and start tracking the pointer
   restoreCrosshairState();
+  if (typeof loadMarkupThemePrefs === 'function') loadMarkupThemePrefs();
   // Show the app version in the top bar
   const verEl = document.getElementById('app-version');
   if (verEl) verEl.textContent = APP_VERSION;
@@ -2474,6 +2487,7 @@ function captureActiveDocState() {
   d.pageViewMode = pageViewMode;
   d.viewports = viewports;
   d.docModified = docModified;
+  d.sheetLabels = sheetLabels; d.sheetLinks = sheetLinks; d.sheetRegion = sheetRegion; d.sheetTitleRegion = sheetTitleRegion;
 }
 
 function restoreDocState(idx) {
@@ -2499,6 +2513,8 @@ function restoreDocState(idx) {
   // takeoffItems / takeoffZones / active item+zone are JOB-level (v2.8) — they
   // survive tab switches so one estimate spans every open document.
   viewports = d.viewports || [];
+  sheetLabels = d.sheetLabels || {}; sheetLinks = d.sheetLinks || []; sheetRegion = d.sheetRegion || null; sheetTitleRegion = d.sheetTitleRegion || null;
+  _sheetNavStack = [];
   docModified = !!d.docModified;
   activeDocIndex = idx;
 
@@ -2592,6 +2608,7 @@ function closeDoc(idx, force) {
     takeoffZones = [];
     takeoffHeadings = [];
     activeTakeoffZoneId = null;
+    sheetLabels = {}; sheetLinks = []; sheetRegion = null; sheetTitleRegion = null; _sheetNavStack = []; _vs = null;
     cancelInProgressDrawing();
 
     if (splitViewOn) toggleSplitView(false); // no documents left
@@ -3064,6 +3081,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     defaultCalibration = null;
     calBannerDismissed = {};
     viewports = [];
+    sheetLabels = {}; sheetLinks = []; sheetRegion = null; sheetTitleRegion = null; _sheetNavStack = [];
     // Takeoff is JOB-level (v2.8): opening ANOTHER document keeps the running
     // estimate. Only a first document (fresh session) starts a fresh job —
     // and NEVER while a standalone workbook is the master (v3.2).
@@ -3106,6 +3124,10 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
         mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings);
       }
       if (Array.isArray(restoredProject.viewports)) viewports = restoredProject.viewports;
+      if (restoredProject.sheetLabels && typeof restoredProject.sheetLabels === 'object') sheetLabels = restoredProject.sheetLabels;
+      if (Array.isArray(restoredProject.sheetLinks)) sheetLinks = restoredProject.sheetLinks;
+      if (restoredProject.sheetRegion) sheetRegion = restoredProject.sheetRegion;
+      if (restoredProject.sheetTitleRegion) sheetTitleRegion = restoredProject.sheetTitleRegion;
       // Intentionally NOT restoring toolPresets — user's local presets take priority
     }
 
@@ -3288,6 +3310,7 @@ function updateSelectHoverCursor(screenPt) {
   if (!cursor) {
     const over = getAnnotationAtPoint(screenPt.x, screenPt.y);
     if (over) cursor = 'move';
+    else if (typeof _sheetLinkAt === 'function' && _sheetLinkAt(pagePt)) cursor = 'pointer';
   }
   canvas.style.cursor = cursor;
 }
@@ -3470,6 +3493,11 @@ function redrawAnnotations() {
     }
     ctx.restore();
   }
+  // v3.18 overlays — screen only, never baked: sheet-reference hotspots,
+  // auto-count symbol matches, revision-review badges
+  if (typeof drawSheetLinkOverlay === 'function') drawSheetLinkOverlay(ctx);
+  if (typeof drawVisualSearchOverlay === 'function') drawVisualSearchOverlay(ctx);
+  if (typeof drawReviewBadges === 'function') drawReviewBadges(ctx);
   // Draw search highlights
   if (typeof searchHighlights !== 'undefined' && searchHighlights && searchHighlights.length) {
     ctx.save();
@@ -4829,7 +4857,7 @@ function drawInProgress(ctx) {
     currentTool === 'measure' || currentTool === 'calibrate' ||
     currentTool === 'dimension' || currentTool === 'highlight' ||
     currentTool === 'cutcontent' || currentTool === 'snipregion' ||
-    currentTool === 'viewport'
+    currentTool === 'viewport' || currentTool === 'visualsearch' || currentTool === 'sheetregion'
   )) {
     const start = toPage(startPoint);
     let move = toPage(currentMovePoint);
@@ -4839,7 +4867,7 @@ function drawInProgress(ctx) {
       else if (SHIFT_LINE_TOOLS.includes(currentTool)) move = applyShiftLineLock(start, move);
     }
 
-    if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent' || currentTool === 'snipregion' || currentTool === 'viewport') {
+    if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent' || currentTool === 'snipregion' || currentTool === 'viewport' || currentTool === 'visualsearch' || currentTool === 'sheetregion') {
       ctx.strokeRect(Math.min(start.x,move.x), Math.min(start.y,move.y), Math.abs(move.x-start.x), Math.abs(move.y-start.y));
     } else if (currentTool === 'ellipse') {
       const cx = Math.min(start.x,move.x) + Math.abs(move.x-start.x)/2;
@@ -5040,7 +5068,12 @@ function onCanvasMouseDown(e) {
       }
     }
 
-    // 2d) Empty click — deselect.
+    // 2d) Empty click — a sheet-reference hotspot jumps to that sheet (v3.18)…
+    if (typeof _sheetLinkAt === 'function') {
+      const lnk = _sheetLinkAt(pagePt);
+      if (lnk) { followSheetLink(lnk); return; }
+    }
+    // …otherwise deselect.
     selectedAnnotationId = null;
     resizeAnnotation = null; resizeHandleIndex = -1;
     openPropertiesPanel(); redrawAnnotations(); return;
@@ -5089,7 +5122,7 @@ function onCanvasMouseDown(e) {
   }
 
   let startSnap = screenPt;
-  if (!['pan','select','pen','highlight','cloud','count','stamp','text','eraser','tick','signature','symbol'].includes(currentTool)) {
+  if (!['pan','select','pen','highlight','cloud','count','stamp','text','eraser','tick','signature','symbol','visualsearch','sheetregion'].includes(currentTool)) {
     startSnap = snapScreenPoint(screenPt);
   }
   isDrawing = true; startPoint = startSnap; currentMovePoint = startSnap;
@@ -5428,6 +5461,16 @@ function onCanvasMouseUp(e) {
         createViewportFromRect(sp, ep);
         didDraw = true;
       }
+      break;
+    case 'visualsearch':
+      // v3.18 auto-count: the box is the symbol to look for
+      if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD)) onVisualSearchRegion(startPoint, screenEnd);
+      else showToast('Drag a box around ONE symbol to look for');
+      break;
+    case 'sheetregion':
+      // v3.18 sheet index: the box is where the sheet number/title lives
+      if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD)) onSheetRegionDrawn(startPoint, screenEnd);
+      else returnToNavTool();
       break;
     case 'snipregion':
       if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD)) {
@@ -5879,6 +5922,8 @@ async function rerenderSideBySideInPlace() {
 function onKeyDown(e) {
   // Don't capture when typing in inputs
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT' || e.target.isContentEditable) return;
+  // v3.18: Alt+← goes back after following a sheet hyperlink
+  if (e.altKey && e.key === 'ArrowLeft' && typeof sheetNavBack === 'function') { e.preventDefault(); sheetNavBack(); return; }
 
   // Spacebar = hold-to-pan. Remember the current tool, swap to pan WITHOUT
   // going through setTool (setTool wipes mid-drawing state like polylinePoints
@@ -6091,7 +6136,7 @@ function applyShiftBoxLock(start, end) {
 }
 
 // Tool categorisation for shift-lock decisions.
-const SHIFT_BOX_TOOLS  = ['rectangle','ellipse','highlight','cutcontent','snipregion'];
+const SHIFT_BOX_TOOLS  = ['rectangle','ellipse','highlight','cutcontent','snipregion','visualsearch','sheetregion'];
 const SHIFT_LINE_TOOLS = ['line','arrow','measure','calibrate','dimension'];
 
 // ============================================================
@@ -6637,6 +6682,8 @@ function setTool(tool) {
   currentTool = tool;
   polylinePoints = [];
   twoClickStart = null; isDrawing = false; startPoint = null; currentMovePoint = null;
+  // v3.18: an active colour theme decides the tool's colour (unless overridden by hand)
+  if (typeof applyThemeToTool === 'function') applyThemeToTool(tool);
   if (tool !== 'callout') { calloutMode = false; calloutAnchor = null; calloutKnees = []; }
   document.querySelectorAll('.tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tool === tool);
@@ -6858,6 +6905,17 @@ function openPropertiesPanel(forceOpen) {
     if (selectedAnnotationId) { searchPanelOpen = false; }
     else return;
   }
+  // v3.18: the Revision Review list and the Sheets index own the panel the
+  // same way — a page turn re-renders them, selecting a markup exits them
+  // (except while the review list itself is jumping to a markup).
+  if (typeof reviewPanelOpen !== 'undefined' && reviewPanelOpen) {
+    if (selectedAnnotationId && !_reviewKeepPanel) { reviewPanelOpen = false; }
+    else { renderReviewPanel(); return; }
+  }
+  if (typeof sheetsPanelOpen !== 'undefined' && sheetsPanelOpen) {
+    if (selectedAnnotationId) { sheetsPanelOpen = false; }
+    else { renderSheetsPanel(); return; }
+  }
 
   // Workbook two-way link: selecting a takeoff shape scrolls/flashes its rows
   if (typeof workbookSyncSelection === 'function') workbookSyncSelection();
@@ -6916,6 +6974,8 @@ function setPanelMode(mode) {
   panelMode = mode;
   // Clicking a panel tab is an explicit exit from document search.
   if (typeof searchPanelOpen !== 'undefined') searchPanelOpen = false;
+  if (typeof reviewPanelOpen !== 'undefined') reviewPanelOpen = false;
+  if (typeof sheetsPanelOpen !== 'undefined') sheetsPanelOpen = false;
   // Explicit user action — open the panel and clear the "keep closed" flag.
   panelUserCollapsed = false;
   document.getElementById('panel').classList.remove('collapsed');
@@ -7881,7 +7941,7 @@ function showShortcutsHelp() {
   const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['I / C','Dimension / Count'],
     ['N / W / Y','Line / Arrow / Polyline shape'],['R / O / Q / D','Rect / Ellipse / Polygon / Cloud'],['T / B / S / J','Text / Callout / Stamp / Tick'],
     ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
-    ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['Esc / right-click','Cancel draft']];
+    ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['H','Crosshair guides'],['Alt+←','Back after following a sheet link'],['Esc / right-click','Cancel draft']];
   showModal('Keyboard Shortcuts', '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
     rows.map(r => `<tr><td style="padding:4px 10px;font-family:var(--font-mono);color:var(--accent-text);white-space:nowrap">${r[0]}</td><td style="padding:4px 10px;color:var(--text-secondary)">${r[1]}</td></tr>`).join('') +
     '</table>', [{ text: 'Close', class: 'primary', onclick: 'closeCurrentModal()' }]);
@@ -10493,7 +10553,7 @@ function getToolPropertiesHTML(tool) {
           </div>`).join('')}
       </div>
     </div>`;
-  } else if (tool === 'count') {
+  } else if (tool === 'count' || tool === 'visualsearch') {
     const groupCounts = {};
     annotations.filter(a => a.type === 'count').forEach(a => { groupCounts[a.group] = (groupCounts[a.group]||0) + 1; });
     // Ensure current group is in list even if 0
@@ -10521,6 +10581,7 @@ function getToolPropertiesHTML(tool) {
       html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;background:var(--bg-tertiary);border-radius:3px;font-size:12px;border-left:3px solid ${gc};cursor:pointer" onclick="setActiveCountGroup('${g.replace(/'/g,"\\'")}')">
         <span>${g}</span><span style="font-weight:600;color:${gc}">${c}</span></div>`;
     });
+    if (typeof autoCountPanelHTML === 'function') html += autoCountPanelHTML();
     html += `</div>`;
   } else if (tool === 'stamp') {
     html += `<div style="display:flex;flex-direction:column;gap:8px">
@@ -10615,7 +10676,8 @@ function getToolPropertiesHTML(tool) {
     // Generic tool properties
     html += `<div style="display:flex;flex-direction:column;gap:8px">
       <div class="property-row"><div class="property-label"${tool === 'text' ? ' title="Colour of the letters in the text boxes you place next."' : ''}>${tool === 'text' ? 'Text Colour' : 'Colour'}:</div><input type="color" id="tool-color" class="color-picker" value="${toolProperties.color}"></div>
-      <div class="color-swatches" data-target="tool-color"></div>`;
+      <div class="color-swatches" data-target="tool-color"></div>
+      ${typeof themePanelNoteHTML === 'function' ? themePanelNoteHTML(tool) : ''}`;
 
     // v3.13: default arrow head size for the NEXT arrow / callout you draw.
     if (['arrow','callout'].includes(tool)) {
@@ -10676,6 +10738,7 @@ function attachToolListeners() {
     });
   };
   bind('tool-color', 'color');
+  { const tc0 = document.getElementById('tool-color'); if (tc0) tc0.addEventListener('change', e => { if (typeof noteThemeManualColor === 'function') noteThemeManualColor(currentTool, e.target.value); }); }
   bind('tool-arrowsize', 'arrowScale', t => Math.max(0.2, Math.min(6, (parseFloat(t.value) || 100) / 100)));
   bind('tool-thickness', 'thickness', t => parseFloat(t.value));
   bind('tool-linestyle', 'lineStyle');
@@ -10833,6 +10896,8 @@ function resetHistoryAfterPageOp() {
   history = [];
   historyIndex = -1;
   saveToHistory();
+  // v3.18: page numbers moved → the sheet index / links are re-read
+  if (typeof _sheetIndexAfterPageOp === 'function') _sheetIndexAfterPageOp();
 }
 function _applyHistorySnapshot(snap) {
   const hadCut = annotations.some(a => a.type === 'cutcontent');
@@ -11723,6 +11788,7 @@ async function generateThumbnails() {
     const label = document.createElement('div');
     label.className = 'thumb-label';
     label.textContent = (i + 1);
+    if (typeof sheetLabels !== 'undefined' && sheetLabels[i] && sheetLabels[i].num) { label.textContent = (i + 1) + ' · ' + sheetLabels[i].num; label.title = _sheetLabelText(i); }
     item.appendChild(canvas);
     item.appendChild(label);
     wrapper.appendChild(item);
@@ -13170,6 +13236,7 @@ async function saveProject() {
       takeoffHeadings: workbookFileHandle ? [] : takeoffHeadings,
       workbookManaged: workbookFileHandle ? (workbookFileName || true) : undefined,
       viewports: viewports,
+      sheetLabels: sheetLabels, sheetLinks: sheetLinks, sheetRegion: sheetRegion, sheetTitleRegion: sheetTitleRegion,
       toolPresets: toolPresets,
       savedAt: new Date().toISOString()
     };
@@ -13193,6 +13260,9 @@ async function saveProject() {
       infoDict.set(PDFLib.PDFName.of('BDMCleanSource'), PDFLib.PDFHexString.of(bytesToHex(toEmbed)));
       infoDict.set(PDFLib.PDFName.of('BDMCleanCompressed'), PDFLib.PDFHexString.fromText(compression));
     }
+
+    // v3.18: sheet cross-references become real PDF links (work in any viewer)
+    try { if (typeof _writeSheetLinksToPdf === 'function') _writeSheetLinksToPdf(outDoc, pages); } catch (e) { console.warn('sheet links not written', e); }
 
     const savedBytes = await outDoc.save();
     await writeSavedBytes(savedBytes);
@@ -16105,6 +16175,1190 @@ function showModal(title, bodyHTML, buttons) {
 }
 function closeCurrentModal() {
   if (currentModal) { currentModal.remove(); currentModal = null; }
+}
+
+// ============================================================
+// MARKUP COLOUR THEMES (v3.18)
+// A theme is a small palette keyed by markup CATEGORY (clouds, shapes,
+// arrows/callouts, text, highlighter, pen, lengths, areas). While a theme is
+// active, arming a tool sets its colour from the palette so a whole sheet of
+// markups reads as one presentable set instead of a hodge-podge. Manual
+// colour choice is untouched: pick a colour in the tool panel and it sticks
+// for that tool (per session) until you press "reset"; "Manual" switches the
+// whole feature off and restores the classic single sticky colour.
+// Takeoff-linked shapes keep their ITEM colours, count markers keep their
+// GROUP colours and stamps/symbols/ticks are never touched — those colours
+// carry meaning.
+// ============================================================
+const THEME_CATS = [
+  { key: 'cloud',     label: 'Revision clouds',                  tools: ['cloud'] },
+  { key: 'shape',     label: 'Shapes (box / circle / line / polygon)', tools: ['rectangle','ellipse','polygon','polyshape','line'] },
+  { key: 'arrow',     label: 'Arrows & callouts',                tools: ['arrow','callout'] },
+  { key: 'text',      label: 'Text',                             tools: ['text'] },
+  { key: 'highlight', label: 'Highlighter',                      tools: ['highlight'] },
+  { key: 'pen',       label: 'Pen (freehand)',                   tools: ['pen'] },
+  { key: 'measure',   label: 'Lengths & dimensions',             tools: ['measure','polyline','dimension'] },
+  { key: 'area',      label: 'Areas & room fill',                tools: ['area','magicarea'] }
+];
+const THEME_ANN_CAT = {
+  cloud: 'cloud', rectangle: 'shape', ellipse: 'shape', polygon: 'shape', polyshape: 'shape', line: 'shape',
+  arrow: 'arrow', callout: 'arrow', text: 'text', highlight: 'highlight', pen: 'pen',
+  measure: 'measure', polyline: 'measure', dimension: 'measure', area: 'area'
+};
+const MARKUP_THEMES = [
+  { id: 'review',   name: 'Classic Review',      desc: 'Red clouds, blue notes & arrows, yellow highlights, green measurements — the Bluebeam look.',
+    colors: { cloud: '#E5432E', shape: '#E5432E', arrow: '#2E86DE', text: '#1F5FBF', highlight: '#FFD500', pen: '#E5432E', measure: '#27AE60', area: '#14B8A6' } },
+  { id: 'bdm',      name: 'BDM Brand',           desc: 'Navy notes and arrows, red clouds, gold highlights and areas — matches BDM house style.',
+    colors: { cloud: '#E5432E', shape: '#0E1830', arrow: '#0E1830', text: '#0E1830', highlight: '#E9CF6B', pen: '#26365A', measure: '#26365A', area: '#B8962E' } },
+  { id: 'muted',    name: 'Muted Presentation',  desc: 'Soft slate, plum and teal — low-glare colours for client-facing sheets.',
+    colors: { cloud: '#B91C1C', shape: '#475569', arrow: '#334155', text: '#1E293B', highlight: '#FDE68A', pen: '#92400E', measure: '#0F766E', area: '#7C3AED' } },
+  { id: 'contrast', name: 'High Contrast',       desc: 'Magenta, cyan and lime — stands out on busy or already-coloured drawings.',
+    colors: { cloud: '#FF00C8', shape: '#FF00C8', arrow: '#00A3FF', text: '#111111', highlight: '#C6FF00', pen: '#FF00C8', measure: '#00A3FF', area: '#FF6A00' } },
+  { id: 'mono',     name: 'Mono Print',          desc: 'Blacks and greys — for sheets that will be printed or photocopied in black and white.',
+    colors: { cloud: '#111111', shape: '#333333', arrow: '#111111', text: '#000000', highlight: '#CFCFCF', pen: '#333333', measure: '#555555', area: '#7A7A7A' } }
+];
+const THEME_PREF_KEY = 'bdm-markup-theme';
+let markupThemeId = 'off';          // 'off' | theme id | 'custom'
+let markupThemeCustom = { id: 'custom', name: 'Custom', desc: 'Your own palette (edited from a preset).', colors: {} };
+let _themeToolOverride = {};        // tool → colour picked by hand while a theme is on (session only)
+let _themeAskDirty = false;         // dialog: show the "recolour existing?" strip
+
+function loadMarkupThemePrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem(THEME_PREF_KEY) || '{}');
+    if (p.active) markupThemeId = p.active;
+    if (p.custom && p.custom.colors) markupThemeCustom.colors = Object.assign({}, p.custom.colors);
+    if (markupThemeId === 'custom' && !Object.keys(markupThemeCustom.colors).length) markupThemeId = 'off';
+    if (markupThemeId !== 'off' && markupThemeId !== 'custom' && !MARKUP_THEMES.some(t => t.id === markupThemeId)) markupThemeId = 'off';
+  } catch (e) {}
+}
+function saveMarkupThemePrefs() {
+  try { localStorage.setItem(THEME_PREF_KEY, JSON.stringify({ active: markupThemeId, custom: { colors: markupThemeCustom.colors } })); } catch (e) {}
+}
+function activeMarkupTheme() {
+  if (markupThemeId === 'off') return null;
+  if (markupThemeId === 'custom') return markupThemeCustom;
+  return MARKUP_THEMES.find(t => t.id === markupThemeId) || null;
+}
+function themeCatForTool(tool) { const c = THEME_CATS.find(c => c.tools.includes(tool)); return c ? c.key : null; }
+function themeCatForAnn(a) { return a && THEME_ANN_CAT[a.type] || null; }
+function themeColorForTool(tool) {
+  const th = activeMarkupTheme(); if (!th) return null;
+  const cat = themeCatForTool(tool); if (!cat) return null;
+  return th.colors[cat] || null;
+}
+// Called from setTool(): the theme decides the tool's colour unless the user
+// has overridden this tool by hand during the session.
+function applyThemeToTool(tool) {
+  const th = activeMarkupTheme(); if (!th) return;
+  const cat = themeCatForTool(tool); if (!cat) return;
+  const col = _themeToolOverride[tool] || th.colors[cat];
+  if (!col) return;
+  toolProperties.color = col;
+  if ((cat === 'area' || cat === 'shape') && toolProperties.fillColor && toolProperties.fillColor !== 'none') toolProperties.fillColor = col;
+}
+function noteThemeManualColor(tool, color) {
+  if (markupThemeId === 'off') return;
+  if (themeCatForTool(tool)) _themeToolOverride[tool] = color;
+}
+function clearThemeOverride(tool) {
+  delete _themeToolOverride[tool || currentTool];
+  applyThemeToTool(currentTool);
+  openPropertiesPanel();
+}
+function _themeSwatchesHTML(colors, size) {
+  const s = size || 12;
+  return THEME_CATS.map(c => `<span title="${c.label}" style="display:inline-block;width:${s}px;height:${s}px;border-radius:3px;background:${colors[c.key] || '#888'};border:1px solid rgba(0,0,0,.25);margin-right:2px"></span>`).join('');
+}
+// One-line status shown under the colour swatches in the tool panel
+function themePanelNoteHTML(tool) {
+  const th = activeMarkupTheme();
+  const cat = themeCatForTool(tool);
+  if (!cat) return '';
+  if (!th) {
+    return `<div style="font-size:10px;color:var(--text-muted);margin-top:-2px">No colour theme (manual colours) · <a href="#" onclick="event.preventDefault();openThemeDialog()" style="color:var(--accent)">choose a theme…</a></div>`;
+  }
+  const ov = _themeToolOverride[tool];
+  return `<div style="font-size:10px;color:var(--text-muted);margin-top:-2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${th.colors[cat]};border:1px solid rgba(0,0,0,.25)"></span>
+    <span>Theme <b style="color:var(--text-secondary)">${th.name}</b>${ov ? ' — overridden by hand' : ''}</span>
+    ${ov ? `<a href="#" onclick="event.preventDefault();clearThemeOverride()" style="color:var(--accent)">reset to theme</a>` : ''}
+    <a href="#" onclick="event.preventDefault();openThemeDialog()" style="color:var(--accent)">change…</a></div>`;
+}
+function setMarkupTheme(id, quiet) {
+  markupThemeId = id;
+  _themeToolOverride = {};
+  saveMarkupThemePrefs();
+  applyThemeToTool(currentTool);
+  _themeAskDirty = (id !== 'off');
+  if (!quiet) {
+    const th = activeMarkupTheme();
+    showToast(th ? 'Colour theme: ' + th.name + ' — new markups use it' : 'Colour theme off — manual colours');
+  }
+  if (typeof openPropertiesPanel === 'function') openPropertiesPanel();
+  _rerenderThemeDialog();
+}
+function setCustomThemeColor(cat, color) {
+  const th = activeMarkupTheme();
+  // Editing a preset forks it into Custom so the preset itself stays intact
+  if (markupThemeId !== 'custom') {
+    markupThemeCustom.colors = Object.assign({}, th ? th.colors : (MARKUP_THEMES[0].colors));
+    markupThemeId = 'custom';
+  }
+  markupThemeCustom.colors[cat] = color;
+  _themeToolOverride = {};
+  saveMarkupThemePrefs();
+  applyThemeToTool(currentTool);
+  _themeAskDirty = true;
+  openPropertiesPanel();
+  _rerenderThemeDialog();
+}
+function _themedAnnCount(scope) {
+  return annotations.filter(a => (scope === 'all' || a.page === currentPage) && themeCatForAnn(a) && !annTakeoffIds(a).length).length;
+}
+// Recolour markups already on the drawing to match the active theme.
+// scope: 'page' | 'all'. Takeoff-linked shapes are left alone (item colours).
+function applyThemeToExisting(scope) {
+  const th = activeMarkupTheme();
+  if (!th) { showToast('Pick a theme first'); return; }
+  let n = 0;
+  annotations.forEach(a => {
+    if (scope !== 'all' && a.page !== currentPage) return;
+    const cat = themeCatForAnn(a); if (!cat) return;
+    if (annTakeoffIds(a).length) return;               // estimate colours carry meaning
+    const col = th.colors[cat]; if (!col) return;
+    a.color = col;
+    if (a.type === 'text' || a.type === 'callout') a.textColor = col;
+    if (a.type === 'text' && a.boxStroke) a.boxStroke = col;
+    if (a.type === 'area') a.fillColor = col;
+    else if (cat === 'shape' && a.fillColor && a.fillColor !== 'none') a.fillColor = col;
+    n++;
+  });
+  _themeAskDirty = false;
+  if (n) { saveToHistory(); redrawAnnotations(); openPropertiesPanel(); }
+  showToast(n ? `Recoloured ${n} markup${n === 1 ? '' : 's'} to "${th.name}"` + (scope === 'all' ? ' on all pages' : ' on this page') : 'Nothing to recolour' + (scope === 'all' ? '' : ' on this page'));
+  _rerenderThemeDialog();
+}
+function _themeDialogBodyHTML() {
+  const cards = [{ id: 'off', name: 'Manual (no theme)', desc: 'Classic behaviour — one sticky colour you pick yourself for every tool.', colors: null }]
+    .concat(MARKUP_THEMES)
+    .concat(Object.keys(markupThemeCustom.colors).length ? [markupThemeCustom] : []);
+  const th = activeMarkupTheme();
+  const nPage = pdfDoc ? _themedAnnCount('page') : 0, nAll = pdfDoc ? _themedAnnCount('all') : 0;
+  let html = `<div style="display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto;padding-right:2px">
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.45">Pick a theme and every tool you arm from now on takes its colour from it, so a sheet of markups looks like one deliberate set. You can still choose any colour by hand in the tool panel — it sticks for that tool until you reset it.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">`;
+  cards.forEach(c => {
+    const on = markupThemeId === c.id;
+    html += `<div onclick="setMarkupTheme('${c.id}')" style="cursor:pointer;border:2px solid ${on ? 'var(--accent)' : 'var(--border-color)'};border-radius:6px;padding:8px;background:${on ? 'var(--bg-hover)' : 'var(--bg-tertiary)'}">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600">${on ? '●' : '○'} ${c.name}</div>
+      <div style="margin:5px 0 4px">${c.colors ? _themeSwatchesHTML(c.colors, 14) : '<span style="font-size:10px;color:var(--text-muted)">Any colour, chosen per tool</span>'}</div>
+      <div style="font-size:10px;color:var(--text-muted);line-height:1.35">${c.desc}</div></div>`;
+  });
+  html += `</div>`;
+  if (th) {
+    html += `<div style="border-top:1px solid var(--border-color);padding-top:8px">
+      <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px">Colours in "${th.name}" <span style="font-weight:400;color:var(--text-muted)">— change any to make it your own (saved as Custom)</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 12px">
+      ${THEME_CATS.map(c => `<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary)"><input type="color" value="${th.colors[c.key] || '#888888'}" onchange="setCustomThemeColor('${c.key}', this.value)" style="width:26px;height:20px;padding:0;border:none;background:none;cursor:pointer">${c.label}</label>`).join('')}
+      </div></div>`;
+    if (pdfDoc) {
+      html += `<div style="border:1px solid ${_themeAskDirty ? 'var(--accent)' : 'var(--border-color)'};border-radius:6px;padding:8px;background:var(--bg-tertiary)">
+        <div style="font-size:11px;font-weight:600;color:var(--text-secondary)">${_themeAskDirty ? 'Recolour the markups already on the drawing to match?' : 'Recolour existing markups'}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin:3px 0 6px;line-height:1.35">Shapes linked to estimate items keep their item colours; count markers, stamps, symbols and ticks are left alone.</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="modal-btn primary" style="font-size:11px;padding:5px 10px" onclick="applyThemeToExisting('page')" ${nPage ? '' : 'disabled'}>This page (${nPage})</button>
+          <button class="modal-btn primary" style="font-size:11px;padding:5px 10px" onclick="applyThemeToExisting('all')" ${nAll ? '' : 'disabled'}>All pages (${nAll})</button>
+          ${_themeAskDirty ? `<button class="modal-btn secondary" style="font-size:11px;padding:5px 10px" onclick="_themeAskDirty=false;_rerenderThemeDialog()">Leave them as they are</button>` : ''}
+        </div></div>`;
+    }
+  }
+  html += `</div>`;
+  return html;
+}
+function _rerenderThemeDialog() {
+  const el = document.getElementById('theme-dialog-body');
+  if (el) el.innerHTML = _themeDialogBodyHTML();
+}
+function openThemeDialog() {
+  _themeAskDirty = false;
+  showModal('Markup Colour Theme', `<div id="theme-dialog-body">${_themeDialogBodyHTML()}</div>`, [
+    { text: 'Done', class: 'primary', onclick: 'closeCurrentModal()' }
+  ]);
+}
+
+// ============================================================
+// REVISION CARRY-OVER (v3.18) — "slip-sheeting"
+// A revised drawing arrives: swap the sheet UNDER the markups instead of
+// re-measuring. The page is replaced in place (pdf-lib copyPages + remove),
+// every markup / measurement / takeoff link on it stays exactly where it was
+// (same ids, so estimate items don't notice), and — the useful part — each
+// markup that sits over an area where the drawing itself changed is flagged
+// for review, with a sidebar list to walk through them (Keep / Delete).
+// Change detection re-uses the Compare Drawings pixel-diff idea: both pages
+// are rendered at scale 1, split into 16px blocks, and a block counts as
+// changed when its mean colour delta beats the sensitivity threshold. A
+// markup is flagged when a changed block lies close to one of ITS SEGMENTS
+// (not just inside its bounding box — a long diagonal measure would otherwise
+// be flagged by anything anywhere in the box).
+// ============================================================
+let _revFile = null, _revBytes = null, _revDoc = null;   // the revised PDF picked in the dialog
+let _revTargetPage = 0;
+let reviewPanelOpen = false;   // sidebar "Revision Review" list owns the panel
+let _reviewKeepPanel = false;  // true briefly while the list jumps to a markup
+
+function openRevisionDialog(pageIdx) {
+  if (!pdfDoc) { alert('Open a PDF first'); return; }
+  _revTargetPage = (pageIdx == null) ? currentPage : pageIdx;
+  _revFile = null; _revBytes = null; _revDoc = null;
+  showModal('Replace Page with Revision', `<div id="rev-dialog-body">${_revDialogBodyHTML()}</div>`, [
+    { text: 'Cancel', class: 'secondary', onclick: 'closeCurrentModal()' },
+    { text: 'Replace', class: 'primary', onclick: 'executeRevisionReplace()' }
+  ]);
+}
+function _revDialogBodyHTML() {
+  const n = pdfDoc ? pdfDoc.numPages : 0;
+  const revN = _revDoc ? _revDoc.numPages : 0;
+  const sameCount = _revDoc && revN === n;
+  const onPage = annotations.filter(a => a.page === _revTargetPage).length;
+  const srcOpts = _revDoc ? Array.from({ length: revN }, (_, i) => `<option value="${i}" ${i === Math.min(_revTargetPage, revN - 1) ? 'selected' : ''}>Page ${i + 1}</option>`).join('') : '<option>—</option>';
+  return `<div style="display:flex;flex-direction:column;gap:10px">
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.45">Swap the drawing underneath your markups for the revised sheet. Markups, measurements and estimate links stay put; anything sitting where the drawing changed gets flagged so you can check it.</div>
+    <button onclick="document.getElementById('rev-input').click()" style="width:100%;padding:10px;background:var(--accent);color:white;border-radius:4px;font-weight:600">${_revFile ? 'Change revised PDF…' : 'Select revised PDF…'}</button>
+    <div style="font-size:11px;color:var(--text-muted);text-align:center">${_revFile ? escapeHtml(_revFile.name) + ' — ' + revN + ' page' + (revN === 1 ? '' : 's') : 'No file selected'}</div>
+    <div style="border:1px solid var(--border-color);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)">
+        <input type="radio" name="rev-mode" value="one" checked> Replace <b>page ${_revTargetPage + 1}</b> (${onPage} markup${onPage === 1 ? '' : 's'}) with
+        <select id="rev-src-page" class="select-input" style="width:auto;padding:2px 6px" ${_revDoc ? '' : 'disabled'}>${srcOpts}</select> of the revision</label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:${sameCount ? 'var(--text-secondary)' : 'var(--text-muted)'}">
+        <input type="radio" name="rev-mode" value="all" ${sameCount ? '' : 'disabled'}> Replace <b>every page</b>, page for page${_revDoc && !sameCount ? ` <span style="font-size:10px">(needs the same page count — this has ${n}, the revision ${revN})</span>` : ''}</label>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="rev-carry" checked> Carry markups, measurements and estimate links across</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="rev-flag" checked> Flag markups where the drawing changed underneath them</label>
+    <div style="padding-left:22px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)"><span>Sensitivity</span><span>Fussy&nbsp;←&nbsp;→&nbsp;Relaxed</span></div>
+      <input type="range" id="rev-threshold" class="slider" min="10" max="80" value="30"></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)"><input type="checkbox" id="rev-clouds"> Also cloud the changed areas (revision clouds)</label>
+    <div style="font-size:10px;color:var(--text-muted);line-height:1.4">If the revised sheet is a different size, markups are scaled to fit and the page's calibration is adjusted with them.</div>
+  </div>`;
+}
+function _rerenderRevDialog() { const el = document.getElementById('rev-dialog-body'); if (el) el.innerHTML = _revDialogBodyHTML(); }
+async function handleRevisionFile(event) {
+  const f = event.target.files[0]; event.target.value = '';
+  if (!f) return;
+  try {
+    let buf = new Uint8Array(await f.arrayBuffer()).slice();
+    try { buf = await datumMaybeDecrypt(buf); } catch (e) { if (e && e.datumCancelled) return; throw e; }
+    _revBytes = buf;
+    _revDoc = await datumGetDocument({ data: buf.slice() }).promise;
+    _revFile = f;
+    _rerenderRevDialog();
+  } catch (e) { console.error(e); alert('Could not read that PDF: ' + e.message); }
+}
+// Segments that stand for a markup when deciding whether a change touched it.
+function _revAnnSegments(a) {
+  const pts = (a.points || []).filter(p => p && isFinite(p.x) && isFinite(p.y));
+  const segs = [];
+  const boxSegs = (x, y, w, h) => { segs.push([{x,y},{x:x+w,y}], [{x:x+w,y},{x:x+w,y:y+h}], [{x:x+w,y:y+h},{x,y:y+h}], [{x,y:y+h},{x,y}]); };
+  switch (a.type) {
+    case 'rectangle': case 'highlight': case 'cutcontent': case 'image': case 'signature': case 'symbol': case 'ellipse':
+      if (pts.length >= 2) { const x = Math.min(pts[0].x, pts[1].x), y = Math.min(pts[0].y, pts[1].y); boxSegs(x, y, Math.abs(pts[1].x - pts[0].x), Math.abs(pts[1].y - pts[0].y)); }
+      break;
+    case 'text': {
+      const fs = a.fontSize || 14, lines = String(a.text || '').split('\n');
+      const w = a.boxW || Math.max(20, Math.max(...lines.map(l => l.length)) * fs * 0.55), h = a.boxH || lines.length * (fs + 2);
+      if (pts[0]) boxSegs(pts[0].x, pts[0].y, w, h);
+      break; }
+    case 'count': if (pts[0]) boxSegs(pts[0].x - 10, pts[0].y - 10, 20, 20); break;
+    case 'stamp': if (pts[0]) { const b = (typeof stampBoxOf === 'function') ? stampBoxOf(a) : { w: 100, h: 30 }; boxSegs(pts[0].x - b.w / 2, pts[0].y - b.h / 2, b.w, b.h); } break;
+    case 'tick': if (pts[0]) { const s = a.size || 24; boxSegs(pts[0].x - s / 2, pts[0].y - s / 2, s, s); } break;
+    case 'legend': case 'table': if (pts[0]) boxSegs(pts[0].x, pts[0].y, a._legendW || 160, a._legendH || 80); break;
+    case 'callout': {
+      for (let i = 0; i < pts.length - 1; i++) segs.push([pts[i], pts[i + 1]]);
+      const tp = a.textPos || pts[pts.length - 1];
+      if (tp) { const fs = a.fontSize || 14; boxSegs(tp.x, tp.y, a.boxW || 90, a.boxH || fs + 8); }
+      break; }
+    default: {
+      // lines, arrows, measures, dimensions, polylines, pens, areas, polygons, clouds
+      const closed = ['area', 'polygon', 'cloud', 'polyshape'].includes(a.type) || (a.type === 'polyline' && a.isShape);
+      for (let i = 0; i < pts.length - 1; i++) segs.push([pts[i], pts[i + 1]]);
+      if (closed && pts.length > 2) segs.push([pts[pts.length - 1], pts[0]]);
+    }
+  }
+  return segs;
+}
+function _revPtSegDist(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  let t = l2 ? ((px - a.x) * dx + (py - a.y) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+}
+// Render both sheets at the same page-space scale and list changed blocks
+// (page units). Returns { blocks:[{x,y,w,h}], regions:[...clustered], w, h }.
+async function _revDiff(oldPage, newPage, threshold) {
+  const vp1 = oldPage.getViewport({ scale: 1 });
+  const s = Math.min(1, 2400 / Math.max(vp1.width, vp1.height));
+  const v1 = oldPage.getViewport({ scale: s });
+  const c1 = document.createElement('canvas'); c1.width = Math.round(v1.width); c1.height = Math.round(v1.height);
+  await oldPage.render({ canvasContext: c1.getContext('2d'), viewport: v1, annotationMode: 1 }).promise;
+  const nv = newPage.getViewport({ scale: 1 });
+  const v2 = newPage.getViewport({ scale: c1.width / nv.width });
+  const c2 = document.createElement('canvas'); c2.width = c1.width; c2.height = c1.height;
+  await newPage.render({ canvasContext: c2.getContext('2d'), viewport: v2, annotationMode: 1 }).promise;
+  const d1 = c1.getContext('2d').getImageData(0, 0, c1.width, c1.height).data;
+  const d2 = c2.getContext('2d').getImageData(0, 0, c2.width, c2.height).data;
+  const B = 16, blocksPx = [], W = c1.width, H = c1.height;
+  for (let by = 0; by < H; by += B) for (let bx = 0; bx < W; bx += B) {
+    let diff = 0, count = 0;
+    const yE = Math.min(by + B, H), xE = Math.min(bx + B, W);
+    for (let y = by; y < yE; y++) { let idx = (y * W + bx) * 4; for (let x = bx; x < xE; x++, idx += 4) {
+      diff += (Math.abs(d1[idx] - d2[idx]) + Math.abs(d1[idx + 1] - d2[idx + 1]) + Math.abs(d1[idx + 2] - d2[idx + 2])) / 3; count++; } }
+    if (count && diff / count > threshold) blocksPx.push({ x: bx, y: by });
+  }
+  const regionsPx = clusterBlocks(blocksPx, B * 2);
+  const inv = 1 / s;
+  return {
+    blocks: blocksPx.map(b => ({ x: b.x * inv, y: b.y * inv, w: B * inv, h: B * inv })),
+    regions: regionsPx.map(r => ({ x: r.x * inv, y: r.y * inv, w: r.w * inv, h: r.h * inv })),
+    scale: s
+  };
+}
+function _revScaleAnn(a, sx, sy) {
+  const sc = (p) => { if (p && isFinite(p.x)) { p.x *= sx; p.y *= sy; } };
+  (a.points || []).forEach(sc); sc(a.textPos); (a.knees || []).forEach(sc);
+  if (a.labelOffset) { a.labelOffset.dx = (a.labelOffset.dx || 0) * sx; a.labelOffset.dy = (a.labelOffset.dy || 0) * sy; }
+  if (a.boxW) a.boxW *= sx; if (a.boxH) a.boxH *= sy;
+  if (a.legendScale) a.legendScale *= sx;
+  if (a.stampScale) a.stampScale *= sx;
+  delete a._annBox; delete a._legendW; delete a._legendH; delete a._stampW; delete a._stampH; delete a._labelRect; delete a._perimRect;
+}
+async function executeRevisionReplace() {
+  if (!_revDoc || !_revBytes) { alert('Select the revised PDF first'); return; }
+  const mode = (document.querySelector('input[name="rev-mode"]:checked') || {}).value || 'one';
+  const carry = !!(document.getElementById('rev-carry') || {}).checked;
+  const flag = !!(document.getElementById('rev-flag') || {}).checked;
+  const clouds = !!(document.getElementById('rev-clouds') || {}).checked;
+  const threshold = parseInt((document.getElementById('rev-threshold') || {}).value || 30);
+  const srcSel = parseInt((document.getElementById('rev-src-page') || {}).value || 0) || 0;
+  const pairs = mode === 'all' ? Array.from({ length: pdfDoc.numPages }, (_, i) => [i, i]) : [[_revTargetPage, Math.min(srcSel, _revDoc.numPages - 1)]];
+  const revName = _revFile ? _revFile.name : 'revision';
+  closeCurrentModal();
+  showToast('Replacing ' + pairs.length + ' page' + (pairs.length === 1 ? '' : 's') + '…');
+  try {
+    const base = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    const revLib = await PDFLib.PDFDocument.load(_revBytes.slice());
+    let flagged = 0, cloudsAdded = 0, carried = 0, resized = 0;
+    const stamp = new Date().toISOString();
+    for (let k = 0; k < pairs.length; k++) {
+      const [tgt, src] = pairs[k];
+      if (pairs.length > 3) showToast(`Replacing page ${tgt + 1} of ${pdfDoc.numPages}…`);
+      const oldSize = base.getPage(tgt).getSize();
+      let diff = null;
+      if (flag || clouds) {
+        try {
+          const op = await pdfDoc.getPage(tgt + 1), np = await _revDoc.getPage(src + 1);
+          diff = await _revDiff(op, np, threshold);
+        } catch (e) { console.warn('revision diff failed p' + (tgt + 1), e); }
+      }
+      const [copied] = await base.copyPages(revLib, [src]);
+      base.insertPage(tgt, copied);
+      base.removePage(tgt + 1);
+      const newSize = copied.getSize();
+      const onPage = annotations.filter(a => a.page === tgt);
+      if (!carry) {
+        annotations = annotations.filter(a => a.page !== tgt);
+        measurements = measurements.filter(m => m.page !== tgt);
+        viewports = viewports.filter(v => v.page !== tgt);
+      } else {
+        carried += onPage.length;
+        const sx = newSize.width / oldSize.width, sy = newSize.height / oldSize.height;
+        if (Math.abs(sx - 1) > 0.002 || Math.abs(sy - 1) > 0.002) {
+          resized++;
+          onPage.forEach(a => _revScaleAnn(a, sx, sy));
+          viewports.forEach(v => { if (v.page === tgt && v.rect) { v.rect.x *= sx; v.rect.y *= sy; v.rect.w *= sx; v.rect.h *= sy; } });
+          if (pageCalibrations[tgt] && pageCalibrations[tgt].pixelsPerMm) pageCalibrations[tgt] = Object.assign({}, pageCalibrations[tgt], { pixelsPerMm: pageCalibrations[tgt].pixelsPerMm * sx });
+        }
+        if (flag && diff && diff.blocks.length) {
+          const reach = 8 + (diff.blocks[0].w || 16) * 0.75;
+          onPage.forEach(a => {
+            const segs = _revAnnSegments(a);
+            if (!segs.length) return;
+            const hit = diff.blocks.some(b => {
+              const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+              return segs.some(([p, q]) => _revPtSegDist(cx, cy, p, q) <= reach);
+            });
+            if (hit) { a.needsReview = { rev: revName, at: stamp }; flagged++; }
+          });
+        }
+      }
+      if (clouds && diff) {
+        diff.regions.forEach(r => {
+          const m = 10;
+          annotations.push({ id: generateId(), type: 'cloud', page: tgt,
+            points: [{ x: r.x - m, y: r.y - m }, { x: r.x + r.w + m, y: r.y - m }, { x: r.x + r.w + m, y: r.y + r.h + m }, { x: r.x - m, y: r.y + r.h + m }],
+            color: '#f87171', thickness: 2, opacity: 80, subject: 'Revision Change', layer: 'Revision' });
+          cloudsAdded++;
+        });
+      }
+    }
+    await rebuildPdf(base);
+    resetHistoryAfterPageOp();
+    if (typeof _sheetIndexRescanPages === 'function') _sheetIndexRescanPages(pairs.map(p => p[0]));
+    if (typeof autosaveSweepSoon === 'function') autosaveSweepSoon();
+    const lines = [];
+    lines.push(`<b>${pairs.length}</b> page${pairs.length === 1 ? '' : 's'} replaced from <b>${escapeHtml(revName)}</b>.`);
+    if (carry) lines.push(`<b>${carried}</b> markup${carried === 1 ? '' : 's'} carried across` + (resized ? ` (sheet size differed on ${resized} page${resized === 1 ? '' : 's'} — markups scaled to fit)` : '') + '.');
+    else lines.push('Markups on the replaced page' + (pairs.length === 1 ? '' : 's') + ' were removed, as asked.');
+    if (flag && carry) lines.push(flagged ? `<b style="color:#d97706">${flagged}</b> sit where the drawing changed underneath them — please review.` : 'None of them sit on a changed area of the drawing.');
+    if (clouds) lines.push(`${cloudsAdded} revision cloud${cloudsAdded === 1 ? '' : 's'} added on the "Revision" layer.`);
+    const btns = [{ text: 'Close', class: 'secondary', onclick: 'closeCurrentModal()' }];
+    if (flagged) btns.push({ text: 'Review flagged (' + flagged + ')', class: 'primary', onclick: 'closeCurrentModal();openReviewPanel()' });
+    showModal('Revision carried over', `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6">${lines.map(l => '<div>' + l + '</div>').join('')}</div>`, btns);
+  } catch (err) {
+    console.error('Revision replace error:', err);
+    alert('Error replacing page: ' + err.message);
+  }
+}
+function thumbCtxReplaceRevision() { hideThumbContextMenu(); openRevisionDialog(thumbCtxPage); }
+
+// ---- Review list (sidebar) --------------------------------------
+function _reviewItems() { return annotations.filter(a => a.needsReview); }
+function openReviewPanel() {
+  reviewPanelOpen = true;
+  if (typeof searchPanelOpen !== 'undefined') searchPanelOpen = false;
+  panelUserCollapsed = false;
+  document.getElementById('panel').classList.remove('collapsed');
+  renderReviewPanel();
+}
+function closeReviewPanel() { reviewPanelOpen = false; openPropertiesPanel(); }
+function renderReviewPanel() {
+  const panelTitle = document.getElementById('panel-title');
+  const content = document.getElementById('panel-content');
+  if (!panelTitle || !content) return;
+  const items = _reviewItems();
+  panelTitle.textContent = 'Revision Review';
+  let html = `<div style="display:flex;flex-direction:column;gap:8px;padding:4px">
+    <div style="font-size:11px;color:var(--text-secondary);line-height:1.4">Markups sitting where the drawing changed under them. Check each one: <b>Keep</b> clears the flag, <b>Delete</b> removes the markup.</div>
+    <div style="display:flex;gap:4px;align-items:center">
+      <span style="flex:1;font-size:12px;font-weight:600">${items.length} to review</span>
+      <button class="modal-btn secondary" style="padding:4px 8px;font-size:11px" onclick="reviewKeepAll()" ${items.length ? '' : 'disabled'}>Keep all</button>
+      <button class="modal-btn secondary" style="padding:4px 8px;font-size:11px" onclick="closeReviewPanel()" title="Close">✕</button>
+    </div>
+    <div style="overflow:auto;border:1px solid var(--border-color);border-radius:4px;max-height:calc(100vh - 260px)">`;
+  if (!items.length) html += `<div style="padding:10px;color:var(--text-muted);font-size:12px">Nothing left to review.</div>`;
+  items.forEach(a => {
+    const on = a.id === selectedAnnotationId;
+    html += `<div style="padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:12px;background:${on ? 'var(--bg-hover)' : 'transparent'}">
+      <div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="reviewJump('${a.id}')">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${a.color || '#E5432E'}"></span>
+        <span style="color:var(--accent);font-weight:600">p${a.page + 1}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(_annTypeLabel(a))} — ${escapeHtml(_annDescription(a))}</span></div>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <button class="modal-btn secondary" style="flex:1;padding:3px;font-size:10px" onclick="reviewJump('${a.id}')">Go</button>
+        <button class="modal-btn primary" style="flex:1;padding:3px;font-size:10px" onclick="reviewKeep('${a.id}')">✓ Keep</button>
+        <button class="modal-btn secondary" style="flex:1;padding:3px;font-size:10px;color:var(--danger)" onclick="reviewDelete('${a.id}')">Delete</button>
+      </div></div>`;
+  });
+  html += `</div></div>`;
+  content.innerHTML = html;
+}
+function reviewJump(id) {
+  const a = annotations.find(x => x.id === id); if (!a) return;
+  _reviewKeepPanel = true;
+  if (a.page !== currentPage) goToPage(a.page);
+  selectedAnnotationId = a.id;
+  const b = _annBounds(a);
+  const wrapper = document.getElementById('canvas-wrapper');
+  if (b && wrapper) {
+    wrapper.scrollLeft = Math.max(0, (b.x + b.w / 2) * currentScale - wrapper.clientWidth / 2);
+    wrapper.scrollTop = Math.max(0, (b.y + b.h / 2) * currentScale - wrapper.clientHeight / 2);
+  }
+  redrawAnnotations();
+  renderReviewPanel();
+  setTimeout(() => { _reviewKeepPanel = false; }, 600);
+}
+function reviewKeep(id) {
+  const a = annotations.find(x => x.id === id); if (!a) return;
+  delete a.needsReview;
+  saveToHistory(); redrawAnnotations(); renderReviewPanel();
+}
+function reviewKeepAll() {
+  let n = 0; annotations.forEach(a => { if (a.needsReview) { delete a.needsReview; n++; } });
+  if (n) { saveToHistory(); redrawAnnotations(); }
+  renderReviewPanel();
+}
+function reviewDelete(id) {
+  const a = annotations.find(x => x.id === id); if (!a) return;
+  selectedAnnotationId = a.id;
+  _reviewKeepPanel = true;
+  deleteSelectedAnnotation();
+  _reviewKeepPanel = false;
+  renderReviewPanel();
+}
+// Amber halo + "!" badge on flagged markups — SCREEN ONLY (called from
+// redrawAnnotations, never from drawAnnotation, so it can't bake into saves).
+function drawReviewBadges(ctx) {
+  const items = annotations.filter(a => a.needsReview && a.page === currentPage);
+  if (!items.length) return;
+  ctx.save();
+  ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
+  const lw = 1.5 / currentScale, pad = 6 / currentScale, r = 8 / currentScale;
+  items.forEach(a => {
+    let b = _annBounds(a);
+    if (!b) return;
+    if (a.type === 'count' && a.points[0]) b = { x: a.points[0].x - 10, y: a.points[0].y - 10, w: 20, h: 20 };
+    if (a.type === 'text' && !a._annBox) { const segs = _revAnnSegments(a); if (segs.length) { const xs = segs.flat().map(p => p.x), ys = segs.flat().map(p => p.y); b = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; } }
+    ctx.globalAlpha = 0.95;
+    ctx.strokeStyle = '#F59E0B'; ctx.lineWidth = lw; ctx.setLineDash([5 / currentScale, 3 / currentScale]);
+    ctx.strokeRect(b.x - pad, b.y - pad, b.w + pad * 2, b.h + pad * 2);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#F59E0B';
+    ctx.beginPath(); ctx.arc(b.x - pad, b.y - pad, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a1b2e'; ctx.font = `bold ${11 / currentScale}px Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('!', b.x - pad, b.y - pad + 0.5 / currentScale);
+  });
+  ctx.restore();
+}
+
+// ============================================================
+// AUTO-COUNT (v3.18) — count by TEXT TAG or by VISUAL SYMBOL MATCH
+// Text: every place the drawing's own text layer says "D01" (or contains it
+// as a whole word) gets a count marker. Adjacent pdf.js text items on the same
+// baseline are stitched into runs first, because tags are often emitted as
+// separate glyph groups ("D", "01").
+// Symbol: draw a box around one instance; Datum renders the sheet to a
+// binary ink map, runs a coarse-to-fine template match (Dice overlap on ink
+// pixels, ink-count pre-filter, optional 90/180/270 rotations, non-max
+// suppression) and previews the matches with a score threshold slider before
+// anything is added. Adds go into a count group (created on the fly) and are
+// tagged to the active estimate item exactly like hand-placed counts.
+// ============================================================
+let _vs = null;   // { rect, page, results:[{page,x,y,w,h,score,rot}], thr, running, note }
+let _acScope = 'page';
+let _acRotate = true;
+const VS_S_MAX_SIDE = 3400;    // px — page raster cap for matching
+const VS_INK_LUM = 150;        // luminance below this = ink
+
+function _acRunsForPage(tc, vp) {
+  // Merge text items into baseline runs → [{str, x, y, w, h}]
+  const items = [];
+  tc.items.forEach(it => {
+    const str = it.str; if (!str || !str.trim()) return;
+    const tr = it.transform;
+    const fh = Math.hypot(tr[2], tr[3]) || it.height || 10;
+    items.push({ str, x: tr[4], y: vp.height - tr[5] - fh, w: it.width || fh * str.length * 0.5, h: fh + 2 });
+  });
+  items.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  const runs = [];
+  items.forEach(it => {
+    const last = runs[runs.length - 1];
+    if (last && Math.abs(last.y - it.y) < last.h * 0.5 && it.x - (last.x + last.w) < last.h * 0.6 && it.x >= last.x) {
+      const gap = it.x - (last.x + last.w);
+      if (gap > last.h * 0.15) last.str += ' ';
+      last.str += it.str; last.w = (it.x + it.w) - last.x; last.h = Math.max(last.h, it.h);
+    } else runs.push(Object.assign({}, it));
+  });
+  return runs;
+}
+function _acExistingNear(page, x, y, group, tol) {
+  return annotations.some(a => a.type === 'count' && a.page === page && a.group === group && Math.hypot(a.points[0].x - x, a.points[0].y - y) <= tol);
+}
+function _acEnsureGroup(name) {
+  name = (name || '').trim() || currentCountGroup || 'Default';
+  if (!countGroups[name]) {
+    const palette = ['#E5432E','#4F8EF7','#28a745','#E0A800','#9B59B6','#17A2B8','#E83E8C','#FD7E14'];
+    const used = new Set(Object.values(countGroups).map(g => (g && g.color) || ''));
+    countGroups[name] = { count: 0, color: palette.find(c => !used.has(c)) || palette[Object.keys(countGroups).length % palette.length] };
+  }
+  currentCountGroup = name;
+  return _getCountGroup(name);
+}
+function _acAddMarkers(points, groupName) {
+  // points: [{page,x,y}] → count markers (skipping near-duplicates in the group)
+  const grp = _acEnsureGroup(groupName);
+  let added = 0, skipped = 0;
+  points.forEach(p => {
+    if (_acExistingNear(p.page, p.x, p.y, currentCountGroup, 6)) { skipped++; return; }
+    grp.count = (grp.count || 0) + 1;
+    const ann = { id: generateId(), type: 'count', page: p.page, points: [{ x: p.x, y: p.y }], group: currentCountGroup, number: grp.count, color: grp.color || toolProperties.color };
+    annotations.push(ann);
+    takeoffTagAnnotation(ann);
+    added++;
+  });
+  if (added) { saveToHistory(); redrawAnnotations(); }
+  return { added, skipped };
+}
+function setAutoCountScope(v) { _acScope = v; }
+async function autoCountByText() {
+  const q = ((document.getElementById('ac-text') || {}).value || '').trim();
+  if (!q) { showToast('Type the tag to look for (e.g. D01)'); return; }
+  if (!pdfDoc) return;
+  const whole = !!((document.getElementById('ac-whole') || {}).checked);
+  const groupName = ((document.getElementById('ac-group') || {}).value || '').trim() || q;
+  const pages = _acScope === 'all' ? Array.from({ length: pdfDoc.numPages }, (_, i) => i) : [currentPage];
+  const needle = q.toUpperCase();
+  const found = [];
+  showToast('Looking for "' + q + '"…');
+  for (const p of pages) {
+    try {
+      const page = await pdfDoc.getPage(p + 1);
+      const vp = page.getViewport({ scale: 1 });
+      const runs = _acRunsForPage(await page.getTextContent(), vp);
+      runs.forEach(r => {
+        const hay = r.str.toUpperCase();
+        let pos = 0;
+        while (true) {
+          const idx = hay.indexOf(needle, pos); if (idx < 0) break;
+          const before = idx > 0 ? hay[idx - 1] : ' ', after = idx + needle.length < hay.length ? hay[idx + needle.length] : ' ';
+          const isWord = !/[A-Z0-9]/.test(before) && !/[A-Z0-9]/.test(after);
+          if (!whole || isWord) {
+            const cw = r.w / Math.max(1, hay.length);
+            found.push({ page: p, x: r.x + cw * (idx + needle.length / 2), y: r.y + r.h / 2 });
+          }
+          pos = idx + needle.length;
+        }
+      });
+    } catch (e) { console.warn('auto-count text p' + (p + 1), e); }
+  }
+  if (!found.length) { showToast('No "' + q + '" found' + (_acScope === 'all' ? ' in this document' : ' on this page') + ' — is the drawing text searchable?'); return; }
+  const res = _acAddMarkers(found, groupName);
+  openPropertiesPanel();
+  showToast(`Counted ${res.added} × "${q}" into group "${currentCountGroup}"` + (res.skipped ? ` (${res.skipped} already counted)` : '') + (_acScope === 'all' ? ' across the document' : ''));
+}
+
+// ---- Visual symbol search ----------------------------------------
+const _vsInkCache = new Map();  // key `${page}@${S}` → {W,H,ink}
+let _vsInkCacheDoc = null;
+async function _vsPageInk(pageIdx, S) {
+  if (_vsInkCacheDoc !== pdfDoc) { _vsInkCache.clear(); _vsInkCacheDoc = pdfDoc; }
+  const key = pageIdx + '@' + S;
+  if (_vsInkCache.has(key)) return _vsInkCache.get(key);
+  const page = await pdfDoc.getPage(pageIdx + 1);
+  const vp = page.getViewport({ scale: S });
+  const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: cx, viewport: vp, annotationMode: 1 }).promise;
+  const d = cx.getImageData(0, 0, c.width, c.height).data;
+  const ink = new Uint8Array(c.width * c.height);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+    if (d[i + 3] > 40 && (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) < VS_INK_LUM) ink[j] = 1;
+  }
+  const rec = { W: c.width, H: c.height, ink };
+  if (_vsInkCache.size > 6) _vsInkCache.delete(_vsInkCache.keys().next().value);
+  _vsInkCache.set(key, rec);
+  return rec;
+}
+function _vsCrop(img, x, y, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let j = 0; j < h; j++) { const sy = y + j; if (sy < 0 || sy >= img.H) continue; for (let i = 0; i < w; i++) { const sx = x + i; if (sx < 0 || sx >= img.W) continue; out[j * w + i] = img.ink[sy * img.W + sx]; } }
+  return { W: w, H: h, ink: out };
+}
+function _vsRotate90(t) { // clockwise
+  const out = new Uint8Array(t.W * t.H); const W2 = t.H, H2 = t.W;
+  for (let y = 0; y < t.H; y++) for (let x = 0; x < t.W; x++) if (t.ink[y * t.W + x]) out[x * W2 + (W2 - 1 - y)] = 1;
+  return { W: W2, H: H2, ink: out };
+}
+function _vsPool(t, f) { // OR-pool by factor f (thin lines survive)
+  const W = Math.ceil(t.W / f), H = Math.ceil(t.H / f), out = new Uint8Array(W * H);
+  for (let y = 0; y < t.H; y++) { const oy = (y / f) | 0; for (let x = 0; x < t.W; x++) if (t.ink[y * t.W + x]) out[oy * W + ((x / f) | 0)] = 1; }
+  return { W, H, ink: out };
+}
+function _vsTrim(t) { // drop empty margins around the template ink
+  let x0 = t.W, y0 = t.H, x1 = -1, y1 = -1;
+  for (let y = 0; y < t.H; y++) for (let x = 0; x < t.W; x++) if (t.ink[y * t.W + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return null;
+  const pad = 1; x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(t.W - 1, x1 + pad); y1 = Math.min(t.H - 1, y1 + pad);
+  return { W: x1 - x0 + 1, H: y1 - y0 + 1, ink: _vsCrop(t, x0, y0, x1 - x0 + 1, y1 - y0 + 1).ink, ox: x0, oy: y0 };
+}
+function _vsCount(t) { let n = 0; for (let i = 0; i < t.ink.length; i++) n += t.ink[i]; return n; }
+function _vsIntegral(img) {
+  const W = img.W, H = img.H, I = new Int32Array((W + 1) * (H + 1));
+  for (let y = 1; y <= H; y++) { let row = 0; for (let x = 1; x <= W; x++) { row += img.ink[(y - 1) * W + (x - 1)]; I[y * (W + 1) + x] = I[(y - 1) * (W + 1) + x] + row; } }
+  return I;
+}
+function _vsDice(page, px, py, t, tN) {
+  // Score = average of Dice overlap and RECALL (share of the template's own
+  // ink found in the window). Plain Dice let a bare circle score ~79% against
+  // a circle-with-cross symbol; weighting recall pushes "part of the symbol
+  // is missing" down while staying tolerant of extra ink (a wall through it).
+  let ov = 0, win = 0;
+  for (let j = 0; j < t.H; j++) { const sy = py + j; if (sy < 0 || sy >= page.H) continue; const base = sy * page.W, tb = j * t.W;
+    for (let i = 0; i < t.W; i++) { const sx = px + i; if (sx < 0 || sx >= page.W) continue; const p = page.ink[base + sx]; if (p) { win++; if (t.ink[tb + i]) ov++; } } }
+  if (!tN) return 0;
+  const dice = (tN + win) ? (2 * ov) / (tN + win) : 0, recall = ov / tN;
+  return (dice + recall) / 2;
+}
+// Match one template (full-res binary) against one page → [{x,y,w,h,score}] in raster px
+function _vsMatchTemplate(page, t, minScore) {
+  const tN = _vsCount(t); if (!tN) return [];
+  const f = Math.max(1, Math.ceil(Math.min(t.W, t.H) / 22));
+  const tc = _vsPool(t, f), pc = _vsPool(page, f);
+  const tcN = _vsCount(tc);
+  const I = _vsIntegral(pc), Wc = pc.W + 1;
+  const cands = [];
+  const lo = tcN * 0.5, hi = tcN * 1.9;
+  const coarseMin = Math.max(0.35, minScore - 0.25);
+  for (let y = 0; y <= pc.H - tc.H; y++) {
+    for (let x = 0; x <= pc.W - tc.W; x++) {
+      const cnt = I[(y + tc.H) * Wc + (x + tc.W)] - I[y * Wc + (x + tc.W)] - I[(y + tc.H) * Wc + x] + I[y * Wc + x];
+      if (cnt < lo || cnt > hi) continue;
+      const s = _vsDice(pc, x, y, tc, tcN);
+      if (s >= coarseMin) cands.push({ x, y, s });
+    }
+  }
+  // Refine at full resolution around each coarse hit
+  const fine = [];
+  cands.forEach(c => {
+    let best = -1, bx = 0, by = 0;
+    const cx = c.x * f, cy = c.y * f, r = f;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const s = _vsDice(page, cx + dx, cy + dy, t, tN);
+      if (s > best) { best = s; bx = cx + dx; by = cy + dy; }
+    }
+    if (best >= minScore) fine.push({ x: bx, y: by, w: t.W, h: t.H, score: best });
+  });
+  // Non-max suppression
+  fine.sort((a, b) => b.score - a.score);
+  const keep = [], sup = Math.min(t.W, t.H) * 0.6;
+  fine.forEach(c => { if (!keep.some(k => Math.abs(k.x - c.x) < sup && Math.abs(k.y - c.y) < sup)) keep.push(c); });
+  return keep;
+}
+async function onVisualSearchRegion(startScreen, endScreen) {
+  const a = toPage(startScreen), b = toPage(endScreen);
+  const rect = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+  if (rect.w < 4 || rect.h < 4) { showToast('Drag a box around ONE symbol to look for'); return; }
+  _vs = { rect, page: currentPage, results: [], thr: (_vs && _vs.thr) || 0.75, running: true, note: '' };
+  setTool('count');
+  await runVisualSearch();
+}
+async function runVisualSearch() {
+  if (!_vs || !pdfDoc) return;
+  _vs.running = true; _vs.results = []; _vs.note = '';
+  openPropertiesPanel();
+  try {
+    const p0 = await pdfDoc.getPage(_vs.page + 1);
+    const vp = p0.getViewport({ scale: 1 });
+    // Raster scale: aim for ~3 px per page unit but cap the sheet size, and
+    // make sure the symbol itself is at least ~28 px on its short side.
+    let S = Math.min(3, VS_S_MAX_SIDE / Math.max(vp.width, vp.height));
+    S = Math.max(S, Math.min(6, 28 / Math.max(2, Math.min(_vs.rect.w, _vs.rect.h))));
+    S = Math.min(S, VS_S_MAX_SIDE / Math.max(vp.width, vp.height));
+    _vs.S = S;
+    const src = await _vsPageInk(_vs.page, S);
+    const raw = _vsCrop(src, Math.round(_vs.rect.x * S), Math.round(_vs.rect.y * S), Math.max(1, Math.round(_vs.rect.w * S)), Math.max(1, Math.round(_vs.rect.h * S)));
+    const t0 = _vsTrim(raw);
+    if (!t0) { _vs.running = false; _vs.note = 'The box you drew has no linework in it.'; openPropertiesPanel(); return; }
+    const templates = [{ t: t0, rot: 0 }];
+    if (_acRotate) { let t = t0; for (let r = 90; r < 360; r += 90) { t = _vsRotate90(t); templates.push({ t, rot: r }); } }
+    const pages = _acScope === 'all' ? Array.from({ length: pdfDoc.numPages }, (_, i) => i) : [_vs.page];
+    const minScore = 0.55; // collect low, filter with the slider
+    let all = [];
+    for (let k = 0; k < pages.length; k++) {
+      const p = pages[k];
+      if (pages.length > 1) showToast(`Matching symbol… page ${p + 1} of ${pdfDoc.numPages}`);
+      const img = await _vsPageInk(p, S);
+      templates.forEach(({ t, rot }) => {
+        _vsMatchTemplate(img, t, minScore).forEach(m => all.push({ page: p, x: m.x / S, y: m.y / S, w: m.w / S, h: m.h / S, score: m.score, rot }));
+      });
+      await new Promise(r => setTimeout(r, 0));
+    }
+    // Cross-rotation NMS (a symmetric symbol matches itself in several rotations)
+    all.sort((a, b) => b.score - a.score);
+    const keep = [];
+    all.forEach(c => { if (!keep.some(k => k.page === c.page && Math.abs((k.x + k.w / 2) - (c.x + c.w / 2)) < Math.min(c.w, c.h) * 0.6 && Math.abs((k.y + k.h / 2) - (c.y + c.h / 2)) < Math.min(c.w, c.h) * 0.6)) keep.push(c); });
+    _vs.results = keep;
+    _vs.running = false;
+    const n = _vsVisible().length;
+    showToast(n ? `${n} matching symbol${n === 1 ? '' : 's'} found — adjust the slider, then Add` : 'No confident matches — lower the match threshold or draw a tighter box');
+  } catch (e) {
+    console.error('visual search', e); _vs.running = false; _vs.note = 'Search failed: ' + e.message;
+  }
+  openPropertiesPanel(); redrawAnnotations();
+}
+function _vsVisible() { return _vs ? _vs.results.filter(r => r.score >= _vs.thr) : []; }
+function setVisualSearchThreshold(v) {
+  if (!_vs) return; _vs.thr = Math.max(0.3, Math.min(0.98, (parseInt(v) || 75) / 100));
+  const l = document.getElementById('vs-thr-val'); if (l) l.textContent = Math.round(_vs.thr * 100) + '%';
+  const c = document.getElementById('vs-count'); if (c) c.textContent = _vsVisible().length;
+  const b = document.getElementById('vs-add-btn'); if (b) { const n = _vsVisible().length; b.textContent = 'Add ' + n + ' as counts'; b.disabled = !n; }
+  redrawAnnotations();
+}
+function setVisualSearchRotate(on) { _acRotate = !!on; }
+function clearVisualSearch() { _vs = null; openPropertiesPanel(); redrawAnnotations(); }
+function addVisualSearchCounts() {
+  if (!_vs) return;
+  const vis = _vsVisible(); if (!vis.length) return;
+  const groupName = ((document.getElementById('ac-group') || {}).value || '').trim() || currentCountGroup;
+  const res = _acAddMarkers(vis.map(r => ({ page: r.page, x: r.x + r.w / 2, y: r.y + r.h / 2 })), groupName);
+  const n = vis.length;
+  _vs = null;
+  openPropertiesPanel(); redrawAnnotations();
+  showToast(`Added ${res.added} count${res.added === 1 ? '' : 's'} to "${currentCountGroup}"` + (res.skipped ? ` (${res.skipped} already counted)` : ''));
+}
+function drawVisualSearchOverlay(ctx) {
+  if (!_vs) return;
+  ctx.save();
+  ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
+  const lw = 1.5 / currentScale;
+  if (_vs.page === currentPage) {
+    ctx.strokeStyle = '#2E86DE'; ctx.lineWidth = lw; ctx.setLineDash([4 / currentScale, 3 / currentScale]);
+    ctx.strokeRect(_vs.rect.x, _vs.rect.y, _vs.rect.w, _vs.rect.h);
+    ctx.setLineDash([]);
+  }
+  _vs.results.forEach(r => {
+    if (r.page !== currentPage) return;
+    const on = r.score >= _vs.thr;
+    ctx.globalAlpha = on ? 0.9 : 0.35;
+    ctx.strokeStyle = on ? '#00A3FF' : '#94a3b8'; ctx.lineWidth = lw;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    if (on) {
+      ctx.fillStyle = 'rgba(0,163,255,.15)'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      const fs = 9 / currentScale;
+      ctx.font = `bold ${fs}px Arial`; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      const label = Math.round(r.score * 100) + '%';
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = '#00A3FF'; ctx.fillRect(r.x, r.y - fs - 2 / currentScale, tw + 4 / currentScale, fs + 2 / currentScale);
+      ctx.fillStyle = '#fff'; ctx.fillText(label, r.x + 2 / currentScale, r.y);
+    }
+  });
+  ctx.restore();
+}
+// Panel section appended to the Count tool's properties
+function autoCountPanelHTML() {
+  const vis = _vsVisible();
+  let html = `<div class="properties-section-title" style="margin-top:6px">Auto-count</div>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--text-secondary)">
+        <label><input type="radio" name="ac-scope" value="page" ${_acScope === 'page' ? 'checked' : ''} onchange="setAutoCountScope('page')"> This page</label>
+        <label><input type="radio" name="ac-scope" value="all" ${_acScope === 'all' ? 'checked' : ''} onchange="setAutoCountScope('all')"> Whole document</label>
+      </div>
+      <div class="property-row"><div class="property-label" title="Group the new markers go into (created if it doesn't exist). Leave blank: text counts use the tag as the group name, symbol counts go into the active group.">Group:</div>
+        <input type="text" id="ac-group" class="property-input" value="" placeholder="blank = tag name / ${escapeHtml(currentCountGroup || 'Default')}"></div>
+      <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:2px">By text tag</div>
+      <div style="display:flex;gap:4px">
+        <input type="text" id="ac-text" class="property-input" placeholder="e.g. D01, GPO, W-03" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();autoCountByText();}">
+        <button class="modal-btn primary" style="padding:4px 10px;font-size:11px" onclick="autoCountByText()">Count</button></div>
+      <label style="font-size:11px;color:var(--text-secondary)"><input type="checkbox" id="ac-whole" checked> Whole tag only (ignore "D01A", "D010")</label>
+      <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:4px">By symbol</div>
+      <button class="modal-btn ${currentTool === 'visualsearch' ? 'primary' : 'secondary'}" style="width:100%;font-size:11px" onclick="setTool('visualsearch')">${currentTool === 'visualsearch' ? 'Drag a box around ONE symbol…' : 'Find matching symbols (draw a box)'}</button>
+      <label style="font-size:11px;color:var(--text-secondary)"><input type="checkbox" ${_acRotate ? 'checked' : ''} onchange="setVisualSearchRotate(this.checked)"> Also match rotated copies (90° / 180° / 270°)</label>`;
+  if (_vs) {
+    const thrPct = Math.round(_vs.thr * 100);
+    html += `<div style="border:1px solid var(--accent);border-radius:6px;padding:8px;background:var(--bg-tertiary);display:flex;flex-direction:column;gap:6px">
+      ${_vs.running ? `<div style="font-size:11px;color:var(--text-secondary)">Matching… ${_acScope === 'all' ? 'working through every page' : ''}</div>` : `
+      <div style="font-size:11px;color:var(--text-secondary)"><b id="vs-count">${vis.length}</b> match${vis.length === 1 ? '' : 'es'} at or above the threshold${_vs.results.length ? ` (${_vs.results.length} candidates)` : ''}. ${_vs.note ? '<span style="color:var(--warning)">' + escapeHtml(_vs.note) + '</span>' : ''}</div>
+      <div class="slider-group"><div class="slider-label"><span>Match threshold</span><span id="vs-thr-val">${thrPct}%</span></div>
+        <input type="range" class="slider" min="40" max="95" value="${thrPct}" oninput="setVisualSearchThreshold(this.value)"></div>
+      <div style="display:flex;gap:4px">
+        <button id="vs-add-btn" class="modal-btn primary" style="flex:1;font-size:11px" onclick="addVisualSearchCounts()" ${vis.length ? '' : 'disabled'}>Add ${vis.length} as counts</button>
+        <button class="modal-btn secondary" style="font-size:11px" onclick="runVisualSearch()" title="Search again with the current scope / rotation setting">Re-run</button>
+        <button class="modal-btn secondary" style="font-size:11px" onclick="clearVisualSearch()">Clear</button></div>`}
+    </div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+// ============================================================
+// SHEET INDEX + HYPERLINKS (v3.18)
+// Reads each page's sheet number and title out of the title block (auto
+// heuristic — the largest "A-101"-looking text in the bottom-right corner —
+// or from a region you draw once), lists them in a sidebar you can filter
+// and click, and turns every mention of a known sheet number anywhere in the
+// set ("SEE A-201", "3/A-501") into a clickable hotspot that jumps there.
+// Everything is derived from the PDF's own text layer, kept per document
+// (sheetLabels / sheetLinks / sheetRegion) and saved inside the project JSON.
+// On save the hotspots are also written as real PDF /Link annotations so the
+// jumps work in Acrobat / Chrome / Bluebeam too.
+// ============================================================
+let sheetLabels = {};      // pageIdx → { num, title, auto }
+let sheetLinks = [];       // [{ page, x, y, w, h, target, text }]
+let sheetRegion = null;    // { x, y, w, h } as FRACTIONS of the page (number box), or null = auto
+let sheetTitleRegion = null;
+let sheetsPanelOpen = false;
+let sheetLinksVisible = true;
+let sheetLinksWriteOnSave = localStorage.getItem('bdm-sheet-links-save') !== '0';
+let _sheetsFilter = '';
+let _sheetNavStack = [];
+let _sheetRebuildTimer = null;
+let _sheetRegionPick = 'num';   // which box the region tool is drawing next: 'num' | 'title'
+const SHEET_NUM_RE = /^(?:[A-Z]{1,4}[-_ ]?\d{1,4}(?:[.\-]\d{1,3})?[A-Z]?|[A-Z]{1,3}[-_ ]?\d{1,2}[.\-]\d{1,3}|\d{1,2}[.\-]\d{2,3})$/;
+const SHEET_TOKEN_RE = /[A-Z]{1,4}[-_ ]?\d{1,4}(?:[.\-]\d{1,3})?[A-Z]?/g;
+const SHEET_LABEL_WORDS = /^(SCALE|SCALES|DATE|DRAWN|CHECKED|CHK|APPROVED|APP|PROJECT|PROJECT NO|CLIENT|DRAWING|DRAWING NO|DRAWING TITLE|DWG|DWG NO|TITLE|SHEET|SHEET NO|SHEET NUMBER|REV|REVISION|NO|NUMBER|STATUS|ISSUE|ISSUED|ISSUED FOR|FOR|PAPER|SIZE|A[0-4]|NORTH|JOB|JOB NO|FILE|PLOT|PLOTTED|DESIGNED|DESIGN|SURVEYED|COPYRIGHT|NOTES|LEGEND|KEY PLAN|DO NOT SCALE|VERIFY|DIMENSIONS|CONSTRUCTION|TENDER|PRELIMINARY|FOR CONSTRUCTION|FOR TENDER|FOR INFORMATION|FOR APPROVAL|NOT FOR CONSTRUCTION|ARCHITECT|ENGINEER|CONSULTANT|BUILDER|CONTRACTOR|PTY LTD|P\/L|ABN|PH|PHONE|FAX|EMAIL|WWW)$/;
+
+function _sheetNorm(s) { return String(s || '').toUpperCase().replace(/[-_ .]/g, ''); }
+function _sheetPageRuns(pageIdx) {
+  return pdfDoc.getPage(pageIdx + 1).then(async page => {
+    const vp = page.getViewport({ scale: 1 });
+    return { runs: _acRunsForPage(await page.getTextContent(), vp), W: vp.width, H: vp.height };
+  });
+}
+function _sheetGuess(runs, W, H) {
+  // Candidate number: matches the sheet-number shape, sits in the title-block
+  // area (right strip or bottom band), bigger text and nearer the bottom-right
+  // corner score higher.
+  const inTitleBlock = r => (r.x + r.w / 2 > W * 0.55 && r.y + r.h / 2 > H * 0.62) || (r.x + r.w / 2 > W * 0.8) || (r.y + r.h / 2 > H * 0.86);
+  const cands = [];
+  runs.forEach(r => {
+    const raw = r.str.trim().toUpperCase();
+    // Strip a leading label ("SHEET NO. A-101", "DWG A101") if present
+    const m = raw.match(/(?:^|[\s:.#])([A-Z]{1,4}[-_ ]?\d{1,4}(?:[.\-]\d{1,3})?[A-Z]?)$/);
+    const tok = SHEET_NUM_RE.test(raw) ? raw : (m ? m[1] : null);
+    if (!tok || !SHEET_NUM_RE.test(tok)) return;
+    if (/^A[0-4]$/.test(tok)) return;                                  // paper size
+    if (!/[A-Z]/.test(tok) && !/[.\-]/.test(tok)) return;               // bare number = a dimension
+    if (!inTitleBlock(r)) return;
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const corner = Math.hypot((W - cx) / W, (H - cy) / H);              // 0 = bottom-right corner
+    let score = r.h * 3 - corner * 20 + (/[A-Z]/.test(tok) ? 6 : 0) + (raw === tok ? 4 : 0);
+    if (/^REV/.test(raw)) score -= 30;
+    cands.push({ tok, r, score });
+  });
+  cands.sort((a, b) => b.score - a.score);
+  const num = cands.length ? cands[0].tok : null;
+  const numRun = cands.length ? cands[0].r : null;
+  // Title: biggest wordy text in the title-block area that isn't a form label
+  const tcands = runs.filter(r => {
+    const s = r.str.trim();
+    if (s.length < 4 || s.length > 70) return false;
+    if (!/[A-Za-z]{3}/.test(s)) return false;
+    const up = s.toUpperCase().replace(/[:.]+$/, '').trim();
+    if (SHEET_LABEL_WORDS.test(up)) return false;
+    if (/@|WWW\.|\.COM|PTY|LTD|ABN|\d{4,}/.test(up)) return false;
+    if (/^(SCALE|DATE|DRAWN|CHECKED|REV|SHEET|DWG|DRAWING|PROJECT|CLIENT|JOB|STATUS|ISSUE)\b/.test(up) && up.length < 30) return false;
+    if (numRun && r === numRun) return false;
+    if (SHEET_NUM_RE.test(up)) return false;
+    return inTitleBlock(r);
+  }).map(r => ({ r, score: r.h * 4 + Math.min(r.str.trim().length, 40) * 0.25 - ((r.y + r.h / 2 > H * 0.62 && r.x + r.w / 2 > W * 0.55) ? 0 : 6) }));
+  tcands.sort((a, b) => b.score - a.score);
+  const title = tcands.length ? tcands[0].r.str.trim().replace(/\s+/g, ' ') : '';
+  return { num, title };
+}
+function _sheetRegionRuns(runs, W, H, reg) {
+  return runs.filter(r => { const cx = (r.x + r.w / 2) / W, cy = (r.y + r.h / 2) / H; return cx >= reg.x && cx <= reg.x + reg.w && cy >= reg.y && cy <= reg.y + reg.h; });
+}
+async function buildSheetIndex(opts) {
+  opts = opts || {};
+  if (!pdfDoc) { if (!opts.silent) alert('Open a PDF first'); return; }
+  const n = pdfDoc.numPages;
+  if (!opts.silent) showToast('Reading title blocks on ' + n + ' page' + (n === 1 ? '' : 's') + '…');
+  const keepManual = {};
+  Object.keys(sheetLabels).forEach(k => { if (sheetLabels[k] && !sheetLabels[k].auto && !opts.full) keepManual[k] = sheetLabels[k]; });
+  const labels = {}, runsByPage = [];
+  for (let p = 0; p < n; p++) {
+    try {
+      const { runs, W, H } = await _sheetPageRuns(p);
+      runsByPage[p] = { runs, W, H };
+      if (keepManual[p]) { labels[p] = keepManual[p]; continue; }
+      let num = null, title = '';
+      if (sheetRegion) {
+        const inBox = _sheetRegionRuns(runs, W, H, sheetRegion);
+        const good = inBox.filter(r => SHEET_NUM_RE.test(r.str.trim().toUpperCase())).sort((a, b) => b.h - a.h);
+        const pick = good[0] || inBox.sort((a, b) => b.h - a.h)[0];
+        if (pick) num = pick.str.trim().toUpperCase();
+      }
+      if (sheetTitleRegion) {
+        const inBox = _sheetRegionRuns(runs, W, H, sheetTitleRegion).filter(r => r.str.trim().length > 2).sort((a, b) => b.h - a.h);
+        if (inBox[0]) title = inBox[0].str.trim().replace(/\s+/g, ' ');
+      }
+      if (!num || !title) {
+        const g = _sheetGuess(runs, W, H);
+        if (!num) num = g.num; if (!title) title = g.title;
+      }
+      if (num || title) labels[p] = { num: num || '', title: title || '', auto: true };
+    } catch (e) { console.warn('sheet index p' + (p + 1), e); }
+    if (n > 20 && p % 10 === 9 && !opts.silent) showToast(`Reading title blocks… ${p + 1} / ${n}`);
+    if (p % 5 === 4) await new Promise(r => setTimeout(r, 0));
+  }
+  sheetLabels = labels;
+  _sheetBuildLinks(runsByPage);
+  const found = Object.values(sheetLabels).filter(l => l.num).length;
+  if (!opts.silent) showToast(`Sheet index: ${found} of ${n} page${n === 1 ? '' : 's'} numbered, ${sheetLinks.length} reference link${sheetLinks.length === 1 ? '' : 's'}` + (found < n ? ' — draw the number box if some are missing' : ''));
+  if (typeof markWorkbookFileDirty === 'function') { /* no-op: index is per-PDF */ }
+  docModified = true; if (typeof renderDocTabs === 'function') renderDocTabs();
+  if (typeof autosaveSweepSoon === 'function') autosaveSweepSoon();
+  if (typeof generateThumbnails === 'function' && showThumbnails) generateThumbnails();
+  if (sheetsPanelOpen) renderSheetsPanel(); else if (!opts.silent) openSheetsPanel();
+  redrawAnnotations();
+}
+function _sheetBuildLinks(runsByPage) {
+  const map = {};
+  Object.keys(sheetLabels).forEach(k => { const num = sheetLabels[k] && sheetLabels[k].num; if (num) { const key = _sheetNorm(num); if (!(key in map)) map[key] = parseInt(k); } });
+  const links = [];
+  if (!Object.keys(map).length) { sheetLinks = links; return; }
+  runsByPage.forEach((pr, p) => {
+    if (!pr) return;
+    pr.runs.forEach(r => {
+      const up = r.str.toUpperCase();
+      let m; SHEET_TOKEN_RE.lastIndex = 0;
+      while ((m = SHEET_TOKEN_RE.exec(up))) {
+        const tok = m[0], key = _sheetNorm(tok);
+        const before = m.index > 0 ? up[m.index - 1] : ' ', after = m.index + tok.length < up.length ? up[m.index + tok.length] : ' ';
+        if (/[A-Z0-9]/.test(before) || /[A-Z0-9]/.test(after)) continue;   // inside a longer code
+        const target = map[key];
+        if (target === undefined || target === p) continue;
+        const cw = r.w / Math.max(1, up.length);
+        links.push({ page: p, x: r.x + cw * m.index - 1, y: r.y - 1, w: cw * tok.length + 2, h: r.h + 1, target, text: tok });
+      }
+    });
+  });
+  sheetLinks = links;
+}
+function _sheetIndexAfterPageOp() {
+  if (!Object.keys(sheetLabels).length && !sheetLinks.length) return;
+  clearTimeout(_sheetRebuildTimer);
+  _sheetRebuildTimer = setTimeout(() => buildSheetIndex({ silent: true, full: true }), 400);
+}
+function _sheetIndexRescanPages() { _sheetIndexAfterPageOp(); }
+function _sheetLinkAt(pagePt) {
+  if (!sheetLinks.length) return null;
+  const tol = 2;
+  for (let i = sheetLinks.length - 1; i >= 0; i--) {
+    const l = sheetLinks[i];
+    if (l.page !== currentPage) continue;
+    if (pagePt.x >= l.x - tol && pagePt.x <= l.x + l.w + tol && pagePt.y >= l.y - tol && pagePt.y <= l.y + l.h + tol) return l;
+  }
+  return null;
+}
+function _sheetLabelText(p) { const l = sheetLabels[p]; if (!l) return ''; return [l.num, l.title].filter(Boolean).join(' — '); }
+function followSheetLink(l) {
+  if (!l) return;
+  _sheetNavStack.push(currentPage);
+  if (_sheetNavStack.length > 50) _sheetNavStack.shift();
+  goToPage(l.target);
+  showToast('→ ' + (_sheetLabelText(l.target) || 'page ' + (l.target + 1)) + '  (Alt+← to go back)');
+}
+function sheetNavBack() {
+  if (!_sheetNavStack.length) { showToast('Nothing to go back to'); return; }
+  const p = _sheetNavStack.pop();
+  goToPage(p);
+}
+function drawSheetLinkOverlay(ctx) {
+  if (!sheetLinksVisible || !sheetLinks.length) return;
+  const mine = sheetLinks.filter(l => l.page === currentPage);
+  if (!mine.length) return;
+  ctx.save();
+  ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
+  ctx.lineWidth = 1 / currentScale;
+  mine.forEach(l => {
+    ctx.fillStyle = 'rgba(46,134,222,.10)'; ctx.fillRect(l.x, l.y, l.w, l.h);
+    ctx.strokeStyle = 'rgba(46,134,222,.55)'; ctx.strokeRect(l.x, l.y, l.w, l.h);
+    ctx.fillStyle = 'rgba(46,134,222,.75)'; ctx.fillRect(l.x, l.y + l.h - 1 / currentScale, l.w, 1 / currentScale);
+  });
+  ctx.restore();
+}
+function toggleSheetLinksVisible(on) { sheetLinksVisible = (on === undefined) ? !sheetLinksVisible : !!on; redrawAnnotations(); if (sheetsPanelOpen) renderSheetsPanel(); }
+function setSheetLinksWriteOnSave(on) { sheetLinksWriteOnSave = !!on; try { localStorage.setItem('bdm-sheet-links-save', on ? '1' : '0'); } catch (e) {} }
+function pickSheetRegion(which) { _sheetRegionPick = which || 'num'; setTool('sheetregion'); showToast('Drag a box around the ' + (_sheetRegionPick === 'num' ? 'SHEET NUMBER' : 'SHEET TITLE') + ' in the title block'); }
+async function onSheetRegionDrawn(startScreen, endScreen) {
+  if (!pdfDoc) return;
+  const a = toPage(startScreen), b = toPage(endScreen);
+  const vp = (await pdfDoc.getPage(currentPage + 1)).getViewport({ scale: 1 });
+  const W = vp.width, H = vp.height;
+  if (!W || !H) return;
+  const reg = { x: Math.min(a.x, b.x) / W, y: Math.min(a.y, b.y) / H, w: Math.abs(b.x - a.x) / W, h: Math.abs(b.y - a.y) / H };
+  if (reg.w < 0.005 || reg.h < 0.003) { showToast('Box too small'); return; }
+  if (_sheetRegionPick === 'title') sheetTitleRegion = reg; else sheetRegion = reg;
+  setTool('select');
+  buildSheetIndex({ full: true });
+}
+function clearSheetRegions() { sheetRegion = null; sheetTitleRegion = null; buildSheetIndex({ full: true }); }
+function renameSheet(p) {
+  const l = sheetLabels[p] || { num: '', title: '' };
+  const num = prompt('Sheet number for page ' + (p + 1) + ':', l.num || '');
+  if (num === null) return;
+  const title = prompt('Sheet title for page ' + (p + 1) + ':', l.title || '');
+  if (title === null) return;
+  sheetLabels[p] = { num: num.trim().toUpperCase(), title: title.trim(), auto: false };
+  // Links depend on the numbers → rebuild them from cached text
+  _sheetRelinkSoon();
+  renderSheetsPanel();
+  if (showThumbnails) generateThumbnails();
+}
+async function _sheetRelinkSoon() {
+  const runsByPage = [];
+  for (let p = 0; p < pdfDoc.numPages; p++) { try { runsByPage[p] = await _sheetPageRuns(p); } catch (e) {} }
+  _sheetBuildLinks(runsByPage);
+  redrawAnnotations(); if (sheetsPanelOpen) renderSheetsPanel();
+}
+function setSheetsFilter(v) { _sheetsFilter = v || ''; const list = document.getElementById('sheets-list'); if (list) list.innerHTML = _sheetsListHTML(); }
+function _sheetsListHTML() {
+  if (!pdfDoc) return '';
+  const q = _sheetsFilter.trim().toUpperCase();
+  let html = '';
+  for (let p = 0; p < pdfDoc.numPages; p++) {
+    const l = sheetLabels[p] || {};
+    const line = ((l.num || '') + ' ' + (l.title || '')).toUpperCase();
+    if (q && !line.includes(q) && !('PAGE ' + (p + 1)).includes(q)) continue;
+    const nLinksIn = sheetLinks.filter(x => x.target === p).length;
+    html += `<div data-sheet="${p}" onclick="goToPage(${p})" ondblclick="event.stopPropagation();renameSheet(${p})" title="Double-click to edit number / title" style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-bottom:1px solid var(--border-color);cursor:pointer;font-size:12px;background:${p === currentPage ? 'var(--bg-hover)' : 'transparent'}">
+      <span style="color:var(--text-muted);font-size:10px;width:22px;text-align:right">${p + 1}</span>
+      <span style="color:var(--accent);font-weight:700;min-width:52px">${escapeHtml(l.num || '—')}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(l.title || '')}">${escapeHtml(l.title || '')}</span>
+      ${nLinksIn ? `<span title="${nLinksIn} reference${nLinksIn === 1 ? '' : 's'} to this sheet elsewhere in the set" style="font-size:10px;color:var(--text-muted)">↩${nLinksIn}</span>` : ''}
+    </div>`;
+  }
+  return html || '<div style="padding:10px;color:var(--text-muted);font-size:12px">No sheets match.</div>';
+}
+function openSheetsPanel() {
+  if (!pdfDoc) { alert('Open a PDF first'); return; }
+  sheetsPanelOpen = true;
+  if (typeof searchPanelOpen !== 'undefined') searchPanelOpen = false;
+  reviewPanelOpen = false;
+  panelUserCollapsed = false;
+  document.getElementById('panel').classList.remove('collapsed');
+  renderSheetsPanel();
+  if (!Object.keys(sheetLabels).length) buildSheetIndex({ silent: false });
+}
+function closeSheetsPanel() { sheetsPanelOpen = false; openPropertiesPanel(); }
+function renderSheetsPanel() {
+  const panelTitle = document.getElementById('panel-title');
+  const content = document.getElementById('panel-content');
+  if (!panelTitle || !content || !pdfDoc) return;
+  panelTitle.textContent = 'Sheets';
+  const numbered = Object.values(sheetLabels).filter(l => l && l.num).length;
+  content.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px;padding:4px">
+    <div style="display:flex;gap:4px;align-items:center">
+      <input type="text" id="sheets-filter" class="property-input" placeholder="Filter sheets…" value="${escapeHtml(_sheetsFilter)}" style="flex:1" oninput="setSheetsFilter(this.value)">
+      <button class="modal-btn secondary" style="padding:4px 8px;font-size:11px" onclick="sheetNavBack()" title="Back to the sheet you came from (Alt+←)">◀</button>
+      <button class="modal-btn secondary" style="padding:4px 8px;font-size:11px" onclick="closeSheetsPanel()" title="Close">✕</button></div>
+    <div style="font-size:11px;color:var(--text-secondary)">${numbered} of ${pdfDoc.numPages} page${pdfDoc.numPages === 1 ? '' : 's'} numbered · ${sheetLinks.length} clickable reference${sheetLinks.length === 1 ? '' : 's'}${sheetRegion ? ' · number box set' : ' · auto-detected'}</div>
+    <div id="sheets-list" style="overflow:auto;border:1px solid var(--border-color);border-radius:4px;max-height:calc(100vh - 380px)">${_sheetsListHTML()}</div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">
+      <button class="modal-btn secondary" style="flex:1;font-size:11px;padding:4px" onclick="buildSheetIndex({full:true})" title="Read every title block again">↻ Rebuild</button>
+      <button class="modal-btn secondary" style="flex:1;font-size:11px;padding:4px" onclick="pickSheetRegion('num')" title="If numbers were missed or wrong: draw a box around the sheet number on this page and Datum reads the same spot on every page">Draw number box</button>
+      <button class="modal-btn secondary" style="flex:1;font-size:11px;padding:4px" onclick="pickSheetRegion('title')" title="Draw a box around the sheet title on this page">Draw title box</button>
+      ${(sheetRegion || sheetTitleRegion) ? `<button class="modal-btn secondary" style="font-size:11px;padding:4px" onclick="clearSheetRegions()" title="Forget the drawn boxes and go back to auto-detect">Auto</button>` : ''}
+    </div>
+    <label style="font-size:11px;color:var(--text-secondary);display:flex;gap:6px;align-items:center"><input type="checkbox" ${sheetLinksVisible ? 'checked' : ''} onchange="toggleSheetLinksVisible(this.checked)"> Show link boxes on the drawing</label>
+    <label style="font-size:11px;color:var(--text-secondary);display:flex;gap:6px;align-items:center"><input type="checkbox" ${sheetLinksWriteOnSave ? 'checked' : ''} onchange="setSheetLinksWriteOnSave(this.checked)"> Write links into the PDF when saving (work in Acrobat / Bluebeam too)</label>
+    <div style="font-size:10px;color:var(--text-muted);line-height:1.4">Click a sheet to jump to it; double-click to fix its number or title. On the drawing, click any highlighted sheet reference (with the Select tool) to follow it.</div>
+  </div>`;
+  const row = content.querySelector(`[data-sheet="${currentPage}"]`);
+  if (row) row.scrollIntoView({ block: 'nearest' });
+}
+// Called from saveProject(): write the hotspots as real /Link annotations.
+function _writeSheetLinksToPdf(outDoc, pages) {
+  if (!sheetLinksWriteOnSave || !sheetLinks.length) return 0;
+  let n = 0;
+  const ctx = outDoc.context;
+  sheetLinks.forEach(l => {
+    try {
+      const pg = pages[l.page], tgt = pages[l.target];
+      if (!pg || !tgt) return;
+      let rot = 0; try { rot = ((pg.getRotation().angle % 360) + 360) % 360; } catch (e) {}
+      if (rot !== 0) return;                       // keep it simple: unrotated pages only
+      const sz = pg.getSize();
+      let box = { x: 0, y: 0 }; try { const mb = pg.getMediaBox(); if (mb) box = { x: mb.x || 0, y: mb.y || 0 }; } catch (e) {}
+      const x0 = box.x + l.x, x1 = box.x + l.x + l.w, y1 = box.y + sz.height - l.y, y0 = box.y + sz.height - (l.y + l.h);
+      const annot = ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [x0, y0, x1, y1], Border: [0, 0, 0], Dest: [tgt.ref, 'Fit'] });
+      const ref = ctx.register(annot);
+      let annots = pg.node.lookup(PDFLib.PDFName.of('Annots'));
+      if (!(annots instanceof PDFLib.PDFArray)) { annots = ctx.obj([]); pg.node.set(PDFLib.PDFName.of('Annots'), annots); }
+      annots.push(ref); n++;
+    } catch (e) { console.warn('link annot', e); }
+  });
+  return n;
 }
 
 // ============================================================
