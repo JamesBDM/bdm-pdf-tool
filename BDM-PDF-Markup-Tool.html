@@ -1036,6 +1036,40 @@ body.touch-ui .menu-item { padding-top: 8px; padding-bottom: 8px; }
 /* Fat scrollbars are hard to grab with a fingertip and Datum pans by gesture. */
 body.touch-ui #canvas-wrapper { scrollbar-width: thin; }
 
+/* ---- v3.21: finish-shape bar ------------------------------------------
+   A polyline / polyshape / polygon / area / callout is finished on a computer
+   with a double-click, Enter or right-click. A tablet has none of those, and a
+   synthesised double-tap is easy to miss, so while a multi-point shape is being
+   drawn this bar floats over the sheet with an explicit Finish. */
+#shape-finish-bar {
+  display: none; position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: 26px; z-index: 300; gap: 8px; align-items: center;
+  padding: 8px 10px; border-radius: 10px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+}
+#shape-finish-bar #sfb-count { color: var(--text-secondary); font-size: 12px; padding: 0 4px; white-space: nowrap; }
+#shape-finish-bar button {
+  padding: 10px 14px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  background: var(--bg-tertiary); color: var(--text-primary);
+  border: 1px solid var(--border-color); white-space: nowrap;
+}
+#shape-finish-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
+/* ---- v3.21: number steppers -------------------------------------------
+   iOS Safari draws no up/down arrows inside <input type="number">, so on an
+   iPad every thickness / size box had to be tapped into and typed at. On a
+   coarse pointer each number box is wrapped with its own - and + button. */
+.num-stepper { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.num-stepper > input[type="number"] { flex: 1 1 auto; min-width: 0; text-align: center; }
+.num-step-btn {
+  flex: 0 0 auto; width: 36px; height: 34px; padding: 0; font-size: 18px; line-height: 1;
+  background: var(--bg-tertiary); color: var(--text-primary);
+  border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; user-select: none;
+}
+.num-step-btn:active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 #drop-zone {
   /* Overlays the whole canvas area (including the split-view row added
      behind it) so the empty state always fills and centres correctly. */
@@ -1894,6 +1928,11 @@ let annotationClipboard = null;
 let signatureImage = null;
 try { signatureImage = localStorage.getItem('bdm-signature-image') || null; } catch(e) {}
 let polylinePoints = [];
+// v3.21 — the Pen stays armed after each stroke by default, so a run of
+// freehand notes can be drawn without re-picking the tool every time. Esc or V
+// goes back to Select. Same idea as the Tick / Sequence / Symbol tools.
+let penKeepArmed = true;
+try { penKeepArmed = localStorage.getItem('bdm-pen-keep') !== '0'; } catch (e) {}
 let measureMode = null;
 let twoClickStart = null; // For click-click line/arrow/dimension/measure/calibrate
 let showThumbnails = false;
@@ -1942,7 +1981,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.20';
+const APP_VERSION = 'v3.21';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -2104,7 +2143,10 @@ const HANDLE_TOL_PX = DATUM_TOUCH_UI ? 15 : 8;   // resize / rotate handle grab 
 const TAP_TOL_PX    = DATUM_TOUCH_UI ? 16 : 10;  // annotation body hit tolerance
 const PALM_MAX_PX   = 45;   // contact bigger than this is a palm, not a fingertip
 const PINCH_MIN_PX  = 6;    // separation change before a pinch counts as a zoom
-const DBLTAP_MS     = 320;  // max gap between taps for a synthesised double-click
+const DBLTAP_MS     = 460;  // max gap between taps for a synthesised double-click
+                            // (v3.21: 320ms was tighter than a deliberate
+                            //  two-finger-free double tap on glass, so the
+                            //  second tap just added another polyline vertex)
 const DBLTAP_SLOP   = 28;   // max px between taps for a synthesised double-click
 
 const _ptrs = new Map();        // live contacts: pointerId -> {x, y, type}
@@ -2323,6 +2365,183 @@ function attachCanvasInputHandlers(canvas, beforeDown) {
 if (DATUM_TOUCH_UI) {
   document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.add('touch-ui');
+  });
+}
+
+// ============================================================
+// v3.21 — FINISH-SHAPE BAR (touch)
+// Every multi-point markup (polyline measure, polyline shape, polygon, area,
+// callout) is closed on a computer by a double-click, Enter or right-click.
+// A tablet has no keyboard and no right button, and the synthesised double-tap
+// is easy to miss, so on any touch-capable device an explicit bar floats over
+// the sheet for as long as a shape is open:  Undo point | Finish | Cancel.
+// Built lazily the first time a shape is started; hidden the rest of the time.
+// ============================================================
+let _shapeBarEl = null;
+let _shapeBarOn = false;
+let _shapeBarLast = '';
+const SHAPE_BAR_TOOLS = ['polyline', 'polyshape', 'area', 'polygon'];
+
+function _shapeInProgressKind() {
+  if (typeof currentTool === 'undefined' || !currentTool) return null;
+  if (SHAPE_BAR_TOOLS.includes(currentTool) &&
+      typeof polylinePoints !== 'undefined' && polylinePoints.length > 0) return 'poly';
+  if (currentTool === 'callout' && typeof calloutMode !== 'undefined' && calloutMode) return 'callout';
+  return null;
+}
+
+function _ensureShapeBar() {
+  if (_shapeBarEl && document.body.contains(_shapeBarEl)) return _shapeBarEl;
+  const bar = document.createElement('div');
+  bar.id = 'shape-finish-bar';
+  bar.innerHTML =
+    '<span id="sfb-count"></span>' +
+    '<button type="button" id="sfb-undo" onclick="touchUndoShapePoint()">Undo point</button>' +
+    '<button type="button" id="sfb-done" class="primary" onclick="touchFinishShape()">Finish</button>' +
+    '<button type="button" id="sfb-cancel" onclick="touchCancelShape()">Cancel</button>';
+  document.body.appendChild(bar);
+  _shapeBarEl = bar;
+  return bar;
+}
+
+// Called at the end of every redrawAnnotations(), so it runs on the same beat
+// as the live preview. Keep it cheap: it only touches the DOM when the state
+// it displays has actually changed.
+function updateShapeFinishBar() {
+  if (!DATUM_TOUCH) return;
+  const kind = _shapeInProgressKind();
+  if (!kind) {
+    if (_shapeBarOn) {
+      _shapeBarOn = false; _shapeBarLast = '';
+      if (_shapeBarEl) _shapeBarEl.style.display = 'none';
+    }
+    return;
+  }
+  const n = (kind === 'poly')
+    ? polylinePoints.length
+    : 1 + ((typeof calloutKnees !== 'undefined' && calloutKnees) ? calloutKnees.length : 0);
+  const need = (currentTool === 'area' || currentTool === 'polygon') ? 3 : 2;
+  const ok = (kind === 'callout') || n >= need;
+  const sig = kind + ':' + n + ':' + (ok ? 1 : 0);
+  const bar = _ensureShapeBar();
+  if (!_shapeBarOn) { _shapeBarOn = true; bar.style.display = 'flex'; }
+  if (sig === _shapeBarLast) return;
+  _shapeBarLast = sig;
+  const c = document.getElementById('sfb-count');
+  if (c) c.textContent = (kind === 'poly') ? (n + (n === 1 ? ' point' : ' points')) : 'Callout';
+  const done = document.getElementById('sfb-done');
+  if (done) { done.disabled = !ok; done.style.opacity = ok ? '1' : '0.4'; }
+}
+
+function touchFinishShape() {
+  const kind = _shapeInProgressKind();
+  if (kind === 'poly') {
+    finishPolyShape();
+  } else if (kind === 'callout') {
+    // Same result as double-clicking to close a callout: the text box lands
+    // just past the last leader point.
+    const anchor = calloutAnchor;
+    const knees = (calloutKnees || []).slice();
+    const last = knees.length ? knees[knees.length - 1] : anchor;
+    const textPos = { x: last.x + 40, y: last.y - 8 };
+    calloutMode = false; calloutAnchor = null; calloutKnees = [];
+    showCalloutTextInput(toPage(anchor), knees.map(k => toPage(k)), toPage(textPos));
+  }
+  isDrawing = false; currentMovePoint = null;
+  redrawAnnotations();
+  updateShapeFinishBar();
+}
+
+function touchUndoShapePoint() {
+  const kind = _shapeInProgressKind();
+  if (kind === 'poly') {
+    polylinePoints.pop();
+    if (!polylinePoints.length) { isDrawing = false; currentMovePoint = null; }
+  } else if (kind === 'callout') {
+    if (calloutKnees && calloutKnees.length) calloutKnees.pop();
+    else { calloutMode = false; calloutAnchor = null; }
+  }
+  redrawAnnotations();
+  updateShapeFinishBar();
+}
+
+function touchCancelShape() {
+  cancelInProgressDrawing();   // already redraws
+  updateShapeFinishBar();
+}
+
+// ============================================================
+// v3.21 — NUMBER STEPPERS (touch)
+// iOS Safari renders no spinner arrows on <input type="number">, so on an iPad
+// the thickness / size / percentage boxes could only be changed by tapping in
+// and using the on-screen keyboard. On a coarse pointer every number box gets
+// its own - and + button, stepping by the box's own `step` attribute and firing
+// the same input/change events typing does, so every existing binding applies.
+// Panels are rebuilt with innerHTML all the time, so a debounced MutationObserver
+// re-decorates whatever has just been drawn.
+// ============================================================
+function _stepNumberInput(input, dir) {
+  const step = parseFloat(input.step) || 1;
+  const min = (input.min === '' || input.min === null) ? -Infinity : parseFloat(input.min);
+  const max = (input.max === '' || input.max === null) ? Infinity : parseFloat(input.max);
+  let v = parseFloat(input.value);
+  if (!isFinite(v)) v = isFinite(min) ? min : 0;
+  v += dir * step;
+  // Round back onto the step grid so 0.5-steps do not accumulate binary dust
+  const dp = (String(step).split('.')[1] || '').length;
+  v = parseFloat(v.toFixed(dp));
+  if (v < min) v = min;
+  if (v > max) v = max;
+  input.value = String(v);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function _decorateNumberInputs(root) {
+  const scope = root || document;
+  const list = scope.querySelectorAll('input[type="number"]:not([data-stepped])');
+  for (let i = 0; i < list.length; i++) {
+    const inp = list[i];
+    inp.setAttribute('data-stepped', '1');
+    const parent = inp.parentNode;
+    if (!parent || (parent.classList && parent.classList.contains('num-stepper'))) continue;
+    const wrap = document.createElement('div');
+    wrap.className = 'num-stepper';
+    const mk = (txt, dir) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'num-step-btn'; b.textContent = txt; b.tabIndex = -1;
+      b.addEventListener('click', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        _stepNumberInput(inp, dir);
+      });
+      return b;
+    };
+    parent.insertBefore(wrap, inp);
+    wrap.appendChild(mk('\u2212', -1));
+    wrap.appendChild(inp);
+    wrap.appendChild(mk('+', 1));
+  }
+}
+
+if (DATUM_TOUCH_UI) {
+  let _numScanQueued = false;
+  const queueNumberScan = () => {
+    if (_numScanQueued) return;
+    _numScanQueued = true;
+    requestAnimationFrame(() => {
+      _numScanQueued = false;
+      try { _decorateNumberInputs(); } catch (_) {}
+    });
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    queueNumberScan();
+    try {
+      new MutationObserver(muts => {
+        for (let i = 0; i < muts.length; i++) {
+          if (muts[i].addedNodes && muts[i].addedNodes.length) { queueNumberScan(); return; }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
   });
 }
 
@@ -3795,6 +4014,8 @@ function redrawAnnotations() {
   }
   // Mirror live edits into the split pane when it shows this same document
   if (typeof scheduleSplitRefresh === 'function') scheduleSplitRefresh();
+  // Touch only: show / hide the Finish-shape bar in step with the live preview
+  if (typeof updateShapeFinishBar === 'function') updateShapeFinishBar();
 }
 
 function toggleSnap() {
@@ -5769,8 +5990,9 @@ function onCanvasMouseUp(e) {
       break;
   }
   startPoint = null; redrawAnnotations();
-  // Auto-return to select/pan after completing a drawing
-  if (didDraw) returnToNavTool();
+  // Auto-return to select/pan after completing a drawing — except the Pen,
+  // which stays armed so the next stroke can start straight away (v3.21).
+  if (didDraw && !(currentTool === 'pen' && penKeepArmed)) returnToNavTool();
 }
 
 function onCanvasDoubleClick(e) {
@@ -11077,6 +11299,11 @@ function getToolPropertiesHTML(tool) {
     if (!['text','highlight'].includes(tool)) {
       html += `<div class="property-row"><div class="property-label">Thickness:</div><input type="number" id="tool-thickness" class="property-input" min="0.5" max="10" step="0.5" value="${toolProperties.thickness}"></div>`;
     }
+    // v3.21 — the Pen stays selected between strokes unless this is unticked
+    if (tool === 'pen') {
+      html += `<div class="property-row"><label title="Leave the Pen selected after every stroke so you can keep drawing. Esc or V goes back to Select." style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" class="checkbox-input" id="tool-pen-keep" ${penKeepArmed ? 'checked' : ''}> Keep pen armed after each stroke</label></div>`;
+    }
     if (['line','arrow','measure','polyline','polyshape','dimension'].includes(tool)) {
       html += `<div class="property-row"><div class="property-label">Line Style:</div><select id="tool-linestyle" class="select-input">
         <option value="solid" ${toolProperties.lineStyle==='solid'?'selected':''}>Solid</option>
@@ -11122,6 +11349,12 @@ function attachToolListeners() {
   bind('tool-bold', 'fontWeight', t => t.checked?'bold':'normal');
   bind('tool-italic', 'fontStyle', t => t.checked?'italic':'normal');
   bind('tool-underline', 'textDecoration', t => t.checked?'underline':'none');
+
+  const penKeep = document.getElementById('tool-pen-keep');
+  if (penKeep) penKeep.addEventListener('change', e => {
+    penKeepArmed = e.target.checked;
+    try { localStorage.setItem('bdm-pen-keep', penKeepArmed ? '1' : '0'); } catch (_) {}
+  });
 
   const opSlider = document.getElementById('tool-opacity');
   if (opSlider) opSlider.addEventListener('input', e => { toolProperties.opacity = parseInt(e.target.value); document.getElementById('tool-op-val').textContent = e.target.value+'%'; });

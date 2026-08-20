@@ -897,3 +897,50 @@ James: "can i use this app on my ipad?" — it loaded in Safari but nothing coul
 - **Also:** viewport meta gained `maximum-scale=1, user-scalable=no, viewport-fit=cover` (stops iOS page-zooming when a panel input is focused — the alternative, forcing 16px on every input, wrecks the dense panels); `apple-mobile-web-app-*` meta + `apple-touch-icon` so Share ▸ Add to Home Screen opens Datum full-screen with its icon. PDF Save already fell back to a download when `showSaveFilePicker` is missing, so Safari was fine there; the **workbook** genuinely needs a writable file handle (Chrome/Edge only) and its alert now says so in plain language.
 - Verified control-first, 18 checks, Playwright + CDP `Input.dispatchTouchEvent` (real multi-touch) and `Input.dispatchMouseEvent` with `pointerType:'pen'`: on **v3.19** one-finger draw 0→0, pinch 1.000→1.000, two-finger pan 0,0→0,0, no touch layout; on **v3.20** finger rectangle, finger freehand, pinch 1.000→2.600, pan scrolls, gesture-mid-drag rollback byte-identical points, double-tap finishes a polyline, Pencil draws, palm ignored while the Pencil is down — and the five desktop control checks (mouse draw, mouse drag, Ctrl+wheel zoom, no `touch-ui` class, zero page errors) pass identically on both builds. Rail fits: desktop 760/766, iPad 629/635. Both script blocks `node --check` clean.
 - **Test harness note:** Playwright's `page.touchscreen` only taps. For multi-touch use `context.newCDPSession(page)` → `Input.dispatchTouchEvent` with a `touchPoints` array; for the Pencil use `Input.dispatchMouseEvent` with `pointerType: 'pen'`. Gotcha that cost a red test: most drawing tools call `returnToNavTool()` on completion, so `currentTool` is `select` again by the next stage — re-`setTool()` before every stroke.
+
+---
+
+## v3.21 (19 Aug 2026) — three things that only bit on the iPad
+
+James, after a real session on the iPad: *"tools such as polygon and poly shape you couldn't complete shape. The pen tool swaps back to point each time you finish, needs to stay on pen so you can keep drawing. Also on iPad the thickness boxes don't have arrows to change size, you have to click in and use keyboard to adjust."*
+
+### 1. Multi-point shapes could not be closed — new **Finish-shape bar**
+
+A polyline measure, polyline shape, polygon, area or callout is closed on a computer with a **double-click, Enter, or right-click**. An iPad has none of the three. v3.20 synthesised a double-tap for exactly this reason, but `DBLTAP_MS` was **320 ms** — tighter than a deliberate double tap on glass — so the second tap usually arrived late and just added another vertex. The shape could be started but never finished.
+
+- `DBLTAP_MS` **320 → 460**. Double-tap still works and is still guarded against iOS's own native `dblclick` by `onCanvasDoubleClickGuarded` (500 ms window, unchanged).
+- The real fix is an **explicit affordance**, not a better gesture. New floating bar `#shape-finish-bar`, `position: fixed`, bottom-centre, shown **whenever a multi-point shape is open on a `DATUM_TOUCH` device**: `n points` · **Undo point** · **Finish** · **Cancel**.
+- New functions next to the touch dispatcher: `_shapeInProgressKind()` (returns `'poly'` / `'callout'` / `null`), `_ensureShapeBar()`, `updateShapeFinishBar()`, and the three globals the buttons call — `touchFinishShape()`, `touchUndoShapePoint()`, `touchCancelShape()`. Constant `SHAPE_BAR_TOOLS = ['polyline','polyshape','area','polygon']`.
+- **Finish is disabled until the shape is legal** — 3 points for `area`/`polygon`, 2 for `polyline`/`polyshape` — mirroring `finishPolyShape`'s own guards, so the button can never silently discard the work.
+- **Callout is covered too** (it also needs a double-click on a computer): Finish drops the text box 40 px past the last leader point and calls `showCalloutTextInput` with the same arguments the double-click path uses.
+- **Hook point: the last line of `redrawAnnotations()`.** That is the one function every vertex push already calls, so the bar tracks the live preview exactly. It is therefore called at mousemove rate — `updateShapeFinishBar()` builds a `kind:n:enabled` signature string and **only touches the DOM when that changes**. Keep it that way.
+- Gated on `DATUM_TOUCH` (any touch-capable device), **not** `DATUM_TOUCH_UI` (coarse primary pointer). A touchscreen Windows laptop keeps its desktop layout but still gets the bar, which is harmless and useful. On a pure-mouse machine the element is never even created.
+
+### 2. Pen now stays armed between strokes
+
+`onCanvasMouseUp` ended with `if (didDraw) returnToNavTool();` — every completed stroke snapped the tool back to Select, so freehand annotating meant re-picking the Pen after every line. Now:
+
+```js
+if (didDraw && !(currentTool === 'pen' && penKeepArmed)) returnToNavTool();
+```
+
+`penKeepArmed` is a new top-level `let` beside `polylinePoints`, **default ON**, persisted at `localStorage['bdm-pen-keep']` — the same pattern as `symbolKeepPlacing` / the Tick and Sequence tools, which have always stayed armed. Esc or V exits. The Pen tool panel gained a **"Keep pen armed after each stroke"** checkbox (`#tool-pen-keep`, bound in `attachToolListeners`); unticking it restores the pre-v3.21 behaviour exactly. This is a **desktop change as well as a touch one** — deliberately, because the complaint is not iPad-specific.
+
+### 3. Number boxes get − / + steppers on touch
+
+iOS Safari renders **no spinner arrows** inside `<input type="number">`, so on an iPad every Thickness / Size / Head % / percentage box could only be changed by tapping into it and using the on-screen keyboard. There are 41 such inputs across the app.
+
+- `_decorateNumberInputs(root)` wraps each undecorated `input[type=number]` in a `.num-stepper` flex div with a `−` and a `+` `.num-step-btn` (36 × 34 px). `_stepNumberInput(input, dir)` steps by the box's **own `step` attribute**, rounds back onto the step grid to `step`'s decimal places (so 0.5-steps never accumulate binary dust), clamps to `min`/`max`, then dispatches **both `input` and `change`** — which is why every existing `bind()` in `attachToolListeners` / `attachAnnotationListeners` picks the value up with no per-input wiring.
+- Panels are rebuilt with `innerHTML` constantly, so a **rAF-debounced `MutationObserver` on `document.body`** re-decorates whatever was just drawn. The `:not([data-stepped])` selector makes the observer's reaction to its own insertions a no-op after one extra frame.
+- **`DATUM_TOUCH_UI` only** (coarse primary pointer) — a mouse-driven machine, touchscreen laptops included, is byte-for-byte unchanged. Verified by control run.
+- Inputs keep their `id`, so `document.getElementById('tool-thickness')` and friends still resolve; only the parent changes. Nothing in the app walks `nextElementSibling` off an input (checked).
+
+### Verification
+
+27/27 Playwright checks over a served build (CDN routed to local `pdfjs-dist@3.11.174` + `pdf-lib`), touch context with `matchMedia('(pointer: coarse)')` forced true, plus a **desktop control context** in the same run:
+
+*Touch* — `touch-ui` applied; `DBLTAP_MS === 460`; bar appears at 3 points reading "3 points"; Undo point → 2; Finish creates the polyline and hides the bar; area Finish disabled at 2 / enabled at 3 and creates the area; Cancel clears the draft, adds nothing, hides the bar; **double-tap still finishes a polyshape**; Pen stays `pen` after a stroke and the stroke exists; Thickness box is wrapped with exactly 2 stepper buttons; `+` moves `toolProperties.thickness` 1 → 1.5 (binding fires); `−` moves it back and past; clamps at min 0.5; zero page errors.
+
+*Desktop control* — no `touch-ui`; `DATUM_TOUCH === false`; **no steppers added**; mouse dblclick still finishes a polyline; `#shape-finish-bar` never created; Pen stays armed (intended cross-platform change) and **unticking the checkbox restores `select` on stroke end**; zero page errors.
+
+Both inline `<script>` blocks `node --check` clean.
