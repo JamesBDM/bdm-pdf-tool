@@ -974,3 +974,13 @@ Two different controls both said **Corners**. The one James used was the **strok
 ### Verification
 
 33 logic checks in a Node VM against the functions lifted straight out of the file (parser, both anchors, angle preservation, deduction minus, viewport re-solve, uncalibrated / garbage / zero-length / SHAPE guards), plus an end-to-end pass in the browser on a blank A4 at 1:100: typing `2500` into the panel input moved the line 3.83 → 70.87 page units (2500 mm at 1:100 = 70.866) with the start point fixed, label `135mm → 2.50m`, `measurements[]` in step, panel input refreshed, one undo step that restores the original length; area `9.96m² → 48.00m²` with the centroid and aspect ratio unmoved; and the Corners picker square → rounded → typed 20 → square, with no `Line Joins` row present on a rectangle. Both inline `<script>` blocks parse clean.
+
+### Deploying (from v3.23 on) — the project folder IS the working copy
+
+Until now the live site was updated by dragging files into the GitHub web UI, which is why the repo's history is 68 commits all called "update" and why `_to_delete/` still holds two empty `index.lock` files from a bad upload.
+
+- The **project folder is now a clone** of `github.com/JamesBDM/bdm-pdf-tool` (cloned with `--no-checkout`, `.git` moved in, `git reset` — so the full history is intact and the working tree was never overwritten). Edit in place, run **`.\deploy.ps1`** (or double-click `Deploy to GitHub.cmd`), done.
+- **`.gitignore` is deny-by-default** — `*` first, then an explicit allow-list. This folder sits in OneDrive next to client PDFs, user guides in .docx, brand assets and the packaged agent skill, and the repo is **public**; a conventional ignore list would leak the first time someone dropped a new file in. Anything added to the folder stays private until it's named in the allow-list.
+- **`deploy.ps1` refuses to push an app that doesn't parse.** It runs `check-syntax.js` (local only, not published), which `vm.Script`s both inline `<script>` blocks — the single-file design means one stray bracket is a white screen for every user. It also reads `APP_VERSION` out of the HTML for the commit message and **warns when the app changed but the badge didn't**.
+- Keep the script **ASCII-only**. Windows PowerShell 5.1 reads a `.ps1` as ANSI unless it has a BOM, so the em dashes in the first draft came back as mojibake and broke the parser 40 lines later.
+- `github-upload/` is now redundant (it was the old staging folder) and is ignored.

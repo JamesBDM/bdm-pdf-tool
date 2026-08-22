@@ -1,5 +1,30 @@
 # Hosting the BDM PDF Tool on GitHub Pages
 
+> ## Already set up? Publishing a change is one step
+>
+> The project folder is now a git working copy of this repo, so there is no
+> more dragging files into a browser:
+>
+> **Double-click `Deploy to GitHub.cmd`** (or run `.\deploy.ps1` in PowerShell).
+>
+> It checks the app's JavaScript actually parses, shows you exactly which files
+> are going up, commits, pushes, and prints the live URL. GitHub Pages rebuilds
+> in a minute or two — then hard-refresh with **Ctrl+F5** and check the version
+> badge next to the logo.
+>
+> - `.\deploy.ps1 -WhatIfOnly` — see what would go up, send nothing.
+> - `.\deploy.ps1 -Message "what changed"` — your own commit message.
+> - **What gets published is decided by `.gitignore`, which is deny-by-default.**
+>   Only the app, the icons, `index.html`, `manifest.json` and the three public
+>   `.md` files leave your machine. Client PDFs, the user guides, brand assets,
+>   backups and the agent skill stay put. Anything new you drop in the folder
+>   stays private until you add it to the allow-list.
+>
+> The walkthrough below is the original one-off setup, kept for reference (and
+> for the day someone has to do this again from scratch).
+
+---
+
 A click-by-click walkthrough. You only do this once. Allow about 10 minutes.
 
 What you'll end up with: a permanent web address (e.g. `https://jamesbdm.github.io/bdm-pdf-tool/`) that you can install on any Windows machine as a real app.
