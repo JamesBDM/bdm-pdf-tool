@@ -944,3 +944,33 @@ iOS Safari renders **no spinner arrows** inside `<input type="number">`, so on a
 *Desktop control* — no `touch-ui`; `DATUM_TOUCH === false`; **no steppers added**; mouse dblclick still finishes a polyline; `#shape-finish-bar` never created; Pen stays armed (intended cross-platform change) and **unticking the checkbox restores `select` on stroke end**; zero page errors.
 
 Both inline `<script>` blocks `node --check` clean.
+
+---
+
+## v3.23 (22 Aug 2026) — type a size, the markup follows
+
+James: *"Make the measurement editable so that you can manually adjust the size of a measure line, for example, and it will auto adjust the measure line on the drawing"* — and, separately, *"the round corners on boxed function isnt working"*.
+
+(The knowledge doc has no v3.22 entry; the app was already at v3.22 when this work started.)
+
+### 1. The measured value in Properties is now an input
+
+`Properties ▸ Measurement` showed the length/area as a coloured read-out. It is now a text box: type the size the markup **should** be, press Enter, and the geometry is rescaled so the measurement lands exactly on it. Covers `measure`, `dimension`, `polyline` and `area`.
+
+- **Anchors, chosen so nothing jumps.** A measure/dimension line stretches **from its start point** (the end drawn first stays put) along its existing bearing — the angle is untouched. A polyline scales as a whole about its **first vertex**. An area polygon scales about its **centroid** by `√(target/current)`, so it keeps its shape and its position on the sheet.
+- **Everything downstream is derived, so nothing else needed touching.** The draw routines recompute `ann.label` from the points on every frame, so the tail of `setMeasurementSize` is the same one a handle-drag resize already runs: `saveToHistory → redrawAnnotations → rebuildMeasurements → openPropertiesPanel → refreshMeasurementsPanel → refreshTakeoffPanel`. Label, Measurements tally, take-off quantity and workbook all follow. One undo step per edit.
+- **Units.** `parseMeasurementInput` takes `135`, `135mm`, `1.35m`, `1,350`, `12m²`, `12 sqm`, `4500000mm2`, and strips a leading deduction `−`. A **bare number is read in whatever unit the label is currently showing** — typing `135` over `135mm` means millimetres, over `1.35m` means metres. Unknown units (`12ft`) and zero are rejected with a toast and no change.
+- **Viewports.** `_measCalPoint` mirrors the point each draw routine passes to `getCalibratedLabel`, so a markup inside a 1:20 detail region is solved at the viewport's scale. Because resizing **moves** that point, the solve loops up to 4 times — a markup that grows into or out of a viewport re-solves at the scale it ends up in. Converges on the first pass everywhere else.
+- **Read-only cases, deliberately.** An uncalibrated page (`Not calibrated`) has nothing to solve against — the row stays a read-out and the toast says to calibrate first. A polyline drawn with the SHAPE tool (`isShape`) is decoration, never a measurement. Perimeter stays read-only: with the area already typed, a second constraint would fight it. An **m³ volume** read-out is area × depth, so the volume row stays read-only and the shape's **Area** gets the editable row underneath it.
+- New functions beside `updateMeasLabel`: `measIsResizable`, `_measCalPoint`, `_measPixelSize`, `parseMeasurementInput`, `_scalePointsAbout`, `setMeasurementSize`.
+
+### 2. "Corners: Round" on a box did nothing — because it was never the box control
+
+Two different controls both said **Corners**. The one James used was the **stroke-join** picker (`ctx.lineJoin`), which shapes where two strokes meet — half a line width, i.e. **invisible at 1 px**. The control that actually rounds a box is **Corner Radius**, which was sitting at 0 two rows above it.
+
+- On box shapes (`rectangle`, `text`, `callout`, all `PANEL_TYPES`) the radius now has a plain **Corners: Square / Rounded** picker in front of it. Rounded sets `ann.radius` to `DEFAULT_CORNER_RADIUS` (8, new constant) when there's no radius yet; the Corner Radius number is still there to fine-tune it. The two are kept in step in both directions, so they can never disagree.
+- The stroke-join picker is **renamed "Line Joins"**, tooltipped as such, and **no longer shown on rectangles** (on a closed box it is meaningless; `Line Ends` stays, because it does matter once `Border Sides` cuts the outline into open segments). Open-path types — line, arrow, polyline, polygon, pen, cloud — keep it unchanged.
+
+### Verification
+
+33 logic checks in a Node VM against the functions lifted straight out of the file (parser, both anchors, angle preservation, deduction minus, viewport re-solve, uncalibrated / garbage / zero-length / SHAPE guards), plus an end-to-end pass in the browser on a blank A4 at 1:100: typing `2500` into the panel input moved the line 3.83 → 70.87 page units (2500 mm at 1:100 = 70.866) with the start point fixed, label `135mm → 2.50m`, `measurements[]` in step, panel input refreshed, one undo step that restores the original length; area `9.96m² → 48.00m²` with the centroid and aspect ratio unmoved; and the Corners picker square → rounded → typed 20 → square, with no `Line Joins` row present on a rectangle. Both inline `<script>` blocks parse clean.

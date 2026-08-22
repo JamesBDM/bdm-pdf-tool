@@ -1,0 +1,37 @@
+# The GitHub repo behind jamesbdm.github.io/bdm-pdf-tool is PUBLIC, and this
+# folder holds plenty that shouldn't be — client PDFs, user guides, brand
+# assets, backups, the agent skill. So the rule is deny-by-default: ignore
+# everything, then name the files that are allowed out. Anything new you drop
+# in this folder stays private unless it's added to the allow-list below.
+*
+
+# --- the live site ---
+!.gitignore
+!.gitattributes
+!index.html
+!BDM-PDF-Markup-Tool.html
+!manifest.json
+
+# --- icons (app, favicon, saved-document type icon) ---
+!favicon.ico
+!datum-pdf-document.ico
+!icon-32.png
+!icon-64.png
+!icon-192.png
+!icon-512.png
+!icon-maskable-512.png
+!doc-icon-16.png
+!doc-icon-32.png
+!doc-icon-48.png
+!doc-icon-64.png
+!doc-icon-192.png
+!doc-icon-512.png
+
+# --- docs that were already public in the repo ---
+!BDM-PDF-MARKUP-TOOL-PROJECT-KNOWLEDGE.md
+!DEPLOY-AS-APP.md
+!GITHUB-DEPLOY-GUIDE.md
+
+# Deliberately NOT published: BDM-PDF-Markup-Tool.BACKUP-*.html, *.docx,
+# *.zip, *.skill, *.pdf, TEAM-INSTALL-GUIDE.md, app_current*.png,
+# datum-markup/, github-upload/, ss/.

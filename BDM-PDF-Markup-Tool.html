@@ -1993,7 +1993,10 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.22';
+const APP_VERSION = 'v3.23';
+// v3.23 — how round "Rounded" is when the Corners picker turns it on. The
+// Corner Radius box overrides it per markup.
+const DEFAULT_CORNER_RADIUS = 8;
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -11916,10 +11919,20 @@ function getAnnotationPropertiesHTML(ann) {
           <input type="range" id="prop-hatch-opacity" class="slider" min="5" max="100" value="${ann.hatchOpacity !== undefined ? ann.hatchOpacity : 30}"></div>`;
     }
 
-    // ---- v3.22: corner radius ----
+    // ---- v3.22: corner radius — v3.23: fronted by a plain Square / Rounded
+    // picker. The stroke-join control further down also says "Corners", but it
+    // only rounds the JOIN — half a line width, invisible at 1px — so picking
+    // Round there on a box looked like nothing happened. On box shapes the
+    // real geometry control is this one, and the join control is hidden.
     if (['rectangle','text','callout'].includes(ann.type) || PANEL_TYPES.includes(ann.type)) {
-      html += `<div class="property-row"><div class="property-label" title="Round the corners. 0 = square, exactly as before.">Corner Radius:</div>
-        <input type="number" id="prop-radius" class="property-input" min="0" max="80" step="1" value="${ann.radius || 0}" style="width:64px"></div>`;
+      const rNow = ann.radius || 0;
+      html += `<div class="property-row"><div class="property-label" title="Square corners or rounded ones. Set how round with the radius below.">Corners:</div>
+          <select id="prop-corner-style" class="select-input">
+            <option value="square" ${!rNow ? 'selected' : ''}>Square</option>
+            <option value="round" ${rNow ? 'selected' : ''}>Rounded</option>
+          </select></div>
+        <div class="property-row"><div class="property-label" title="How round the corners are, in page units. 0 = square.">Corner Radius:</div>
+          <input type="number" id="prop-radius" class="property-input" min="0" max="80" step="1" value="${rNow}" style="width:64px"></div>`;
     }
 
     // ---- v3.22: box padding ----
@@ -11983,18 +11996,23 @@ function getAnnotationPropertiesHTML(ann) {
     }
 
     // ---- v3.22: stroke cap / join ----
+    // v3.23: renamed "Corners" → "Line Joins" and dropped from rectangles.
+    // It shapes where two strokes MEET, which on a box is half a line width —
+    // nothing you can see at 1px. Boxes get the real Corners picker above.
     if (['line','arrow','polyline','polygon','rectangle','pen','cloud'].includes(ann.type)) {
       const lc = ann.lineCap || 'butt', lj = ann.lineJoin || 'miter';
       html += `<div class="property-row"><div class="property-label">Line Ends:</div><select id="prop-linecap" class="select-input">
           <option value="butt" ${lc==='butt'?'selected':''}>Flat</option>
           <option value="round" ${lc==='round'?'selected':''}>Round</option>
           <option value="square" ${lc==='square'?'selected':''}>Square</option>
-        </select></div>
-        <div class="property-row"><div class="property-label">Corners:</div><select id="prop-linejoin" class="select-input">
+        </select></div>`;
+      if (ann.type !== 'rectangle') {
+        html += `<div class="property-row"><div class="property-label" title="How the stroke turns a bend. Only reads at thicker line weights — to round a box's corners use Corners / Corner Radius above.">Line Joins:</div><select id="prop-linejoin" class="select-input">
           <option value="miter" ${lj==='miter'?'selected':''}>Sharp</option>
           <option value="round" ${lj==='round'?'selected':''}>Round</option>
           <option value="bevel" ${lj==='bevel'?'selected':''}>Bevel</option>
         </select></div>`;
+      }
     }
 
     html += `<div class="slider-group"><div class="slider-label"><span>Opacity:</span><span id="prop-op-val">${ann.opacity||100}%</span></div>
@@ -12122,11 +12140,38 @@ function getAnnotationPropertiesHTML(ann) {
     }
   }
 
-  // Measurement info
+  // Measurement info — v3.23: the measured value is an INPUT, not a read-out.
+  // Type the size the markup should be and it rescales on the drawing to suit
+  // (setMeasurementSize). Uncalibrated pages stay read-only — there's nothing
+  // to solve against — and so does the m³ volume read-out, which is the area
+  // times a depth: its AREA gets the editable row instead.
   if (ann.label || ann.perimLabel) {
+    const mId = (ann.id || '').replace(/'/g, "\'");
+    const mEditable = measIsResizable(ann) && !!_calFor(ann.page, _measCalPoint(ann));
+    const isVol = ann.type === 'area' && String(ann.label || '').indexOf('m³') !== -1;
+    const sizeRow = (rowLabel, value, hint) =>
+      `<div class="property-row"><div class="property-label" title="${hint}">${rowLabel}:</div>
+        <input type="text" class="property-input" value="${_escPM(value)}" style="color:var(--accent);font-weight:600"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+          onchange="setMeasurementSize('${mId}', this.value)"></div>`;
     html += `<div class="properties-section"><div class="properties-section-title">Measurement</div><div class="properties-section-content">`;
-    if (ann.label) html += `<div class="property-row"><div class="property-label">${ann.type==='area' ? (ann.label.indexOf('m³') !== -1 ? 'Volume' : 'Area') : 'Length'}:</div><div class="property-value" style="color:var(--accent);font-weight:600">${ann.label}</div></div>`;
+    if (ann.label) {
+      const rowLabel = ann.type === 'area' ? (isVol ? 'Volume' : 'Area') : 'Length';
+      if (mEditable && !isVol) {
+        html += sizeRow(rowLabel, String(ann.label).replace('−', ''),
+          ann.type === 'area'
+            ? 'Type the real-world area — the shape resizes about its centre to match. Accepts 12, 12m² or 4500000mm².'
+            : 'Type the real-world length — the markup resizes on the drawing to match. Accepts 135, 135mm or 1.35m.');
+      } else {
+        html += `<div class="property-row"><div class="property-label">${rowLabel}:</div><div class="property-value" style="color:var(--accent);font-weight:600">${ann.label}</div></div>`;
+      }
+      if (isVol && mEditable) {
+        html += sizeRow('Area', getCalibratedArea(getPolygonArea(ann.points), ann.page, getCentroid(ann.points)),
+          'Type the real-world area — the shape resizes about its centre to match. The volume follows from the depth.');
+      }
+    }
     if (ann.perimLabel) html += `<div class="property-row"><div class="property-label">Perimeter:</div><div class="property-value" style="color:var(--accent)">${ann.perimLabel}</div></div>`;
+    if (mEditable) html += `<div style="font-size:10px;color:var(--text-muted);padding:2px 2px 0">Type a size and press Enter — the markup resizes on the drawing${ann.type === 'area' ? ' about its centre' : ' from its start point'}.</div>`;
     html += `</div></div>`;
   }
 
@@ -12247,6 +12292,20 @@ function attachAnnotationListeners(ann) {
   }
   // ---- v3.22 appearance ----
   bind('prop-radius', 'radius', t => Math.max(0, parseFloat(t.value) || 0));
+  // v3.23 — the Square / Rounded picker drives the real corner geometry, and
+  // the two controls are kept in step so they can never disagree.
+  {
+    const cs = document.getElementById('prop-corner-style');
+    const rn = document.getElementById('prop-radius');
+    if (cs) cs.addEventListener('change', e => {
+      ann.radius = e.target.value === 'round' ? (ann.radius || DEFAULT_CORNER_RADIUS) : 0;
+      if (rn) rn.value = ann.radius;
+      redrawAnnotations();
+      pushHistorySoon();
+    });
+    // bind() above has already written ann.radius by the time this fires.
+    if (rn && cs) rn.addEventListener('change', () => { cs.value = (ann.radius || 0) ? 'round' : 'square'; });
+  }
   bind('prop-boxpad', 'boxPad', t => t.value === '' ? undefined : Math.max(0, parseFloat(t.value) || 0));
   bind('prop-valign', 'vAlign');
   bind('prop-strokeside', 'strokeSide');
@@ -17537,6 +17596,144 @@ function updateMeasLabel(annId, newLabel) {
   if (m) m.label = newLabel;
   const ann = annotations.find(a => a.id === annId);
   if (ann) ann.measLabel = newLabel;
+}
+
+// ============================================================
+// EDITABLE MEASUREMENTS (v3.23)
+// ------------------------------------------------------------
+// The measured value in the Properties panel is typed, not just read.
+// Enter the size a markup SHOULD be and Datum rescales the geometry so the
+// measurement lands exactly on it: a measure or dimension line stretches
+// from its start point (the end you drew first stays put), a polyline scales
+// as a whole about its first vertex, and an area polygon scales about its
+// centroid so it keeps its shape and its place on the sheet. The label,
+// the Measurements tally, the take-off quantity and the workbook all follow
+// from the geometry, so they update themselves.
+// ============================================================
+
+// Which markups can be driven from a typed size.
+// isShape = drawn with the polyline SHAPE tool — decoration, never measured.
+function measIsResizable(ann) {
+  if (!ann || ann.isShape || !ann.points) return false;
+  if (ann.type === 'area') return ann.points.length >= 3;
+  if (ann.type === 'polyline') return ann.points.length >= 2;
+  return ['measure', 'dimension'].includes(ann.type) && ann.points.length >= 2;
+}
+
+// Where a measurement asks for its calibration. Mirrors the point each draw
+// routine passes to getCalibratedLabel, so a markup sitting inside a viewport
+// (e.g. a 1:20 detail on a 1:100 sheet) is solved at the viewport's scale.
+function _measCalPoint(ann) {
+  const p = ann && ann.points;
+  if (!p || !p.length) return null;
+  if (ann.type === 'area') return getCentroid(p);
+  if (ann.type === 'polyline') return p[0];
+  return p.length >= 2 ? { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 } : p[0];
+}
+
+// Current size in page pixels — length for lines/polylines, area for polygons.
+function _measPixelSize(ann) {
+  const p = ann.points || [];
+  if (ann.type === 'area') return p.length >= 3 ? getPolygonArea(p) : 0;
+  if (ann.type === 'polyline') {
+    let d = 0;
+    for (let i = 1; i < p.length; i++) d += Math.hypot(p[i].x - p[i-1].x, p[i].y - p[i-1].y);
+    return d;
+  }
+  return p.length >= 2 ? Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y) : 0;
+}
+
+// "135" / "135 mm" / "1.35m" / "1,350" / "12m²" / "12 sqm" → mm (or mm² for an
+// area). A bare number is read in whatever unit the label is already showing,
+// so typing 135 over "135mm" means millimetres and over "1.35m" means metres.
+function parseMeasurementInput(raw, isArea, defaultUnit) {
+  if (raw === undefined || raw === null) return NaN;
+  const s = String(raw).trim().toLowerCase()
+    .replace(/[−–—]/g, '')      // the deduction minus and friends
+    .replace(/,/g, '')          // 1,350
+    .replace(/\s+/g, '');
+  const m = s.match(/^([0-9]*\.?[0-9]+)(.*)$/);
+  if (!m) return NaN;
+  const v = parseFloat(m[1]);
+  if (!isFinite(v) || v <= 0) return NaN;
+  const unit = (m[2] || defaultUnit || (isArea ? 'm2' : 'mm'))
+    .replace(/\^/g, '').replace(/²/g, '2').replace(/³/g, '3').replace(/sq/g, '');
+  if (isArea) {
+    if (unit === 'm' || unit === 'm2') return v * 1000000;
+    if (unit === 'cm' || unit === 'cm2') return v * 100;
+    if (unit === 'mm' || unit === 'mm2') return v;
+    return NaN;
+  }
+  if (unit === 'm') return v * 1000;
+  if (unit === 'cm') return v * 10;
+  if (unit === 'mm') return v;
+  return NaN;
+}
+
+// Scale a run of points away from (or toward) an anchor point.
+function _scalePointsAbout(pts, anchor, f) {
+  return pts.map(p => Object.assign({}, p, {
+    x: anchor.x + (p.x - anchor.x) * f,
+    y: anchor.y + (p.y - anchor.y) * f
+  }));
+}
+
+// The Properties panel's Length / Area input lands here.
+function setMeasurementSize(annId, raw) {
+  const ann = annotations.find(a => a.id === annId);
+  if (!ann) return;
+  if (!measIsResizable(ann)) { openPropertiesPanel(); return; }
+  const isArea = ann.type === 'area';
+
+  if (!_calFor(ann.page, _measCalPoint(ann))) {
+    showToast('Calibrate this page first — then you can type exact sizes');
+    openPropertiesPanel();
+    return;
+  }
+  // Unit for a bare number = the unit currently on the label.
+  const cur = String(ann.label || '');
+  const defUnit = isArea ? (cur.indexOf('m²') !== -1 ? 'm2' : 'mm2')
+                         : (/[0-9.]m\b|[0-9.]m$/.test(cur) && cur.indexOf('mm') === -1 ? 'm' : 'mm');
+  const want = parseMeasurementInput(raw, isArea, defUnit);
+  if (!(want > 0)) {
+    showToast(isArea ? 'Enter an area like 12, 12m² or 4500000mm²'
+                     : 'Enter a length like 135, 135mm or 1.35m');
+    openPropertiesPanel();
+    return;
+  }
+  if (!(_measPixelSize(ann) > 0)) {
+    showToast('That markup has no size to scale — redraw it');
+    openPropertiesPanel();
+    return;
+  }
+
+  // Solve iteratively: resizing moves the point the calibration is read from,
+  // so a markup that grows into (or out of) a viewport needs a second pass at
+  // the new scale. Converges in one pass everywhere else.
+  const before = ann.label;
+  for (let i = 0; i < 4; i++) {
+    const cal = _calFor(ann.page, _measCalPoint(ann));
+    const px = _measPixelSize(ann);
+    if (!cal || !(px > 0) || !(cal.pixelsPerMm > 0)) break;
+    const targetPx = isArea ? want * cal.pixelsPerMm * cal.pixelsPerMm
+                            : want * cal.pixelsPerMm;
+    const f = isArea ? Math.sqrt(targetPx / px) : targetPx / px;
+    if (!isFinite(f) || f <= 0) break;
+    if (Math.abs(f - 1) < 1e-9) break;
+    const anchor = isArea ? getCentroid(ann.points) : ann.points[0];
+    ann.points = _scalePointsAbout(ann.points, anchor, f);
+  }
+
+  // Same tail as a handle-drag resize — labels are recomputed by the redraw,
+  // so the tallies and the take-off read the new figure.
+  saveToHistory();
+  redrawAnnotations();
+  rebuildMeasurements();
+  openPropertiesPanel();
+  refreshMeasurementsPanel();
+  if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
+  const now = String(ann.label || '').replace('−', '');
+  showToast(now && now !== before ? 'Resized to ' + now : 'Size unchanged');
 }
 
 function exportMeasurementsCSV() {
