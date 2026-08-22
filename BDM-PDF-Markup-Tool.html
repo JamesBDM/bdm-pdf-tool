@@ -1495,6 +1495,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();setTool('callout')">Callout <span class="k">B</span></div>
       <div class="ami" onclick="amClose();setTool('table')">Legend / Table (custom)…</div>
       <div class="ami" onclick="amClose();setTool('stamp')">Stamp <span class="k">S</span></div>
+      <div class="am-sep"></div>
+      <div class="ami" onclick="amClose();setTool('banner')">Banner / Section Header</div>
+      <div class="ami" onclick="amClose();setTool('kpi')">KPI Tile</div>
+      <div class="ami" onclick="amClose();setTool('chip')">Status Chip</div>
+      <div class="ami" onclick="amClose();setTool('quote')">Finding / Quote Panel</div>
+      <div class="ami" onclick="amClose();setTool('divider')">Divider Rule</div>
+      <div class="ami" onclick="amClose();setTool('chevron')">Process Chevrons</div>
+      <div class="ami" onclick="amClose();setTool('timeline')">Milestone Timeline</div>
+      <div class="ami" onclick="amClose();setTool('progress')">Progress Bar</div>
+      <div class="ami" onclick="amClose();setTool('chart')">Chart (bar / line / donut)</div>
+      <div class="ami" onclick="amClose();setTool('bracket')">Span Bracket</div>
+      <div class="ami" onclick="amClose();setTool('badge')">Numbered Badge</div>
       <div class="ami" onclick="amClose();armSequenceTool()">Sequence (numbered labels)</div>
       <div class="ami" onclick="amClose();setTool('pen')">Pen <span class="k">P</span></div>
       <div class="ami" onclick="amClose();setTool('highlight')">Highlight <span class="k">G</span></div>
@@ -1981,7 +1993,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.21';
+const APP_VERSION = 'v3.22';
 
 // ============================================================
 // TAKEOFF (Cubit-style) STATE
@@ -3610,6 +3622,8 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
     // Restore editable project state if this file was saved by the BDM tool
     if (restoredProject) {
       if (Array.isArray(restoredProject.annotations)) annotations = restoredProject.annotations;
+      // v3.22: expand any {"preset":"..."} an agent wrote into real properties.
+      resolveAnnotationPresets(annotations);
       if (restoredProject.pageCalibrations) pageCalibrations = restoredProject.pageCalibrations;
       if (restoredProject.defaultCalibration) defaultCalibration = restoredProject.defaultCalibration;
       else { const k = Object.keys(pageCalibrations)[0]; if (k !== undefined) defaultCalibration = { ...pageCalibrations[k] }; }
@@ -3802,7 +3816,7 @@ function updateSelectHoverCursor(screenPt) {
     if (sel) {
       const hi = getResizeHandleAtPoint(sel, pagePt.x, pagePt.y, tol);
       if (hi >= 0) {
-        if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(sel.type) && sel.points.length === 2) {
+        if (BOX2_TYPES.includes(sel.type) && sel.points.length === 2) {
           // 0=TL 1=TC 2=TR 3=ML 4=MR 5=BL 6=BC 7=BR
           cursor = ['nwse-resize','ns-resize','nesw-resize','ew-resize','ew-resize','nesw-resize','ns-resize','nwse-resize'][hi] || 'move';
         } else if (['stamp','legend','table'].includes(sel.type)) {
@@ -3948,6 +3962,7 @@ function redrawAnnotations() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   // Viewport regions go underneath the markups
   drawViewportOverlays(ctx);
+  drawGroupPickOverlay(ctx);
   const _hiPkgSet = (typeof highlightTakeoffPkgKey !== 'undefined' && highlightTakeoffPkgKey) ? new Set(_pkgMeasuredItemIds(highlightTakeoffPkgKey)) : null;
   annotations.forEach(ann => {
     if (ann.page !== currentPage) return;
@@ -4169,20 +4184,172 @@ function snapPageToContent(pagePt) {
 // ============================================================
 // HATCH PATTERNS
 // ============================================================
-function drawHatchPattern(ctx, bounds, hatchType, color) {
+// The font stack the presentation markups use. Declared here — not borrowed
+// from TABLE_FONT — because TABLE_FONT is a `const` declared thousands of
+// lines further down, and DATUM_PRESETS below is evaluated at load time.
+const DATUM_FONT = '"Segoe UI", Arial, sans-serif';
+
+// ============================================================
+// v3.22 — SHARED PAINT HELPERS
+// Radius, gradients, shadows, side-strokes and arrow heads live here so every
+// shape gets them identically on screen, bake, flatten, print and report.
+// ============================================================
+
+// Rounded-rect Path2D. r=0 gives a plain rect, so callers can use this
+// unconditionally. Negative w/h (corners given in any order) are normalised,
+// and the radius is clamped to half the shorter side so it can never invert.
+function _rrPath(x, y, w, h, r) {
+  const p = new Path2D();
+  const x0 = Math.min(x, x + w), y0 = Math.min(y, y + h);
+  const ww = Math.abs(w), hh = Math.abs(h);
+  const rr = Math.max(0, Math.min(r || 0, ww / 2, hh / 2));
+  if (!rr) { p.rect(x0, y0, ww, hh); return p; }
+  p.moveTo(x0 + rr, y0);
+  p.lineTo(x0 + ww - rr, y0);      p.quadraticCurveTo(x0 + ww, y0, x0 + ww, y0 + rr);
+  p.lineTo(x0 + ww, y0 + hh - rr); p.quadraticCurveTo(x0 + ww, y0 + hh, x0 + ww - rr, y0 + hh);
+  p.lineTo(x0 + rr, y0 + hh);      p.quadraticCurveTo(x0, y0 + hh, x0, y0 + hh - rr);
+  p.lineTo(x0, y0 + rr);           p.quadraticCurveTo(x0, y0, x0 + rr, y0);
+  p.closePath();
+  return p;
+}
+
+// Normalised bounding box of a two-point shape.
+function _annBox2(ann) {
+  const [a, b] = ann.points;
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+           w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+}
+
+// The fill for a shape: a flat colour, or a two-stop linear gradient when
+// ann.fillColor2 is set. gradientAngle is degrees clockwise from left-to-right;
+// the default 90 runs top to bottom.
+function _fillStyleFor(ctx, ann, b, baseColor) {
+  const c1 = baseColor || ann.fillColor;
+  if (!ann.fillColor2 || ann.fillColor2 === 'none' || !b || !b.w || !b.h) return c1;
+  const a = ((ann.gradientAngle !== undefined ? ann.gradientAngle : 90)) * Math.PI / 180;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const ext = (Math.abs(b.w * Math.cos(a)) + Math.abs(b.h * Math.sin(a))) / 2;
+  const g = ctx.createLinearGradient(cx - Math.cos(a) * ext, cy - Math.sin(a) * ext,
+                                     cx + Math.cos(a) * ext, cy + Math.sin(a) * ext);
+  g.addColorStop(0, c1 || '#000000');
+  g.addColorStop(1, ann.fillColor2);
+  return g;
+}
+
+// Canvas shadows are measured in DEVICE pixels and ignore the transform, so
+// scale them by the live transform to keep a shadow proportional to its shape
+// at any zoom (and identical in a baked/printed copy).
+function _ctxScale(ctx) {
+  try { const m = ctx.getTransform(); return Math.abs(m.a) || 1; } catch (e) { return 1; }
+}
+function _applyShadow(ctx, ann) {
+  if (!ann.shadow) return false;
+  const k = _ctxScale(ctx);
+  ctx.shadowColor   = ann.shadowColor || 'rgba(15,23,42,0.28)';
+  ctx.shadowBlur    = (ann.shadowBlur !== undefined ? ann.shadowBlur : 10) * k;
+  ctx.shadowOffsetX = (ann.shadowOffsetX || 0) * k;
+  ctx.shadowOffsetY = (ann.shadowOffsetY !== undefined ? ann.shadowOffsetY : 3) * k;
+  return true;
+}
+function _clearShadow(ctx) {
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+}
+
+// Stroke a shape, honouring ann.strokeSide — 'all' (default) or any of the
+// letters t/r/b/l, e.g. 'l' for a left accent bar only. thickness 0 = no
+// border at all (fill-only cards), which the old `|| 2` fallback made
+// impossible to express.
+function _strokeShape(ctx, ann, path, b) {
+  if (ann.thickness === 0) return;
+  const side = ann.strokeSide;
+  if (!side || side === 'all' || !b) { ctx.stroke(path); return; }
+  const seg = {
+    t: [b.x, b.y, b.x + b.w, b.y],
+    r: [b.x + b.w, b.y, b.x + b.w, b.y + b.h],
+    b: [b.x, b.y + b.h, b.x + b.w, b.y + b.h],
+    l: [b.x, b.y, b.x, b.y + b.h]
+  };
+  ctx.beginPath();
+  String(side).toLowerCase().split('').forEach(s => {
+    const g = seg[s];
+    if (g) { ctx.moveTo(g[0], g[1]); ctx.lineTo(g[2], g[3]); }
+  });
+  ctx.stroke();
+}
+
+// One arrow head at `tip`, pointing away from `from`.
+// style: 'triangle' (default) | 'open' | 'dot' | 'bar' | 'none'
+function _drawHead(ctx, tip, from, hl, style, color, lw) {
+  if (!style || style === 'none') return;
+  const angle = Math.atan2(tip.y - from.y, tip.x - from.x);
+  ctx.save();
+  ctx.setLineDash([]);
+  if (style === 'dot') {
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, hl * 0.32, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+  } else if (style === 'bar') {
+    const a = angle + Math.PI / 2;
+    const hx = Math.cos(a) * hl * 0.45, hy = Math.sin(a) * hl * 0.45;
+    ctx.beginPath(); ctx.moveTo(tip.x - hx, tip.y - hy); ctx.lineTo(tip.x + hx, tip.y + hy);
+    ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.stroke();
+  } else if (style === 'open') {
+    ctx.beginPath();
+    ctx.moveTo(tip.x - hl * Math.cos(angle - ARROWHEAD_HALF), tip.y - hl * Math.sin(angle - ARROWHEAD_HALF));
+    ctx.lineTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - hl * Math.cos(angle + ARROWHEAD_HALF), tip.y - hl * Math.sin(angle + ARROWHEAD_HALF));
+    ctx.strokeStyle = color; ctx.lineWidth = lw;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - hl * Math.cos(angle - ARROWHEAD_HALF), tip.y - hl * Math.sin(angle - ARROWHEAD_HALF));
+    ctx.lineTo(tip.x - hl * Math.cos(angle + ARROWHEAD_HALF), tip.y - hl * Math.sin(angle + ARROWHEAD_HALF));
+    ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  }
+  ctx.restore();
+}
+
+// v3.22 FIX — hatch now CLIPS to the shape's own path.
+// Before this, every caller passed only a bounding box and nothing clipped, so
+// diagonal hatch overhung a rectangle as a parallelogram, and ellipses,
+// polygons and area take-offs hatched the box around them rather than the
+// shape itself. `clip` is a Path2D of the real geometry; `ann` (optional)
+// carries the spacing / angle / weight / opacity options.
+function drawHatchPattern(ctx, bounds, hatchType, color, clip, ann) {
   if (!hatchType || hatchType === 'none') return;
   ctx.save();
-  ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.globalAlpha = 0.3;
-  const sp = 6;
-  if (hatchType === 'horizontal' || hatchType === 'cross') {
-    for (let y = bounds.y; y < bounds.y + bounds.h; y += sp) { ctx.beginPath(); ctx.moveTo(bounds.x, y); ctx.lineTo(bounds.x + bounds.w, y); ctx.stroke(); }
-  }
-  if (hatchType === 'vertical' || hatchType === 'cross') {
-    for (let x = bounds.x; x < bounds.x + bounds.w; x += sp) { ctx.beginPath(); ctx.moveTo(x, bounds.y); ctx.lineTo(x, bounds.y + bounds.h); ctx.stroke(); }
-  }
-  if (hatchType === 'diagonal') {
-    for (let i = bounds.x - bounds.h; i < bounds.x + bounds.w; i += sp) { ctx.beginPath(); ctx.moveTo(i, bounds.y); ctx.lineTo(i + bounds.h, bounds.y + bounds.h); ctx.stroke(); }
-  }
+  if (clip) ctx.clip(clip);
+  const o  = ann || {};
+  const sp = Math.max(1.5, o.hatchSpacing || 6);
+  const deg = o.hatchAngle || 0;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = o.hatchWeight || 1;
+  ctx.globalAlpha = (o.hatchOpacity !== undefined ? o.hatchOpacity : 30) / 100;
+
+  // Rotate about the centre and sweep a square big enough to cover the shape
+  // at any angle, so hatchAngle works for every pattern. The clip keeps the
+  // overspill invisible.
+  const cx = bounds.x + bounds.w / 2, cy = bounds.y + bounds.h / 2;
+  const R  = Math.hypot(bounds.w, bounds.h) / 2 + sp;
+  if (deg) { ctx.translate(cx, cy); ctx.rotate(deg * Math.PI / 180); ctx.translate(-cx, -cy); }
+  const bx = cx - R, by = cy - R, bw = R * 2, bh = R * 2;
+
+  const H = () => { for (let y = by; y < by + bh; y += sp) { ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx + bw, y); ctx.stroke(); } };
+  const V = () => { for (let x = bx; x < bx + bw; x += sp) { ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x, by + bh); ctx.stroke(); } };
+  const D1 = () => { for (let i = bx - bh; i < bx + bw; i += sp) { ctx.beginPath(); ctx.moveTo(i, by); ctx.lineTo(i + bh, by + bh); ctx.stroke(); } };
+  const D2 = () => { for (let i = bx; i < bx + bw + bh; i += sp) { ctx.beginPath(); ctx.moveTo(i, by); ctx.lineTo(i - bh, by + bh); ctx.stroke(); } };
+  const DOTS = () => {
+    ctx.fillStyle = color;
+    const r = Math.max(0.4, ctx.lineWidth * 0.9);
+    for (let y = by; y < by + bh; y += sp) for (let x = bx; x < bx + bw; x += sp) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+  };
+
+  if (hatchType === 'horizontal' || hatchType === 'cross') H();
+  if (hatchType === 'vertical'   || hatchType === 'cross') V();
+  if (hatchType === 'diagonal'     || hatchType === 'diagonal-cross') D1();
+  if (hatchType === 'diagonal-rev' || hatchType === 'diagonal-cross') D2();
+  if (hatchType === 'dots') DOTS();
+  if (hatchType === 'solid') { ctx.fillStyle = color; ctx.fillRect(bx, by, bw, bh); }
   ctx.restore();
 }
 
@@ -4199,11 +4366,17 @@ function drawAnnotation(ctx, ann, isSelected) {
   if (ann._editingInline) return;
   ctx.save();
   const color = ann.color || '#E5432E';
-  const thickness = ann.thickness || 2;
+  // v3.22: thickness 0 now means "no border" (fill-only cards). The old
+  // `|| 2` fallback silently turned 0 into 2, so borderless was unexpressible.
+  const thickness = ann.thickness !== undefined ? ann.thickness : 2;
   const opacity = ann.opacity !== undefined ? ann.opacity / 100 : 1;
   ctx.strokeStyle = color;
   ctx.globalAlpha = opacity;
   ctx.lineWidth = thickness;
+  // v3.22: optional stroke cap / join — rounded strokes read far cleaner on
+  // presentation work than the canvas default butt/miter.
+  if (ann.lineCap) ctx.lineCap = ann.lineCap;
+  if (ann.lineJoin) ctx.lineJoin = ann.lineJoin;
 
   if (ann.lineStyle === 'dashed') ctx.setLineDash([6,4]);
   else if (ann.lineStyle === 'dotted') ctx.setLineDash([2,3]);
@@ -4246,6 +4419,18 @@ function drawAnnotation(ctx, ann, isSelected) {
     case 'cutcontent': drawCutContentAnn(ctx, ann); break;
     case 'legend': drawLegendAnn(ctx, ann); break;
     case 'table': drawTableAnn(ctx, ann); break;
+    // v3.22 presentation markups
+    case 'chip': drawChipAnn(ctx, ann); break;
+    case 'badge': drawBadgeAnn(ctx, ann); break;
+    case 'divider': drawDividerAnn(ctx, ann); break;
+    case 'banner': drawBannerAnn(ctx, ann); break;
+    case 'quote': drawQuoteAnn(ctx, ann); break;
+    case 'kpi': drawKpiAnn(ctx, ann); break;
+    case 'chevron': drawChevronAnn(ctx, ann); break;
+    case 'timeline': drawTimelineAnn(ctx, ann); break;
+    case 'bracket': drawBracketAnn(ctx, ann); break;
+    case 'progress': drawProgressAnn(ctx, ann); break;
+    case 'chart': drawChartAnn(ctx, ann); break;
   }
   ctx.setLineDash([]);
 
@@ -4256,7 +4441,7 @@ function drawAnnotation(ctx, ann, isSelected) {
     const pts = getAnnotationHandlePoints(ann);
     pts.forEach(p => { if(p) ctx.fillRect(p.x - hs, p.y - hs, hs*2, hs*2); });
     // Draw bounding box for resizable shapes
-    if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(ann.type) && ann.points && ann.points.length === 2) {
+    if (BOX2_TYPES.includes(ann.type) && ann.points && ann.points.length === 2) {
       ctx.strokeStyle = '#E5432E'; ctx.lineWidth = 1 / currentScale; ctx.setLineDash([4/currentScale, 4/currentScale]);
       const [a,b] = ann.points;
       ctx.strokeRect(Math.min(a.x,b.x), Math.min(a.y,b.y), Math.abs(b.x-a.x), Math.abs(b.y-a.y));
@@ -4286,22 +4471,9 @@ function drawAnnotation(ctx, ann, isSelected) {
       ctx.beginPath(); ctx.arc(topX, hy, r * 0.5, -Math.PI * 0.25, Math.PI);
       ctx.stroke();
     }
-    // Draw bounding box for text annotations
-    if (ann.type === 'text' && ann.points && ann.points.length > 0) {
-      const fs = ann.fontSize || 14;
-      const lines = (ann.text||'').split('\n');
-      const lineH = fs + 2;
-      // Measure text widths
-      const ff = ann.fontFamily || 'Arial';
-      const fw = ann.fontWeight || 'normal';
-      const fi = ann.fontStyle || 'normal';
-      ctx.font = `${fi} ${fw} ${fs}px ${ff}`;
-      const maxW = Math.max(...lines.map(l => ctx.measureText(l).width), 20);
-      const totalH = lines.length * lineH;
-      ctx.strokeStyle = '#E5432E'; ctx.lineWidth = 1 / currentScale; ctx.setLineDash([4/currentScale, 4/currentScale]);
-      ctx.strokeRect(ann.points[0].x - 2, ann.points[0].y - 2, maxW + 4, totalH + 4);
-      ctx.setLineDash([]);
-    }
+    // v3.22: the second, re-measured text outline that used to live here was
+    // removed — it ignored boxW/boxH, so a resized text box showed two dashed
+    // rectangles that disagreed. The _annBox outline above is the real one.
   }
   ctx.restore();
 }
@@ -4348,6 +4520,27 @@ function deleteViewport(id) {
   saveToHistory();
   redrawAnnotations();
   openPropertiesPanel();
+}
+
+// v3.22 — dashed outline round every markup staged for grouping (Shift+click).
+function drawGroupPickOverlay(ctx) {
+  if (!groupPickIds.length) return;
+  ctx.save();
+  ctx.strokeStyle = '#14b8a6';
+  ctx.lineWidth = 1.5 / currentScale;
+  ctx.setLineDash([5 / currentScale, 4 / currentScale]);
+  groupPickIds.forEach(id => {
+    const a = annotations.find(x => x.id === id);
+    if (!a || a.page !== currentPage) return;
+    const pts = getAnnotationHandlePoints(a);
+    if (!pts || !pts.length) return;
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const pad = 3 / currentScale;
+    ctx.strokeRect(Math.min(...xs) - pad, Math.min(...ys) - pad,
+                   Math.max(...xs) - Math.min(...xs) + pad * 2,
+                   Math.max(...ys) - Math.min(...ys) + pad * 2);
+  });
+  ctx.restore();
 }
 
 // Draw viewport regions on the current page (dashed teal outline + scale tag)
@@ -4476,9 +4669,9 @@ function drawAreaMeasure(ctx, ann) {
     ctx.globalAlpha = fo; ctx.fill(); ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity/100 : 1;
   }
   ctx.stroke();
+  // v3.22: clipped to the measured polygon — it used to hatch the bounding box.
   if (ann.hatch && ann.hatch !== 'none') {
-    const xs = ann.points.map(p=>p.x), ys = ann.points.map(p=>p.y);
-    drawHatchPattern(ctx, {x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs)-Math.min(...xs), h:Math.max(...ys)-Math.min(...ys)}, ann.hatch, ann.color||'#E5432E');
+    drawHatchPattern(ctx, _polyBounds(ann.points), ann.hatch, ann.color||'#E5432E', _polyPath(ann.points), ann);
   }
   if (ann.isDeduction) ctx.setLineDash([]);
   const area = getPolygonArea(ann.points);
@@ -4504,29 +4697,38 @@ function drawAreaMeasure(ctx, ann) {
 
 function drawRect(ctx, ann) {
   const [p1, p2] = ann.points;
-  const w = p2.x-p1.x, h = p2.y-p1.y;
+  const b = _annBox2(ann);
+  const path = _rrPath(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y, ann.radius);
   if (ann.fillColor && ann.fillColor !== 'none') {
-    ctx.fillStyle = ann.fillColor;
-    const fo = ann.fillOpacity !== undefined ? ann.fillOpacity/100 : 0.5;
-    ctx.globalAlpha = fo; ctx.fillRect(p1.x, p1.y, w, h);
+    ctx.fillStyle = _fillStyleFor(ctx, ann, b);
+    ctx.globalAlpha = ann.fillOpacity !== undefined ? ann.fillOpacity/100 : 0.5;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(path);
+    if (sh) _clearShadow(ctx);
     ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity/100 : 1;
   }
-  ctx.strokeRect(p1.x, p1.y, w, h);
-  if (ann.hatch && ann.hatch !== 'none') drawHatchPattern(ctx, {x:p1.x, y:p1.y, w, h}, ann.hatch, ann.color||'#E5432E');
+  if (ann.hatch && ann.hatch !== 'none') drawHatchPattern(ctx, b, ann.hatch, ann.color||'#E5432E', path, ann);
+  _strokeShape(ctx, ann, path, b);
 }
 
 function drawEllipseShape(ctx, ann) {
   const [p1, p2] = ann.points;
   const rx = Math.abs(p2.x-p1.x)/2, ry = Math.abs(p2.y-p1.y)/2;
   const cx = Math.min(p1.x,p2.x)+rx, cy = Math.min(p1.y,p2.y)+ry;
-  ctx.beginPath(); ctx.ellipse(cx, cy, Math.max(rx,1), Math.max(ry,1), 0, 0, Math.PI*2);
+  const b = { x: cx-rx, y: cy-ry, w: rx*2, h: ry*2 };
+  const path = new Path2D();
+  path.ellipse(cx, cy, Math.max(rx,1), Math.max(ry,1), 0, 0, Math.PI*2);
   if (ann.fillColor && ann.fillColor !== 'none') {
-    ctx.fillStyle = ann.fillColor;
-    const fo = ann.fillOpacity !== undefined ? ann.fillOpacity/100 : 0.5;
-    ctx.globalAlpha = fo; ctx.fill(); ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity/100 : 1;
+    ctx.fillStyle = _fillStyleFor(ctx, ann, b);
+    ctx.globalAlpha = ann.fillOpacity !== undefined ? ann.fillOpacity/100 : 0.5;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(path);
+    if (sh) _clearShadow(ctx);
+    ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity/100 : 1;
   }
-  ctx.stroke();
-  if (ann.hatch && ann.hatch !== 'none') drawHatchPattern(ctx, {x:cx-rx, y:cy-ry, w:rx*2, h:ry*2}, ann.hatch, ann.color||'#E5432E');
+  // v3.22: clipped to the ellipse — it used to hatch the bounding square.
+  if (ann.hatch && ann.hatch !== 'none') drawHatchPattern(ctx, b, ann.hatch, ann.color||'#E5432E', path, ann);
+  if (ann.thickness !== 0) ctx.stroke(path);
 }
 
 function drawLineShape(ctx, ann) {
@@ -4534,20 +4736,35 @@ function drawLineShape(ctx, ann) {
   ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
 }
 
+// Path2D of a closed polygon — shared by the polygon shape and the area
+// take-off so both hatch inside their real outline.
+function _polyPath(pts) {
+  const p = new Path2D();
+  p.moveTo(pts[0].x, pts[0].y);
+  pts.forEach(q => p.lineTo(q.x, q.y));
+  p.closePath();
+  return p;
+}
+function _polyBounds(pts) {
+  const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys),
+           w: Math.max(...xs)-Math.min(...xs), h: Math.max(...ys)-Math.min(...ys) };
+}
+
 function drawPolygonShape(ctx, ann) {
   if (!ann.points || ann.points.length < 3) return;
-  ctx.beginPath(); ctx.moveTo(ann.points[0].x, ann.points[0].y);
-  ann.points.forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath();
+  const path = _polyPath(ann.points), b = _polyBounds(ann.points);
   if (ann.fillColor && ann.fillColor !== 'none') {
-    ctx.fillStyle = ann.fillColor;
-    const fo = ann.fillOpacity !== undefined ? ann.fillOpacity/100 : 0.5;
-    ctx.globalAlpha = fo; ctx.fill(); ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity/100 : 1;
+    ctx.fillStyle = _fillStyleFor(ctx, ann, b);
+    ctx.globalAlpha = ann.fillOpacity !== undefined ? ann.fillOpacity/100 : 0.5;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(path);
+    if (sh) _clearShadow(ctx);
+    ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity/100 : 1;
   }
-  ctx.stroke();
-  if (ann.hatch && ann.hatch !== 'none') {
-    const xs = ann.points.map(p=>p.x), ys = ann.points.map(p=>p.y);
-    drawHatchPattern(ctx, {x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs)-Math.min(...xs), h:Math.max(...ys)-Math.min(...ys)}, ann.hatch, ann.color||'#E5432E');
-  }
+  // v3.22: clipped to the polygon — it used to hatch the bounding box.
+  if (ann.hatch && ann.hatch !== 'none') drawHatchPattern(ctx, b, ann.hatch, ann.color||'#E5432E', path, ann);
+  if (ann.thickness !== 0) ctx.stroke(path);
 }
 
 function drawCloudShape(ctx, ann) {
@@ -4594,6 +4811,9 @@ function arrowHeadLen(ann) {
 // carried more padding than text and refused to shrink. fontSize 12 (the
 // default, and what every existing callout uses) still returns exactly 6.
 function calloutPad(ann) {
+  // v3.22: an explicit boxPad wins, so a card can be given real breathing room
+  // instead of the font-derived default.
+  if (ann && ann.boxPad !== undefined && isFinite(ann.boxPad)) return Math.max(0, ann.boxPad);
   const fs = (ann && ann.fontSize) || 12;
   return Math.max(2, Math.round(fs * 0.5));
 }
@@ -4608,12 +4828,15 @@ function BOX_MIN(fontSize) {
 
 function drawArrowShape(ctx, ann) {
   const [p1, p2] = ann.points;
-  const hl = arrowHeadLen(ann), angle = Math.atan2(p2.y-p1.y, p2.x-p1.x);
+  const hl = arrowHeadLen(ann);
+  const col = ann.color || '#E5432E';
   ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(p2.x, p2.y);
-  ctx.lineTo(p2.x - hl*Math.cos(angle-ARROWHEAD_HALF), p2.y - hl*Math.sin(angle-ARROWHEAD_HALF));
-  ctx.lineTo(p2.x - hl*Math.cos(angle+ARROWHEAD_HALF), p2.y - hl*Math.sin(angle+ARROWHEAD_HALF));
-  ctx.closePath(); ctx.fillStyle = ann.color||'#E5432E'; ctx.fill();
+  // v3.22: head style is selectable, and the tail can carry one too
+  // (double-headed arrows for spans and "between" callouts).
+  _drawHead(ctx, p2, p1, hl, ann.arrowHead || 'triangle', col, ann.thickness || 2);
+  if (ann.arrowTail && ann.arrowTail !== 'none') {
+    _drawHead(ctx, p1, p2, hl, ann.arrowTail, col, ann.thickness || 2);
+  }
 }
 
 // Word-wrap text to a maximum width (page units) with the ctx's current font.
@@ -4686,15 +4909,23 @@ function drawTextAnn(ctx, ann) {
   // you set (square, tall, anything).
   const bw = ann.boxW || Math.max(30, ...lines.map(l => ctx.measureText(l).width));
   const bh = ann.boxH || Math.max(fs + 2, lines.length * (fs + 2));
-  const bp = 3; // breathing room around the text
+  // v3.22: boxPad replaces the hardcoded 3 — cramped boxes were a big part of
+  // why generated documents looked unfinished.
+  const bp = (ann.boxPad !== undefined && isFinite(ann.boxPad)) ? Math.max(0, ann.boxPad) : 3;
+  const bx = ann.points[0].x, by = ann.points[0].y;
+  // v3.22: ann.radius rounds the box (0 / absent = square, exactly as before).
+  const boxPath = _rrPath(bx - bp, by - bp, bw + bp * 2, bh + bp * 2, ann.radius);
+  const boxRect = { x: bx - bp, y: by - bp, w: bw + bp * 2, h: bh + bp * 2 };
   // Optional fill behind the text (ann.boxFill — Properties → Appearance).
   // Separate property from shapes' fillColor so older text stays unfilled.
   const _boxFillCol = _textBoxFillColor(ann);
   if (_boxFillCol) {
     ctx.save();
-    ctx.fillStyle = _boxFillCol;
+    ctx.fillStyle = _fillStyleFor(ctx, ann, boxRect, _boxFillCol);
     ctx.globalAlpha = (ann.fillOpacity !== undefined ? ann.fillOpacity : 100) / 100;
-    ctx.fillRect(ann.points[0].x - bp, ann.points[0].y - bp, bw + bp * 2, bh + bp * 2);
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(boxPath);
+    if (sh) _clearShadow(ctx);
     ctx.restore();
     ctx.fillStyle = ink; // text colour back after the fill
   }
@@ -4704,23 +4935,37 @@ function drawTextAnn(ctx, ann) {
     ctx.save();
     ctx.strokeStyle = ann.boxStroke;
     ctx.lineWidth = ann.thickness || 1;
-    ctx.strokeRect(ann.points[0].x - bp, ann.points[0].y - bp, bw + bp * 2, bh + bp * 2);
+    _strokeShape(ctx, ann, boxPath, boxRect);
     ctx.restore();
     ctx.fillStyle = ink;
   }
+  // v3.22: horizontal + vertical alignment inside the box. textAlign was
+  // already written by the properties panel but drawTextAnn never read it, so
+  // centring text in a box was impossible. vAlign is new alongside it.
+  const halign = ann.textAlign || 'left';
+  const valign = ann.vAlign || 'top';
+  const lineH = fs + 2;
+  const contentH = lines.length * lineH;
+  let ty = by;
+  if (valign === 'middle') ty = by + (bh - contentH) / 2;
+  else if (valign === 'bottom') ty = by + (bh - contentH);
+  const lineX = (w) => halign === 'center' ? bx + (bw - w) / 2
+                     : halign === 'right'  ? bx + (bw - w)
+                     : bx;
   lines.forEach((line, i) => {
-    ctx.fillText(line, ann.points[0].x, ann.points[0].y + i * (fs + 2));
+    ctx.fillText(line, lineX(ctx.measureText(line).width), ty + i * lineH);
   });
   if (ann.textDecoration === 'underline') {
     lines.forEach((line, i) => {
       const w = ctx.measureText(line).width;
-      const y = ann.points[0].y + (i+1)*(fs+2) - 2;
-      ctx.beginPath(); ctx.moveTo(ann.points[0].x, y); ctx.lineTo(ann.points[0].x+w, y);
+      const ux = lineX(w);
+      const y = ty + (i+1) * lineH - 2;
+      ctx.beginPath(); ctx.moveTo(ux, y); ctx.lineTo(ux + w, y);
       ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.stroke();
     });
   }
   // Cache the drawn box for hit-testing + the resize handles.
-  ann._annBox = { x: ann.points[0].x, y: ann.points[0].y, w: bw, h: bh };
+  ann._annBox = { x: bx, y: by, w: bw, h: bh };
 }
 
 function drawCalloutAnn(ctx, ann) {
@@ -4762,13 +5007,18 @@ function drawCalloutAnn(ctx, ann) {
   // down, whatever; without it the box hugs the wrapped text.
   const boxW = maxW + pad*2, boxH = (ann.boxH ? ann.boxH : lines.length * (fs+3)) + pad*2;
 
-  ctx.fillStyle = ann.fillColor || '#ffffff';
+  // v3.22: ann.radius rounds the callout panel; gradient + shadow supported.
+  const _cbRect = { x: ann.textPos.x - pad, y: ann.textPos.y - pad, w: boxW, h: boxH };
+  const _cbPath = _rrPath(_cbRect.x, _cbRect.y, boxW, boxH, ann.radius);
+  ctx.fillStyle = _fillStyleFor(ctx, ann, _cbRect, ann.fillColor || '#ffffff');
   ctx.globalAlpha = ann.fillOpacity !== undefined ? ann.fillOpacity / 100 : 0.9;
-  ctx.fillRect(ann.textPos.x - pad, ann.textPos.y - pad, boxW, boxH);
+  const _cbSh = _applyShadow(ctx, ann);
+  ctx.fill(_cbPath);
+  if (_cbSh) _clearShadow(ctx);
   ctx.globalAlpha = ann.opacity !== undefined ? ann.opacity / 100 : 1;
-  ctx.strokeStyle = color; ctx.lineWidth = 1;
-  ctx.strokeRect(ann.textPos.x - pad, ann.textPos.y - pad, boxW, boxH);
-  ann._annBox = { x: ann.textPos.x - pad, y: ann.textPos.y - pad, w: boxW, h: boxH };
+  ctx.strokeStyle = color; ctx.lineWidth = ann.thickness || 1;
+  if (ann.thickness !== 0) _strokeShape(ctx, ann, _cbPath, _cbRect);
+  ann._annBox = _cbRect;
 
   ctx.fillStyle = ann.textColor || color;
   ctx.textAlign = ann.textAlign || 'left';
@@ -4983,6 +5233,728 @@ function drawCutContentAnn(ctx, ann) {
 // Draws a measurement label. opts (all optional):
 //   ann        — annotation to read labelColor / labelBg / labelFontSize from
 //   recordKey  — name of a key on ann to store the rendered rect for later hit-tests
+
+// ============================================================
+// v3.22 — PRESENTATION MARKUPS
+// Every type below is a two-point box (except badge, a single point), so it
+// inherits selection, the 8 resize handles, hit-testing, rotation and the
+// dashed selection box from BOX2_TYPES without any extra plumbing.
+// ============================================================
+
+// Font shorthand using the presentation stack unless the markup names one.
+function _setFont(ctx, ann, size, weight) {
+  const w = weight || (ann && ann.fontWeight) || '400';
+  const f = (ann && ann.fontFamily) || DATUM_FONT;
+  const s = (ann && ann.fontStyle === 'italic') ? 'italic ' : '';
+  ctx.font = s + w + ' ' + Math.max(1, size) + 'px ' + f;
+}
+
+// Truncate to fit a width, with an ellipsis. Binary search keeps it cheap at
+// the redraw rates panning produces.
+function _fitText(ctx, text, maxW) {
+  const t = String(text == null ? '' : text);
+  if (!t || !maxW || maxW <= 0) return maxW <= 0 ? '' : t;
+  if (ctx.measureText(t).width <= maxW) return t;
+  let lo = 0, hi = t.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(t.slice(0, mid) + '…').width <= maxW) lo = mid; else hi = mid - 1;
+  }
+  return lo > 0 ? t.slice(0, lo) + '…' : '';
+}
+
+// A colour-string-or-nothing reader. Mirrors the boxFill lesson from v3.9.1:
+// a boolean handed to canvas as a fillStyle silently keeps the previous
+// colour, which is how you get invisible text.
+function _colOr(v, fallback) {
+  if (v === false || v === null || v === 'none') return null;
+  return (typeof v === 'string' && v) ? v : fallback;
+}
+
+// Fill + optional shadow + optional border for a panel. Returns the Path2D so
+// callers can clip accent bars to the rounded corners.
+function _panelPaint(ctx, ann, b, defFill, defRadius) {
+  const r = ann.radius !== undefined ? ann.radius : (defRadius || 0);
+  const path = _rrPath(b.x, b.y, b.w, b.h, r);
+  const fill = ann.fillColor !== undefined ? ann.fillColor : defFill;
+  if (fill && fill !== 'none') {
+    ctx.save();
+    ctx.fillStyle = _fillStyleFor(ctx, ann, b, fill);
+    ctx.globalAlpha = (ann.fillOpacity !== undefined ? ann.fillOpacity : 100) / 100;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(path);
+    if (sh) _clearShadow(ctx);
+    ctx.restore();
+  }
+  if (ann.thickness) {
+    ctx.save();
+    ctx.strokeStyle = ann.borderColor || ann.color || '#E2E8F0';
+    ctx.lineWidth = ann.thickness;
+    _strokeShape(ctx, ann, path, b);
+    ctx.restore();
+  }
+  return path;
+}
+
+// A left/top accent bar, clipped so it follows the panel's rounded corners.
+function _accentBar(ctx, path, b, colour, width, side) {
+  if (!(width > 0) || !colour) return;
+  ctx.save();
+  ctx.clip(path);
+  ctx.fillStyle = colour;
+  if (side === 'top') ctx.fillRect(b.x, b.y, b.w, width);
+  else if (side === 'bottom') ctx.fillRect(b.x, b.y + b.h - width, b.w, width);
+  else if (side === 'right') ctx.fillRect(b.x + b.w - width, b.y, width, b.h);
+  else ctx.fillRect(b.x, b.y, width, b.h);
+  ctx.restore();
+}
+
+// ---------- chip — rounded pill with a centred label ----------
+function drawChipAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 1 || b.h < 1) return;
+  const fill = ann.fillColor !== undefined ? ann.fillColor : (ann.color || '#E5432E');
+  const r = ann.radius !== undefined ? ann.radius : b.h / 2;   // a pill unless told otherwise
+  _panelPaint(ctx, ann, b, fill, r);
+  const fs = ann.fontSize || Math.max(4, Math.min(b.h * 0.5, b.h - 4));
+  ctx.save();
+  _setFont(ctx, ann, fs, ann.fontWeight || '600');
+  ctx.fillStyle = ann.textColor || _contrastInk(fill);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(_fitText(ctx, ann.text || '', b.w - fs), b.x + b.w / 2, b.y + b.h / 2);
+  ctx.restore();
+}
+
+// ---------- badge — numbered step circle (single point) ----------
+// Distinct from 'count', which is bound to a take-off quantity. A badge is
+// pure annotation and never touches the workbook.
+function drawBadgeAnn(ctx, ann) {
+  if (!ann.points || !ann.points.length) return;
+  const c = ann.points[0];
+  const d = ann.badgeSize || 22, r = d / 2;
+  const fill = ann.fillColor !== undefined ? ann.fillColor : (ann.color || '#E5432E');
+  const path = new Path2D();
+  path.arc(c.x, c.y, r, 0, Math.PI * 2);
+  ctx.save();
+  if (fill && fill !== 'none') {
+    ctx.fillStyle = fill;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(path);
+    if (sh) _clearShadow(ctx);
+  }
+  if (ann.thickness) {
+    ctx.strokeStyle = ann.borderColor || '#FFFFFF';
+    ctx.lineWidth = ann.thickness;
+    ctx.stroke(path);
+  }
+  const label = String(ann.text !== undefined ? ann.text : (ann.number !== undefined ? ann.number : 1));
+  const fs = ann.fontSize || Math.max(4, d * 0.5);
+  _setFont(ctx, ann, fs, ann.fontWeight || '700');
+  ctx.fillStyle = ann.textColor || _contrastInk(fill);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, c.x, c.y);
+  ctx.restore();
+}
+
+// ---------- divider — a rule, optionally broken by a label ----------
+function drawDividerAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  const y = b.y + b.h / 2;
+  const col = ann.color || '#CBD5E1';
+  const label = ann.text || '';
+  ctx.save();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = ann.thickness !== undefined ? ann.thickness : 1;
+  if (!label) {
+    ctx.beginPath(); ctx.moveTo(b.x, y); ctx.lineTo(b.x + b.w, y); ctx.stroke();
+    ctx.restore(); return;
+  }
+  const fs = ann.fontSize || Math.max(5, Math.min(11, b.h * 0.7));
+  _setFont(ctx, ann, fs, ann.fontWeight || '600');
+  const text = _fitText(ctx, label, b.w * 0.8);
+  const tw = ctx.measureText(text).width;
+  const gap = ann.labelGap !== undefined ? ann.labelGap : 8;
+  const align = ann.labelAlign || 'center';
+  const tx = align === 'left' ? b.x + gap
+           : align === 'right' ? b.x + b.w - tw - gap
+           : b.x + (b.w - tw) / 2;
+  ctx.beginPath();
+  if (tx - gap > b.x) { ctx.moveTo(b.x, y); ctx.lineTo(tx - gap, y); }
+  if (tx + tw + gap < b.x + b.w) { ctx.moveTo(tx + tw + gap, y); ctx.lineTo(b.x + b.w, y); }
+  ctx.stroke();
+  ctx.fillStyle = ann.textColor || col;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, tx, y);
+  ctx.restore();
+}
+
+// ---------- banner — page/section header band ----------
+function drawBannerAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 2 || b.h < 2) return;
+  const fill = ann.fillColor !== undefined ? ann.fillColor : '#1a1b2e';
+  const path = _panelPaint(ctx, ann, b, fill, ann.radius);
+  const aw = ann.accentWidth || 0;
+  _accentBar(ctx, path, b, ann.accentColor || '#E5432E', aw, ann.accentSide || 'left');
+  const pad = ann.boxPad !== undefined ? ann.boxPad : Math.max(6, b.h * 0.18);
+  const title = ann.title !== undefined ? ann.title : (ann.text || '');
+  const sub = ann.subtitle || '';
+  const innerX = b.x + pad + (ann.accentSide === 'left' || !ann.accentSide ? aw : 0);
+  const innerW = Math.max(4, b.w - pad * 2 - aw);
+  const tSize = ann.fontSize || Math.max(7, b.h * (sub ? 0.34 : 0.44));
+  const sSize = ann.subFontSize || tSize * 0.55;
+  const tH = tSize * 1.15, sH = sub ? sSize * 1.5 : 0;
+  const ink = ann.textColor || _contrastInk(fill);
+  const align = ann.textAlign || 'left';
+  const tx = align === 'center' ? innerX + innerW / 2
+           : align === 'right'  ? innerX + innerW
+           : innerX;
+  ctx.save();
+  ctx.textBaseline = 'top';
+  ctx.textAlign = align === 'center' ? 'center' : align === 'right' ? 'right' : 'left';
+  let cy = b.y + (b.h - (tH + sH)) / 2;
+  _setFont(ctx, ann, tSize, ann.fontWeight || '700');
+  ctx.fillStyle = ink;
+  ctx.fillText(_fitText(ctx, title, innerW), tx, cy);
+  if (sub) {
+    _setFont(ctx, ann, sSize, '400');
+    ctx.fillStyle = ann.subColor || ink;
+    ctx.globalAlpha = ctx.globalAlpha * 0.85;
+    ctx.fillText(_fitText(ctx, sub, innerW), tx, cy + tH + sSize * 0.25);
+  }
+  ctx.restore();
+}
+
+// ---------- quote — accent-bar panel for findings / recommendations ----------
+function drawQuoteAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 4 || b.h < 4) return;
+  const fill = ann.fillColor !== undefined ? ann.fillColor : '#F8FAFC';
+  const path = _panelPaint(ctx, ann, b, fill, ann.radius);
+  const accent = ann.accentColor || ann.color || '#E5432E';
+  const aw = ann.accentWidth !== undefined ? ann.accentWidth : 4;
+  _accentBar(ctx, path, b, accent, aw, ann.accentSide || 'left');
+  const pad = ann.boxPad !== undefined ? ann.boxPad : 10;
+  const fs = ann.fontSize || 11;
+  const innerX = b.x + aw + pad;
+  const innerW = Math.max(4, b.w - aw - pad * 2);
+  ctx.save();
+  _setFont(ctx, ann, fs, ann.fontWeight || '400');
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  ctx.fillStyle = ann.textColor || '#0F172A';
+  const lines = _wrapTextLines(ctx, ann.text || '', innerW);
+  const lh = fs * 1.4;
+  const attr = ann.attribution || '';
+  const totalH = lines.length * lh + (attr ? fs * 1.6 : 0);
+  let y = b.y + Math.max(pad, (b.h - totalH) / 2);
+  lines.forEach(l => { ctx.fillText(l, innerX, y); y += lh; });
+  if (attr) {
+    _setFont(ctx, ann, fs * 0.85, '600');
+    ctx.fillStyle = accent;
+    ctx.fillText(_fitText(ctx, '— ' + attr, innerW), innerX, y + fs * 0.25);
+  }
+  ctx.restore();
+}
+
+// ---------- kpi — stat tile: value, caption, optional delta ----------
+function drawKpiAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 6 || b.h < 6) return;
+  const fill = ann.fillColor !== undefined ? ann.fillColor : '#FFFFFF';
+  const path = _panelPaint(ctx, ann, b, fill, ann.radius !== undefined ? ann.radius : 8);
+  const accent = ann.accent || ann.accentColor || ann.color || '#E5432E';
+  const aw = ann.accentWidth !== undefined ? ann.accentWidth : 0;
+  _accentBar(ctx, path, b, accent, aw, ann.accentSide || 'left');
+  const pad = ann.boxPad !== undefined ? ann.boxPad : 10;
+  const innerX = b.x + aw + pad;
+  const innerW = Math.max(4, b.w - aw - pad * 2);
+  const vSize = ann.valueSize || Math.max(8, Math.min(b.h * 0.42, innerW * 0.34));
+  const cSize = ann.captionSize || Math.max(5, vSize * 0.36);
+  const gap = cSize * 0.5;
+  const capTop = ann.captionPosition === 'top';
+  const blockH = vSize * 1.1 + gap + cSize * 1.2;
+  ctx.save();
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  let y = b.y + Math.max(pad, (b.h - blockH) / 2);
+  const caption = () => {
+    _setFont(ctx, ann, cSize, '500');
+    ctx.fillStyle = ann.captionColor || '#64748B';
+    ctx.fillText(_fitText(ctx, ann.caption || '', innerW), innerX, y);
+    y += cSize * 1.2 + gap;
+  };
+  if (capTop) caption();
+  _setFont(ctx, ann, vSize, '700');
+  ctx.fillStyle = ann.textColor || '#0F172A';
+  const val = _fitText(ctx, String(ann.value !== undefined ? ann.value : ''), innerW);
+  ctx.fillText(val, innerX, y);
+  if (ann.delta) {
+    const valW = ctx.measureText(val).width;
+    const dSize = Math.max(4, vSize * 0.34);
+    _setFont(ctx, ann, dSize, '700');
+    const dir = ann.deltaDirection || 'flat';
+    const glyph = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '▬';
+    ctx.fillStyle = ann.deltaColor ||
+      (dir === 'up' ? '#16A34A' : dir === 'down' ? '#DC2626' : '#64748B');
+    ctx.fillText(glyph + ' ' + ann.delta, innerX + valW + dSize * 0.8, y + vSize - dSize * 1.25);
+  }
+  y += vSize * 1.1 + gap;
+  if (!capTop) caption();
+  ctx.restore();
+}
+
+// ---------- chevron — process / stage band ----------
+function drawChevronAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 6 || b.h < 4) return;
+  const segs = (Array.isArray(ann.segments) && ann.segments.length)
+    ? ann.segments : [{ label: 'Stage 1' }, { label: 'Stage 2' }, { label: 'Stage 3' }];
+  const n = segs.length;
+  const gap = ann.gap !== undefined ? ann.gap : 3;
+  const segW = (b.w - gap * (n - 1)) / n;
+  const notch = ann.notch !== undefined ? ann.notch : Math.min(b.h * 0.4, segW * 0.3);
+  const cur = ann.current !== undefined ? ann.current : -1;
+  const base = ann.fillColor !== undefined ? ann.fillColor : '#E2E8F0';
+  const act = ann.activeColor || ann.color || '#E5432E';
+  ctx.save();
+  segs.forEach((s, i) => {
+    const x = b.x + i * (segW + gap);
+    const isAct = (s.active !== undefined) ? !!s.active : (i <= cur);
+    const col = s.color || (isAct ? act : base);
+    const tail = i === 0 ? 0 : notch;   // first segment starts flat
+    const p = new Path2D();
+    p.moveTo(x, b.y);
+    p.lineTo(x + segW - notch, b.y);
+    p.lineTo(x + segW, b.y + b.h / 2);
+    p.lineTo(x + segW - notch, b.y + b.h);
+    p.lineTo(x, b.y + b.h);
+    if (tail) p.lineTo(x + tail, b.y + b.h / 2);
+    p.closePath();
+    ctx.fillStyle = col;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(p);
+    if (sh) _clearShadow(ctx);
+    const fs = ann.fontSize || Math.max(4, Math.min(b.h * 0.32, segW * 0.18));
+    _setFont(ctx, ann, fs, isAct ? '700' : '500');
+    ctx.fillStyle = s.textColor ||
+      (isAct ? (ann.activeTextColor || _contrastInk(col)) : (ann.textColor || _contrastInk(col)));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const avail = segW - notch - tail - 6;
+    ctx.fillText(_fitText(ctx, s.label || '', avail), x + tail + (segW - notch - tail) / 2, b.y + b.h / 2);
+  });
+  ctx.restore();
+}
+
+// ---------- timeline — milestone bar ----------
+function drawTimelineAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 8) return;
+  const ms = Array.isArray(ann.milestones) ? ann.milestones : [];
+  const axisY = b.y + b.h * (ann.axisAt !== undefined ? ann.axisAt : 0.5);
+  const track = ann.color || '#CBD5E1';
+  const done = ann.doneColor || '#16A34A';
+  const curC = ann.currentColor || ann.accentColor || '#E5432E';
+  const th = ann.thickness !== undefined ? ann.thickness : 2;
+  ctx.save();
+  ctx.strokeStyle = track; ctx.lineWidth = th; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(b.x, axisY); ctx.lineTo(b.x + b.w, axisY); ctx.stroke();
+  const at = (m, i) => b.x + (m.at !== undefined ? m.at : (ms.length > 1 ? i / (ms.length - 1) : 0.5)) * b.w;
+  let last = -1;
+  ms.forEach((m, i) => { if (m.state === 'done' || m.state === 'current') last = i; });
+  if (last >= 0) {
+    ctx.strokeStyle = done;
+    ctx.beginPath(); ctx.moveTo(b.x, axisY); ctx.lineTo(at(ms[last], last), axisY); ctx.stroke();
+  }
+  const r = ann.dotSize ? ann.dotSize / 2 : Math.max(2.5, th * 2);
+  const fs = ann.fontSize || Math.max(4, Math.min(9, b.h * 0.16));
+  const slot = ms.length ? (b.w / ms.length) * 1.5 : b.w;
+  ms.forEach((m, i) => {
+    const x = at(m, i);
+    const st = m.state || 'todo';
+    const c = st === 'done' ? done : st === 'current' ? curC : (ann.todoColor || '#FFFFFF');
+    ctx.beginPath(); ctx.arc(x, axisY, r, 0, Math.PI * 2);
+    ctx.fillStyle = c; ctx.fill();
+    ctx.strokeStyle = st === 'todo' ? track : c; ctx.lineWidth = th; ctx.stroke();
+    ctx.textAlign = 'center';
+    if (m.label) {
+      _setFont(ctx, ann, fs, st === 'current' ? '700' : '500');
+      ctx.fillStyle = ann.textColor || '#0F172A';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(_fitText(ctx, m.label, slot), x, axisY - r - 4);
+    }
+    if (m.date) {
+      _setFont(ctx, ann, fs * 0.9, '400');
+      ctx.fillStyle = ann.dateColor || '#64748B';
+      ctx.textBaseline = 'top';
+      ctx.fillText(_fitText(ctx, m.date, slot), x, axisY + r + 4);
+    }
+  });
+  ctx.restore();
+}
+
+// ---------- bracket — span marker with a label ----------
+function drawBracketAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  const o = ann.orientation || 'top';
+  const col = ann.color || '#64748B';
+  const th = ann.thickness !== undefined ? ann.thickness : 1.5;
+  const span = (o === 'top' || o === 'bottom') ? b.h : b.w;
+  const tick = ann.tickSize !== undefined ? ann.tickSize : Math.min(8, span * 0.5);
+  ctx.save();
+  ctx.strokeStyle = col; ctx.lineWidth = th;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (o === 'top') {
+    const y = b.y + b.h;
+    ctx.moveTo(b.x, y - tick); ctx.lineTo(b.x, y); ctx.lineTo(b.x + b.w, y); ctx.lineTo(b.x + b.w, y - tick);
+  } else if (o === 'bottom') {
+    const y = b.y;
+    ctx.moveTo(b.x, y + tick); ctx.lineTo(b.x, y); ctx.lineTo(b.x + b.w, y); ctx.lineTo(b.x + b.w, y + tick);
+  } else if (o === 'left') {
+    const x = b.x + b.w;
+    ctx.moveTo(x - tick, b.y); ctx.lineTo(x, b.y); ctx.lineTo(x, b.y + b.h); ctx.lineTo(x - tick, b.y + b.h);
+  } else {
+    const x = b.x;
+    ctx.moveTo(x + tick, b.y); ctx.lineTo(x, b.y); ctx.lineTo(x, b.y + b.h); ctx.lineTo(x + tick, b.y + b.h);
+  }
+  ctx.stroke();
+  if (ann.text) {
+    const fs = ann.fontSize || 10;
+    _setFont(ctx, ann, fs, ann.fontWeight || '600');
+    const text = _fitText(ctx, ann.text, (o === 'top' || o === 'bottom') ? b.w - 6 : b.h - 6);
+    const tw = ctx.measureText(text).width;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    // A backing plate so the bracket line doesn't run through the label.
+    // labelBackground: false = none, a colour string = that colour.
+    const lbg = _colOr(ann.labelBackground, '#FFFFFF');
+    if (lbg) {
+      ctx.fillStyle = lbg;
+      ctx.fillRect(cx - tw / 2 - 3, cy - fs * 0.7, tw + 6, fs * 1.4);
+    }
+    ctx.fillStyle = ann.textColor || col;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, cx, cy);
+  }
+  ctx.restore();
+}
+
+// ---------- progress — percentage bar ----------
+function drawProgressAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 4 || b.h < 2) return;
+  const v = Math.max(0, Math.min(100, ann.value !== undefined ? Number(ann.value) || 0 : 0));
+  const r = ann.radius !== undefined ? ann.radius : b.h / 2;
+  const track = ann.fillColor !== undefined ? ann.fillColor : '#E2E8F0';
+  const bar = ann.barColor || ann.color || '#E5432E';
+  const showV = ann.showValue !== false;
+  const fs = ann.fontSize || Math.max(4, b.h * 0.55);
+  ctx.save();
+  let barW = b.w;
+  if (showV) {
+    _setFont(ctx, ann, fs, '600');
+    barW = Math.max(4, b.w - (ctx.measureText('100%').width + 8));
+  }
+  const tp = _rrPath(b.x, b.y, barW, b.h, r);
+  if (track && track !== 'none') {
+    ctx.fillStyle = track;
+    const sh = _applyShadow(ctx, ann);
+    ctx.fill(tp);
+    if (sh) _clearShadow(ctx);
+  }
+  if (v > 0) {
+    ctx.save();
+    ctx.clip(tp);
+    ctx.fillStyle = _fillStyleFor(ctx, ann, { x: b.x, y: b.y, w: barW, h: b.h }, bar);
+    ctx.fillRect(b.x, b.y, barW * v / 100, b.h);
+    ctx.restore();
+  }
+  if (ann.thickness) {
+    ctx.strokeStyle = ann.borderColor || ann.color || '#CBD5E1';
+    ctx.lineWidth = ann.thickness;
+    ctx.stroke(tp);
+  }
+  if (showV) {
+    _setFont(ctx, ann, fs, '600');
+    ctx.fillStyle = ann.textColor || '#0F172A';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(ann.valueLabel !== undefined ? String(ann.valueLabel) : Math.round(v) + '%',
+                 b.x + b.w, b.y + b.h / 2);
+  }
+  ctx.restore();
+}
+
+// ---------- chart — bar | line | donut from an inline data array ----------
+const CHART_PALETTE = ['#E5432E','#4F8EF7','#16A34A','#F59E0B','#9333EA','#0EA5E9','#DC2626','#64748B'];
+function drawChartAnn(ctx, ann) {
+  const b = _annBox2(ann);
+  if (b.w < 10 || b.h < 10) return;
+  const data = (Array.isArray(ann.data) ? ann.data : []).filter(d => d && isFinite(Number(d.value)))
+                 .map(d => ({ ...d, value: Number(d.value) }));
+  const kind = ann.chartType || 'bar';
+  _panelPaint(ctx, ann, b, ann.fillColor !== undefined ? ann.fillColor : 'none', ann.radius);
+  const pad = ann.boxPad !== undefined ? ann.boxPad : 10;
+  const fs = ann.fontSize || Math.max(4, Math.min(9, b.h * 0.075));
+  const ink = ann.textColor || '#0F172A';
+  const muted = ann.axisColor || '#94A3B8';
+  const pal = Array.isArray(ann.palette) && ann.palette.length ? ann.palette : CHART_PALETTE;
+  ctx.save();
+  let top = b.y + pad;
+  if (ann.title) {
+    _setFont(ctx, ann, fs * 1.25, '700');
+    ctx.fillStyle = ink; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(_fitText(ctx, ann.title, b.w - pad * 2), b.x + pad, top);
+    top += fs * 1.9;
+  }
+  const plot = { x: b.x + pad, y: top, w: b.w - pad * 2, h: b.y + b.h - pad - top };
+  if (!data.length || plot.w < 4 || plot.h < 4) { ctx.restore(); return; }
+  const labelH = ann.showLabels === false ? 0 : fs * 1.6;
+
+  if (kind === 'donut' || kind === 'pie') {
+    const total = data.reduce((s, d) => s + Math.max(0, d.value), 0) || 1;
+    const cx = plot.x + plot.w / 2, cy = plot.y + plot.h / 2;
+    const R = Math.max(2, Math.min(plot.w, plot.h) / 2);
+    const inner = kind === 'pie' ? 0
+      : (ann.innerRadius !== undefined ? ann.innerRadius : R * 0.58);
+    let a0 = -Math.PI / 2;
+    data.forEach((d, i) => {
+      const a1 = a0 + (Math.max(0, d.value) / total) * Math.PI * 2;
+      // Ring wedge drawn as one path — no destination-out compositing, which
+      // would punch a hole straight through the PDF page underneath.
+      const p = new Path2D();
+      if (inner > 0) { p.arc(cx, cy, R, a0, a1); p.arc(cx, cy, inner, a1, a0, true); }
+      else { p.moveTo(cx, cy); p.arc(cx, cy, R, a0, a1); }
+      p.closePath();
+      ctx.fillStyle = d.color || pal[i % pal.length];
+      ctx.fill(p);
+      a0 = a1;
+    });
+    if (ann.centerLabel && inner > 0) {
+      _setFont(ctx, ann, Math.max(5, inner * 0.45), '700');
+      ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(_fitText(ctx, ann.centerLabel, inner * 1.7), cx, cy);
+    }
+  } else if (kind === 'line') {
+    const ph = plot.h - labelH;
+    const vals = data.map(d => d.value);
+    const max = ann.maxValue !== undefined ? ann.maxValue : Math.max(...vals, 0);
+    const min = ann.minValue !== undefined ? ann.minValue : Math.min(0, ...vals);
+    const span = (max - min) || 1;
+    const n = data.length;
+    const px = i => plot.x + (n > 1 ? i / (n - 1) : 0.5) * plot.w;
+    const py = v => plot.y + ph - ((v - min) / span) * (ph - fs);
+    ctx.strokeStyle = muted; ctx.lineWidth = 0.75;
+    ctx.beginPath(); ctx.moveTo(plot.x, plot.y + ph); ctx.lineTo(plot.x + plot.w, plot.y + ph); ctx.stroke();
+    const lc = ann.lineColor || pal[0];
+    if (ann.areaFill) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(px(0), plot.y + ph);
+      data.forEach((d, i) => ctx.lineTo(px(i), py(d.value)));
+      ctx.lineTo(px(n - 1), plot.y + ph);
+      ctx.closePath();
+      ctx.globalAlpha = ctx.globalAlpha * 0.18;
+      ctx.fillStyle = lc; ctx.fill();
+      ctx.restore();
+    }
+    ctx.beginPath();
+    data.forEach((d, i) => { i ? ctx.lineTo(px(i), py(d.value)) : ctx.moveTo(px(i), py(d.value)); });
+    ctx.strokeStyle = lc; ctx.lineWidth = ann.thickness || 2;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.stroke();
+    data.forEach((d, i) => {
+      ctx.beginPath();
+      ctx.arc(px(i), py(d.value), Math.max(1.4, (ann.thickness || 2) * 1.1), 0, Math.PI * 2);
+      ctx.fillStyle = d.color || lc; ctx.fill();
+    });
+    if (labelH) {
+      _setFont(ctx, ann, fs * 0.95, '500');
+      ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      data.forEach((d, i) => ctx.fillText(_fitText(ctx, d.label || '', plot.w / n), px(i), plot.y + ph + 4));
+    }
+  } else {
+    const ph = plot.h - labelH;
+    const max = ann.maxValue !== undefined ? ann.maxValue : Math.max(...data.map(d => d.value), 0);
+    const n = data.length;
+    const gap = Math.max(1.5, (plot.w / n) * 0.25);
+    const bw = Math.max(1, (plot.w - gap * (n - 1)) / n);
+    ctx.strokeStyle = muted; ctx.lineWidth = 0.75;
+    ctx.beginPath(); ctx.moveTo(plot.x, plot.y + ph); ctx.lineTo(plot.x + plot.w, plot.y + ph); ctx.stroke();
+    data.forEach((d, i) => {
+      const h = max > 0 ? Math.max(0, (d.value / max) * (ph - fs * 1.4)) : 0;
+      const x = plot.x + i * (bw + gap), y = plot.y + ph - h;
+      ctx.fillStyle = d.color || pal[i % pal.length];
+      ctx.fill(_rrPath(x, y, bw, h, Math.min(ann.barRadius !== undefined ? ann.barRadius : 2, bw / 2)));
+      if (ann.showValues !== false) {
+        _setFont(ctx, ann, fs * 0.95, '700');
+        ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillText(String(d.valueLabel !== undefined ? d.valueLabel : d.value), x + bw / 2, y - 2);
+      }
+      if (labelH) {
+        _setFont(ctx, ann, fs * 0.95, '500');
+        ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        ctx.fillText(_fitText(ctx, d.label || '', bw + gap), x + bw / 2, plot.y + ph + 4);
+      }
+    });
+  }
+  ctx.restore();
+}
+
+
+// ============================================================
+// v3.22 — GROUPS, Z-ORDER AND STYLE PRESETS
+// ============================================================
+
+// --- Groups -------------------------------------------------
+// A composed object (a KPI card = panel + value + caption + accent) is several
+// annotations. Without grouping the reader has to drag four things to move one
+// card, which is the main reason agent-built layouts were painful to edit.
+// Any annotation carrying the same ann.groupId moves, deletes, duplicates and
+// re-orders as one.
+//
+// Group membership is plain data, so an agent can set groupId in the payload
+// and the group works the moment the file opens.
+let groupPickIds = [];   // shift-click staging set, cleared once grouped
+
+function annGroupMembers(ann) {
+  if (!ann) return [];
+  if (!ann.groupId) return [ann];
+  return annotations.filter(a => a.groupId === ann.groupId);
+}
+
+function toggleGroupPick(id) {
+  if (!id) return;
+  const i = groupPickIds.indexOf(id);
+  if (i === -1) groupPickIds.push(id); else groupPickIds.splice(i, 1);
+  redrawAnnotations();
+  showToast(groupPickIds.length
+    ? groupPickIds.length + ' picked — Ctrl+G to group'
+    : 'Group selection cleared');
+}
+
+function groupPickedAnnotations() {
+  // Grouping the shift-picked set; fall back to "everything already in the
+  // selected annotation's group" so Ctrl+G on a lone shape is a no-op, not an
+  // accidental one-member group.
+  const ids = groupPickIds.length ? groupPickIds.slice()
+            : (selectedAnnotationId ? [selectedAnnotationId] : []);
+  if (ids.length < 2) { showToast('Shift+click two or more markups first, then Ctrl+G'); return; }
+  const gid = 'grp-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+  let n = 0;
+  ids.forEach(id => {
+    const a = annotations.find(x => x.id === id);
+    if (a) { a.groupId = gid; n++; }
+  });
+  groupPickIds = [];
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+  showToast(n + ' markups grouped — they now move and delete as one');
+}
+
+function ungroupSelected() {
+  const ann = annotations.find(a => a.id === selectedAnnotationId);
+  if (!ann || !ann.groupId) { showToast('That markup is not in a group'); return; }
+  const gid = ann.groupId;
+  let n = 0;
+  annotations.forEach(a => { if (a.groupId === gid) { delete a.groupId; n++; } });
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+  showToast(n + ' markups ungrouped');
+}
+
+// --- Z-order ------------------------------------------------
+// Draw order is array order. Agents append, so a panel written after its own
+// label used to bury it. Whole groups move together so a card keeps its
+// internal stacking.
+function _zMove(where) {
+  const ann = annotations.find(a => a.id === selectedAnnotationId);
+  if (!ann) return;
+  const set   = new Set(annGroupMembers(ann).map(m => m.id));
+  const moved = annotations.filter(a =>  set.has(a.id));   // keeps internal order
+  const kept  = annotations.filter(a => !set.has(a.id));
+  if (!moved.length) return;
+  if (where === 'front') {
+    annotations = kept.concat(moved);
+  } else if (where === 'back') {
+    annotations = moved.concat(kept);
+  } else {
+    // Where the block sits once the members are lifted out, then one step.
+    const firstIdx = annotations.findIndex(a => set.has(a.id));
+    let at = annotations.slice(0, firstIdx).filter(a => !set.has(a.id)).length;
+    at += (where === 'forward' ? 1 : -1);
+    at = Math.max(0, Math.min(kept.length, at));
+    annotations = kept.slice(0, at).concat(moved, kept.slice(at));
+  }
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+function bringToFront()   { _zMove('front'); }
+function sendToBack()     { _zMove('back'); }
+function bringForward()   { _zMove('forward'); }
+function sendBackward()   { _zMove('backward'); }
+
+// --- Style presets ------------------------------------------
+// Named tokens so an agent (and the reader) reference a role, not a hex code.
+// One edit here restyles every markup that uses the preset next time it is
+// applied, and it stops eight agents inventing eight different ambers.
+const DATUM_TOKENS = {
+  brand:      '#E5432E',
+  ink:        '#0F172A',
+  muted:      '#64748B',
+  line:       '#E2E8F0',
+  surface:    '#FFFFFF',
+  surfaceAlt: '#F8FAFC',
+  navy:       '#1a1b2e',
+  ok:         '#16A34A',
+  warn:       '#F59E0B',
+  risk:       '#DC2626',
+  info:       '#4F8EF7',
+  accent2:    '#9333EA'
+};
+
+// Each preset is a property bag merged onto the annotation. Keep them small —
+// they set look, never geometry.
+const DATUM_PRESETS = {
+  'card':          { type: 'rectangle', fillColor: DATUM_TOKENS.surface, fillOpacity: 100, color: DATUM_TOKENS.line, thickness: 1, radius: 10, shadow: true, shadowBlur: 14, shadowOffsetY: 3, shadowColor: 'rgba(15,23,42,0.10)' },
+  'card-flat':     { type: 'rectangle', fillColor: DATUM_TOKENS.surfaceAlt, fillOpacity: 100, thickness: 0, radius: 10 },
+  'card-accent':   { type: 'rectangle', fillColor: DATUM_TOKENS.surface, fillOpacity: 100, color: DATUM_TOKENS.brand, thickness: 3, strokeSide: 'l', radius: 8 },
+  'banner-brand':  { type: 'banner', fillColor: DATUM_TOKENS.navy, fillColor2: '#2b2d52', gradientAngle: 0, textColor: '#FFFFFF', accentColor: DATUM_TOKENS.brand, accentWidth: 5, radius: 4, thickness: 0 },
+  'heading':       { type: 'text', fontSize: 20, fontWeight: '700', textColor: DATUM_TOKENS.ink, fontFamily: DATUM_FONT },
+  'subheading':    { type: 'text', fontSize: 13, fontWeight: '600', textColor: DATUM_TOKENS.muted, fontFamily: DATUM_FONT },
+  'body':          { type: 'text', fontSize: 10, fontWeight: '400', textColor: DATUM_TOKENS.ink, fontFamily: DATUM_FONT },
+  'note':          { type: 'text', fontSize: 9, fontWeight: '400', textColor: DATUM_TOKENS.muted, boxFill: '#FFFFFF', fillOpacity: 92, boxPad: 5, radius: 4 },
+  'chip-ok':       { type: 'chip', fillColor: DATUM_TOKENS.ok,   textColor: '#FFFFFF', thickness: 0 },
+  'chip-warn':     { type: 'chip', fillColor: DATUM_TOKENS.warn, textColor: '#111111', thickness: 0 },
+  'chip-risk':     { type: 'chip', fillColor: DATUM_TOKENS.risk, textColor: '#FFFFFF', thickness: 0 },
+  'chip-info':     { type: 'chip', fillColor: DATUM_TOKENS.info, textColor: '#FFFFFF', thickness: 0 },
+  'chip-neutral':  { type: 'chip', fillColor: DATUM_TOKENS.line, textColor: DATUM_TOKENS.ink, thickness: 0 },
+  'kpi':           { type: 'kpi', fillColor: DATUM_TOKENS.surface, color: DATUM_TOKENS.line, thickness: 1, radius: 8, accent: DATUM_TOKENS.brand, accentWidth: 4, boxPad: 10 },
+  'quote-finding': { type: 'quote', fillColor: DATUM_TOKENS.surfaceAlt, accentColor: DATUM_TOKENS.brand, accentWidth: 4, radius: 6, thickness: 0, boxPad: 10 },
+  'callout-note':  { type: 'callout', fillColor: '#FFFFFF', fillOpacity: 96, color: DATUM_TOKENS.brand, radius: 6, boxPad: 7, fontSize: 10 },
+  'divider-soft':  { type: 'divider', color: DATUM_TOKENS.line, thickness: 1, textColor: DATUM_TOKENS.muted, fontSize: 9 }
+};
+
+// Apply a preset to the selected markup (or to any annotation object).
+function applyDatumPreset(name, ann) {
+  const p = DATUM_PRESETS[name];
+  if (!p) { showToast('Unknown style preset: ' + name); return false; }
+  const target = ann || annotations.find(a => a.id === selectedAnnotationId);
+  if (!target) return false;
+  Object.keys(p).forEach(k => { if (k !== 'type') target[k] = p[k]; });
+  target.preset = name;
+  if (!ann) { saveToHistory(); redrawAnnotations(); openPropertiesPanel(); showToast('Applied style: ' + name); }
+  return true;
+}
+
+// Presets named in a loaded payload are resolved once on open, so an agent can
+// write {"preset":"chip-risk"} instead of six colour properties. Explicit
+// properties on the annotation always win over the preset.
+function resolveAnnotationPresets(list) {
+  (list || []).forEach(a => {
+    if (!a || !a.preset) return;
+    const p = DATUM_PRESETS[a.preset];
+    if (!p) return;
+    Object.keys(p).forEach(k => {
+      if (k !== 'type' && a[k] === undefined) a[k] = p[k];
+    });
+  });
+}
+
 function drawLabel(ctx, text, pos, opts) {
   opts = opts || {};
   const ann = opts.ann || {};
@@ -5035,7 +6007,17 @@ function offsetPos(p, ann) {
 //    (lengths/areas are rotation-invariant).
 // cutcontent is deliberately excluded — redaction boxes stay axis-aligned.
 // ============================================================
-const ROT_PROP_TYPES = ['rectangle','ellipse','highlight','image','signature','stamp','text','symbol'];
+// v3.22 — every shape defined by two opposite corners. Adding a type here
+// gives it selection, the 8 resize handles, hit-testing, rotation and the
+// dashed selection box without touching any of those functions.
+const BOX2_TYPES = ['rectangle','ellipse','highlight','cutcontent','image','symbol',
+  'chip','kpi','banner','quote','divider','chevron','timeline','bracket','chart','progress'];
+// Types whose whole look is a filled panel — they take radius / gradient /
+// shadow / padding and are what the presentation tools are built from.
+const PANEL_TYPES = ['chip','kpi','banner','quote','chevron','timeline','chart','progress'];
+
+const ROT_PROP_TYPES = ['rectangle','ellipse','highlight','image','signature','stamp','text','symbol',
+  'chip','kpi','banner','quote','divider','chevron','timeline','bracket','chart','progress','badge'];
 const ROT_POINT_TYPES = ['line','arrow','measure','dimension','polygon','polyline','area','cloud','pen'];
 
 function annCanRotate(ann) {
@@ -5151,8 +6133,10 @@ function getAnnotationHandlePoints(ann) {
       { x: p.x, y: p.y + h },     { x: p.x + w, y: p.y + h }   // BL, BR
     ];
   }
+  // v3.22: badge is a single-point marker, like count/tick.
+  if (ann.type === 'badge') return [ann.points[0]];
   // For two-point shapes (rectangle, ellipse, highlight, cutcontent), return 8 handles (corners + midpoints)
-  if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(ann.type) && ann.points.length === 2) {
+  if (BOX2_TYPES.includes(ann.type) && ann.points.length === 2) {
     const [a, b] = ann.points;
     const minX = Math.min(a.x,b.x), maxX = Math.max(a.x,b.x), minY = Math.min(a.y,b.y), maxY = Math.max(a.y,b.y);
     const midX = (minX+maxX)/2, midY = (minY+maxY)/2;
@@ -5293,7 +6277,7 @@ function applyResize(ann, handleIdx, newPagePt) {
   }
 
   // Two-point shapes with 8 resize handles (corners + midpoints)
-  if (['rectangle','ellipse','highlight','cutcontent','image','symbol'].includes(ann.type) && ann.points && ann.points.length === 2) {
+  if (BOX2_TYPES.includes(ann.type) && ann.points && ann.points.length === 2) {
     const [a, b] = ann.points;
     let minX = Math.min(a.x,b.x), maxX = Math.max(a.x,b.x);
     let minY = Math.min(a.y,b.y), maxY = Math.max(a.y,b.y);
@@ -5550,6 +6534,12 @@ function onCanvasMouseDown(e) {
     }
 
     // 2b) Clicked on a different annotation — switch selection and begin drag.
+    // v3.22: Shift+click stages markups for grouping (Ctrl+G) rather than
+    // switching the selection.
+    if (clicked && e.shiftKey) {
+      toggleGroupPick(clicked.id);
+      return;
+    }
     if (clicked) {
       selectedAnnotationId = clicked.id;
       resizeAnnotation = null; resizeHandleIndex = -1;
@@ -5650,6 +6640,7 @@ function onCanvasMouseDown(e) {
   if (currentTool === 'pen' || currentTool === 'highlight' || currentTool === 'cloud') {
     polylinePoints = [screenPt]; return;
   }
+  if (currentTool === 'badge') { addBadgeMarker(point); return; }
   if (currentTool === 'count') { addCountMarker(screenPt); isDrawing = false; return; }
   if (currentTool === 'stamp') { addStamp(screenPt); isDrawing = false; returnToNavTool(); return; }
   // Legend / Table — click drops the table, then the editor opens straight away
@@ -5756,18 +6747,14 @@ function onCanvasMouseMove(e) {
     const pagePt = toPage(screenPt);
     const delta = { x: pagePt.x - dragLast.x, y: pagePt.y - dragLast.y };
 
-    if (dragAnnotation.points) {
-      dragAnnotation.points = dragAnnotation.points.map(p => ({ x: p.x + delta.x, y: p.y + delta.y }));
-    }
-    if (dragAnnotation.anchor) {
-      dragAnnotation.anchor = { x: dragAnnotation.anchor.x + delta.x, y: dragAnnotation.anchor.y + delta.y };
-    }
-    if (dragAnnotation.knees) {
-      dragAnnotation.knees = dragAnnotation.knees.map(k => ({ x: k.x + delta.x, y: k.y + delta.y }));
-    }
-    if (dragAnnotation.textPos) {
-      dragAnnotation.textPos = { x: dragAnnotation.textPos.x + delta.x, y: dragAnnotation.textPos.y + delta.y };
-    }
+    // v3.22: a grouped markup drags its whole group, so a composed card moves
+    // as one object instead of four.
+    annGroupMembers(dragAnnotation).forEach(m => {
+      if (m.points) m.points = m.points.map(p => ({ x: p.x + delta.x, y: p.y + delta.y }));
+      if (m.anchor) m.anchor = { x: m.anchor.x + delta.x, y: m.anchor.y + delta.y };
+      if (m.knees) m.knees = m.knees.map(k => ({ x: k.x + delta.x, y: k.y + delta.y }));
+      if (m.textPos) m.textPos = { x: m.textPos.x + delta.x, y: m.textPos.y + delta.y };
+    });
 
     dragLast = pagePt;
     redrawAnnotations();
@@ -5958,6 +6945,11 @@ function onCanvasMouseUp(e) {
     case 'highlight':
       if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD))
         { addAnnotation('highlight', [sp, ep]); didDraw = true; } polylinePoints = []; break;
+    // v3.22 presentation markups — one shared drag-a-box branch.
+    case 'chip': case 'kpi': case 'banner': case 'quote': case 'divider':
+    case 'chevron': case 'timeline': case 'bracket': case 'chart': case 'progress':
+      if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD))
+        { addPresentationAnnotation(currentTool, [sp, ep]); didDraw = true; } break;
     case 'pen':
       if (polylinePoints.length > 1) { addPenAnnotation(polylinePoints.map(p => toPage(p))); didDraw = true; } polylinePoints = []; break;
     case 'cloud':
@@ -6643,7 +7635,37 @@ function applyShiftBoxLock(start, end) {
 }
 
 // Tool categorisation for shift-lock decisions.
-const SHIFT_BOX_TOOLS  = ['rectangle','ellipse','highlight','cutcontent','snipregion','visualsearch','sheetregion'];
+const SHIFT_BOX_TOOLS  = ['rectangle','ellipse','highlight','cutcontent','snipregion','visualsearch','sheetregion',
+  'chip','kpi','banner','quote','divider','chevron','timeline','bracket','chart','progress'];
+// v3.22 — the presentation markups, drawn by dragging a box. Each gets a
+// starter payload so the thing you drop on the page already looks finished
+// rather than being an empty rectangle you then have to configure.
+const PRESENTATION_TOOLS = ['chip','kpi','banner','quote','divider','chevron','timeline','bracket','chart','progress'];
+const PRESENTATION_SEEDS = {
+  chip:     { preset: 'chip-info', text: 'Label' },
+  kpi:      { preset: 'kpi', value: '0', caption: 'Caption' },
+  banner:   { preset: 'banner-brand', title: 'Section title', subtitle: '' },
+  quote:    { preset: 'quote-finding', text: 'Finding or recommendation.' },
+  divider:  { preset: 'divider-soft', text: '' },
+  chevron:  { segments: [{ label: 'Design' }, { label: 'Tender' }, { label: 'Construction' }], current: 0, thickness: 0 },
+  timeline: { milestones: [{ label: 'Start', date: '', state: 'done' }, { label: 'Finish', date: '', state: 'todo' }], thickness: 2 },
+  bracket:  { text: '', orientation: 'top', thickness: 1.5 },
+  chart:    { chartType: 'bar', title: '', data: [{ label: 'A', value: 3 }, { label: 'B', value: 5 }, { label: 'C', value: 2 }], thickness: 0 },
+  progress: { value: 65, thickness: 0 }
+};
+
+// Drop a presentation markup from a dragged box, seeded and ready to edit.
+function addPresentationAnnotation(type, points) {
+  const seed = PRESENTATION_SEEDS[type] || {};
+  const ann = Object.assign({
+    id: generateId(), type, page: currentPage, points,
+    opacity: 100
+  }, JSON.parse(JSON.stringify(seed)));
+  if (ann.preset) applyDatumPreset(ann.preset, ann);
+  annotations.push(ann);
+  selectedAnnotationId = ann.id;
+  saveToHistory();
+}
 const SHIFT_LINE_TOOLS = ['line','arrow','measure','calibrate','dimension'];
 
 // ============================================================
@@ -6734,6 +7756,24 @@ function _getCountGroup(name) {
   // Migrate legacy numeric entries from older saves
   if (typeof countGroups[name] === 'number') countGroups[name] = { count: countGroups[name], color: '#E5432E' };
   return countGroups[name];
+}
+
+// v3.22 — numbered step badge. Unlike 'count' this never touches the
+// workbook; it is pure annotation, and it auto-increments per page so a
+// numbered walkthrough can be dropped in one pass.
+let badgeCounter = 0;
+function addBadgeMarker(point) {
+  const pagePoint = toPage(point);
+  badgeCounter = annotations.filter(a => a.type === 'badge' && a.page === currentPage).length + 1;
+  const ann = {
+    id: generateId(), type: 'badge', page: currentPage, points: [pagePoint],
+    text: String(badgeCounter), badgeSize: 22,
+    fillColor: toolProperties.color || '#E5432E', textColor: '#FFFFFF',
+    thickness: 2, borderColor: '#FFFFFF', opacity: 100
+  };
+  annotations.push(ann);
+  selectedAnnotationId = ann.id;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
 }
 
 function addCountMarker(point) {
@@ -7282,9 +8322,15 @@ function hitTest(x, y, ann, tol) {
     }
     case 'measure': case 'line': case 'arrow': case 'dimension':
       return ptNearLine(x,y, ann.points[0], ann.points[1], tol);
-    case 'rectangle': case 'highlight': case 'cutcontent': case 'image': case 'symbol': {
+    case 'rectangle': case 'highlight': case 'cutcontent': case 'image': case 'symbol':
+    case 'chip': case 'kpi': case 'banner': case 'quote': case 'divider':
+    case 'chevron': case 'timeline': case 'bracket': case 'chart': case 'progress': {
       const [a,b] = ann.points;
       return x >= Math.min(a.x,b.x)-tol && x <= Math.max(a.x,b.x)+tol && y >= Math.min(a.y,b.y)-tol && y <= Math.max(a.y,b.y)+tol;
+    }
+    case 'badge': {
+      const c = ann.points[0], r = (ann.badgeSize || 22) / 2;
+      return Math.hypot(x - c.x, y - c.y) <= r + tol;
     }
     case 'ellipse': {
       const [a,b] = ann.points;
@@ -7364,8 +8410,34 @@ function ptNearLine(x,y,p1,p2,tol) {
   return Math.hypot(x - cx, y - cy) <= tol;
 }
 
+// v3.22 — Ctrl+G / Ctrl+Shift+G. Registered here rather than in the main key
+// handler so it stays next to the group code it drives.
+document.addEventListener('keydown', function (e) {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if ((e.key || '').toLowerCase() !== 'g') return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  e.preventDefault();
+  if (e.shiftKey) ungroupSelected(); else groupPickedAnnotations();
+});
+
 function deleteSelectedAnnotation() {
   if (!selectedAnnotationId) return;
+  // v3.22: deleting one member of a group deletes the whole composed object.
+  // Recurse over the other members first, then fall through to the normal
+  // single-annotation path for the one that is actually selected.
+  const _sel = annotations.find(a => a.id === selectedAnnotationId);
+  if (_sel && _sel.groupId) {
+    const others = annotations.filter(a => a.groupId === _sel.groupId && a.id !== _sel.id);
+    if (others.length) {
+      const gid = _sel.groupId;
+      others.forEach(o => { delete o.groupId; });
+      delete _sel.groupId;
+      others.forEach(o => { selectedAnnotationId = o.id; deleteSelectedAnnotation(); });
+      selectedAnnotationId = _sel.id;
+      void gid;
+    }
+  }
   const idx = annotations.findIndex(a => a.id === selectedAnnotationId);
   if (idx !== -1) {
     const ann = annotations[idx];
@@ -10707,6 +11779,90 @@ function getAnnotationPropertiesHTML(ann) {
       <div class="color-swatches" data-target="prop-color"></div>`;
     }
 
+    // ---- v3.22 presentation markups: their own content fields ----
+    if (['chip','divider','bracket','badge'].includes(ann.type)) {
+      html += `<div class="property-row"><div class="property-label">Label:</div><input type="text" id="prop-pm-text" class="property-input" value="${_escPM(ann.text || '')}"></div>
+        <div class="property-row"><div class="property-label">Text Colour:</div><input type="color" id="prop-pm-textcolor" class="color-picker" value="${ann.textColor || '#111111'}"></div>
+        <div class="property-row"><div class="property-label">Font Size:</div><input type="number" id="prop-pm-fontsize" class="property-input" min="3" max="80" step="1" value="${ann.fontSize || ''}" placeholder="auto" style="width:64px"></div>`;
+    }
+    if (ann.type === 'badge') {
+      html += `<div class="property-row"><div class="property-label">Badge Size:</div><input type="number" id="prop-badge-size" class="property-input" min="8" max="120" step="1" value="${ann.badgeSize || 22}" style="width:64px"></div>`;
+    }
+    if (ann.type === 'divider') {
+      const la = ann.labelAlign || 'center';
+      html += `<div class="property-row"><div class="property-label">Label Position:</div><select id="prop-div-align" class="select-input">
+        <option value="left" ${la==='left'?'selected':''}>Left</option>
+        <option value="center" ${la==='center'?'selected':''}>Centre</option>
+        <option value="right" ${la==='right'?'selected':''}>Right</option>
+      </select></div>`;
+    }
+    if (ann.type === 'bracket') {
+      const o = ann.orientation || 'top';
+      html += `<div class="property-row"><div class="property-label" title="Which way the bracket opens">Opens:</div><select id="prop-bracket-orient" class="select-input">
+        <option value="top" ${o==='top'?'selected':''}>Up</option>
+        <option value="bottom" ${o==='bottom'?'selected':''}>Down</option>
+        <option value="left" ${o==='left'?'selected':''}>Left</option>
+        <option value="right" ${o==='right'?'selected':''}>Right</option>
+      </select></div>`;
+    }
+    if (ann.type === 'banner') {
+      html += `<div class="property-row"><div class="property-label">Title:</div><input type="text" id="prop-banner-title" class="property-input" value="${_escPM(ann.title || '')}"></div>
+        <div class="property-row"><div class="property-label">Subtitle:</div><input type="text" id="prop-banner-sub" class="property-input" value="${_escPM(ann.subtitle || '')}"></div>
+        <div class="property-row"><div class="property-label">Text Colour:</div><input type="color" id="prop-pm-textcolor" class="color-picker" value="${ann.textColor || '#ffffff'}"></div>
+        <div class="property-row"><div class="property-label">Accent Colour:</div><input type="color" id="prop-accent-color" class="color-picker" value="${ann.accentColor || '#E5432E'}"></div>
+        <div class="property-row"><div class="property-label">Accent Width:</div><input type="number" id="prop-accent-width" class="property-input" min="0" max="40" step="1" value="${ann.accentWidth || 0}" style="width:64px"></div>`;
+    }
+    if (ann.type === 'quote') {
+      html += `<div class="property-row"><div class="property-label">Text:</div><textarea id="prop-pm-textarea" class="property-input" rows="3" style="resize:vertical">${_escPM(ann.text || '')}</textarea></div>
+        <div class="property-row"><div class="property-label">Attribution:</div><input type="text" id="prop-quote-attr" class="property-input" value="${_escPM(ann.attribution || '')}"></div>
+        <div class="property-row"><div class="property-label">Text Colour:</div><input type="color" id="prop-pm-textcolor" class="color-picker" value="${ann.textColor || '#0F172A'}"></div>
+        <div class="property-row"><div class="property-label">Accent Colour:</div><input type="color" id="prop-accent-color" class="color-picker" value="${ann.accentColor || '#E5432E'}"></div>
+        <div class="property-row"><div class="property-label">Accent Width:</div><input type="number" id="prop-accent-width" class="property-input" min="0" max="40" step="1" value="${ann.accentWidth !== undefined ? ann.accentWidth : 4}" style="width:64px"></div>`;
+    }
+    if (ann.type === 'kpi') {
+      const dd = ann.deltaDirection || 'flat';
+      html += `<div class="property-row"><div class="property-label">Value:</div><input type="text" id="prop-kpi-value" class="property-input" value="${_escPM(ann.value !== undefined ? ann.value : '')}"></div>
+        <div class="property-row"><div class="property-label">Caption:</div><input type="text" id="prop-kpi-caption" class="property-input" value="${_escPM(ann.caption || '')}"></div>
+        <div class="property-row"><div class="property-label">Delta:</div><input type="text" id="prop-kpi-delta" class="property-input" value="${_escPM(ann.delta || '')}" placeholder="e.g. +8.2%"></div>
+        <div class="property-row"><div class="property-label">Delta Direction:</div><select id="prop-kpi-dir" class="select-input">
+          <option value="up" ${dd==='up'?'selected':''}>Up</option>
+          <option value="down" ${dd==='down'?'selected':''}>Down</option>
+          <option value="flat" ${dd==='flat'?'selected':''}>Flat</option>
+        </select></div>
+        <div class="property-row"><div class="property-label">Accent Colour:</div><input type="color" id="prop-accent-color" class="color-picker" value="${ann.accent || ann.accentColor || '#E5432E'}"></div>
+        <div class="property-row"><div class="property-label">Accent Width:</div><input type="number" id="prop-accent-width" class="property-input" min="0" max="40" step="1" value="${ann.accentWidth || 0}" style="width:64px"></div>
+        <div class="property-row"><div class="property-label">Text Colour:</div><input type="color" id="prop-pm-textcolor" class="color-picker" value="${ann.textColor || '#0F172A'}"></div>`;
+    }
+    if (ann.type === 'progress') {
+      html += `<div class="slider-group"><div class="slider-label"><span>Value:</span><span id="prop-prog-val">${ann.value !== undefined ? ann.value : 0}%</span></div>
+          <input type="range" id="prop-progress-value" class="slider" min="0" max="100" value="${ann.value !== undefined ? ann.value : 0}"></div>
+        <div class="property-row"><div class="property-label">Bar Colour:</div><input type="color" id="prop-bar-color" class="color-picker" value="${ann.barColor || ann.color || '#E5432E'}"></div>
+        <div class="property-row"><div class="property-label">Show %:</div><input type="checkbox" id="prop-progress-showval" class="checkbox-input" ${ann.showValue !== false ? 'checked' : ''}></div>`;
+    }
+    if (ann.type === 'chevron') {
+      html += `<div class="property-row"><div class="property-label" title="One stage per line">Stages:</div><textarea id="prop-chevron-segs" class="property-input" rows="4" style="resize:vertical" placeholder="Design&#10;Tender&#10;Construction">${_escPM((ann.segments||[]).map(s => s.label || '').join('\n'))}</textarea></div>
+        <div class="property-row"><div class="property-label" title="Stages up to and including this one are highlighted. 0 = the first.">Current (0-based):</div><input type="number" id="prop-chevron-current" class="property-input" min="-1" max="40" step="1" value="${ann.current !== undefined ? ann.current : -1}" style="width:64px"></div>
+        <div class="property-row"><div class="property-label">Active Colour:</div><input type="color" id="prop-active-color" class="color-picker" value="${ann.activeColor || ann.color || '#E5432E'}"></div>`;
+    }
+    if (ann.type === 'timeline') {
+      const rows = (ann.milestones || []).map(m => [m.label||'', m.date||'', m.state||'todo'].join(' | ')).join('\n');
+      html += `<div class="property-row"><div class="property-label" title="One milestone per line:  Label | Date | done/current/todo">Milestones:</div><textarea id="prop-timeline-ms" class="property-input" rows="5" style="resize:vertical" placeholder="Contract award | 12 Mar 26 | done&#10;PC | 30 Nov 26 | todo">${_escPM(rows)}</textarea></div>
+        <div class="property-row"><div class="property-label">Done Colour:</div><input type="color" id="prop-done-color" class="color-picker" value="${ann.doneColor || '#16A34A'}"></div>`;
+    }
+    if (ann.type === 'chart') {
+      const ct = ann.chartType || 'bar';
+      const rows = (ann.data || []).map(d => [d.label||'', d.value].join(' | ')).join('\n');
+      html += `<div class="property-row"><div class="property-label">Chart Type:</div><select id="prop-chart-type" class="select-input">
+          <option value="bar" ${ct==='bar'?'selected':''}>Bar</option>
+          <option value="line" ${ct==='line'?'selected':''}>Line</option>
+          <option value="donut" ${ct==='donut'?'selected':''}>Donut</option>
+          <option value="pie" ${ct==='pie'?'selected':''}>Pie</option>
+        </select></div>
+        <div class="property-row"><div class="property-label">Title:</div><input type="text" id="prop-chart-title" class="property-input" value="${_escPM(ann.title || '')}"></div>
+        <div class="property-row"><div class="property-label" title="One point per line:  Label | Value">Data:</div><textarea id="prop-chart-data" class="property-input" rows="5" style="resize:vertical" placeholder="Structure | 1240&#10;Facade | 860">${_escPM(rows)}</textarea></div>
+        <div class="property-row"><div class="property-label">Show Values:</div><input type="checkbox" id="prop-chart-showvals" class="checkbox-input" ${ann.showValues !== false ? 'checked' : ''}></div>`;
+    }
+
     if (ann.type === 'arrow' || ann.type === 'callout') {
       const aPct = Math.round(arrowHeadLen(ann) / ARROWHEAD_LEN * 100);
       html += `<div class="slider-group"><div class="slider-label"><span>Arrow Head:</span><span id="prop-arrowsize-val">${aPct}%</span></div>
@@ -10750,9 +11906,100 @@ function getAnnotationPropertiesHTML(ann) {
       </select></div>`;
     }
 
+    // ---- v3.22: hatch detail (only worth showing once a hatch is chosen) ----
+    if (['rectangle','ellipse','polygon','area'].includes(ann.type) && ann.hatch && ann.hatch !== 'none') {
+      html += `<div class="property-row"><div class="property-label" title="Gap between hatch lines, in page units">Hatch Gap:</div>
+          <input type="number" id="prop-hatch-spacing" class="property-input" min="1.5" max="60" step="0.5" value="${ann.hatchSpacing || 6}" style="width:64px"></div>
+        <div class="property-row"><div class="property-label" title="Rotate the whole hatch pattern">Hatch Angle:</div>
+          <input type="number" id="prop-hatch-angle" class="property-input" min="-180" max="180" step="5" value="${ann.hatchAngle || 0}" style="width:64px"></div>
+        <div class="slider-group"><div class="slider-label"><span>Hatch Opacity:</span><span id="prop-ho-val">${ann.hatchOpacity !== undefined ? ann.hatchOpacity : 30}%</span></div>
+          <input type="range" id="prop-hatch-opacity" class="slider" min="5" max="100" value="${ann.hatchOpacity !== undefined ? ann.hatchOpacity : 30}"></div>`;
+    }
+
+    // ---- v3.22: corner radius ----
+    if (['rectangle','text','callout'].includes(ann.type) || PANEL_TYPES.includes(ann.type)) {
+      html += `<div class="property-row"><div class="property-label" title="Round the corners. 0 = square, exactly as before.">Corner Radius:</div>
+        <input type="number" id="prop-radius" class="property-input" min="0" max="80" step="1" value="${ann.radius || 0}" style="width:64px"></div>`;
+    }
+
+    // ---- v3.22: box padding ----
+    if (['text','callout'].includes(ann.type) || PANEL_TYPES.includes(ann.type)) {
+      html += `<div class="property-row"><div class="property-label" title="Breathing room between the text and the edge of the box">Padding:</div>
+        <input type="number" id="prop-boxpad" class="property-input" min="0" max="60" step="1" value="${ann.boxPad !== undefined ? ann.boxPad : ''}" placeholder="auto" style="width:64px"></div>`;
+    }
+
+    // ---- v3.22: gradient second stop ----
+    if (['rectangle','ellipse','polygon','text','callout'].includes(ann.type) || PANEL_TYPES.includes(ann.type)) {
+      const gOn = !!(ann.fillColor2 && ann.fillColor2 !== 'none');
+      html += `<div class="property-row"><div class="property-label" title="Fade the fill into a second colour">Gradient To:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
+          <input type="checkbox" id="prop-grad-on" class="checkbox-input" ${gOn ? 'checked' : ''}>
+          <input type="color" id="prop-grad-color" class="color-picker" value="${gOn ? ann.fillColor2 : '#ffffff'}" ${gOn ? '' : 'disabled'}>
+        </div></div>
+        <div class="color-swatches" data-target="prop-grad-color"></div>
+        <div class="property-row"><div class="property-label">Gradient Angle:</div>
+          <input type="number" id="prop-grad-angle" class="property-input" min="0" max="360" step="15" value="${ann.gradientAngle !== undefined ? ann.gradientAngle : 90}" style="width:64px"></div>`;
+    }
+
+    // ---- v3.22: drop shadow ----
+    if (['rectangle','ellipse','polygon','text','callout','stamp','badge'].includes(ann.type) || PANEL_TYPES.includes(ann.type)) {
+      html += `<div class="property-row"><div class="property-label" title="Soft shadow behind the shape — lifts cards off the page">Shadow:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
+          <input type="checkbox" id="prop-shadow-on" class="checkbox-input" ${ann.shadow ? 'checked' : ''}>
+          <input type="number" id="prop-shadow-blur" class="property-input" min="0" max="60" step="1" value="${ann.shadowBlur !== undefined ? ann.shadowBlur : 10}" title="Blur" style="width:52px" ${ann.shadow ? '' : 'disabled'}>
+          <input type="number" id="prop-shadow-dy" class="property-input" min="-30" max="30" step="1" value="${ann.shadowOffsetY !== undefined ? ann.shadowOffsetY : 3}" title="Vertical offset" style="width:52px" ${ann.shadow ? '' : 'disabled'}>
+        </div></div>`;
+    }
+
+    // ---- v3.22: border on selected sides only (left-accent cards) ----
+    if (['rectangle'].includes(ann.type) || PANEL_TYPES.includes(ann.type)) {
+      const ss = ann.strokeSide || 'all';
+      html += `<div class="property-row"><div class="property-label" title="Draw the border on some edges only — 'Left only' gives an accent-bar card">Border Sides:</div><select id="prop-strokeside" class="select-input">
+        <option value="all" ${ss==='all'?'selected':''}>All</option>
+        <option value="l" ${ss==='l'?'selected':''}>Left only</option>
+        <option value="t" ${ss==='t'?'selected':''}>Top only</option>
+        <option value="r" ${ss==='r'?'selected':''}>Right only</option>
+        <option value="b" ${ss==='b'?'selected':''}>Bottom only</option>
+        <option value="tb" ${ss==='tb'?'selected':''}>Top + Bottom</option>
+        <option value="lr" ${ss==='lr'?'selected':''}>Left + Right</option>
+      </select></div>`;
+    }
+
+    // ---- v3.22: vertical alignment for text ----
+    if (ann.type === 'text') {
+      const va = ann.vAlign || 'top';
+      html += `<div class="property-row"><div class="property-label" title="Where the text sits vertically inside its box">V-Align:</div><select id="prop-valign" class="select-input">
+        <option value="top" ${va==='top'?'selected':''}>Top</option>
+        <option value="middle" ${va==='middle'?'selected':''}>Middle</option>
+        <option value="bottom" ${va==='bottom'?'selected':''}>Bottom</option>
+      </select></div>`;
+    }
+
+    // ---- v3.22: arrow head + tail styles ----
+    if (ann.type === 'arrow') {
+      const ah = ann.arrowHead || 'triangle', at = ann.arrowTail || 'none';
+      const opts = (sel) => ['triangle','open','dot','bar','none']
+        .map(v => `<option value="${v}" ${sel===v?'selected':''}>${v.charAt(0).toUpperCase()+v.slice(1)}</option>`).join('');
+      html += `<div class="property-row"><div class="property-label">Head Style:</div><select id="prop-arrowhead" class="select-input">${opts(ah)}</select></div>
+        <div class="property-row"><div class="property-label" title="Put a head on the tail end too — double-headed span arrows">Tail Style:</div><select id="prop-arrowtail" class="select-input">${opts(at)}</select></div>`;
+    }
+
+    // ---- v3.22: stroke cap / join ----
+    if (['line','arrow','polyline','polygon','rectangle','pen','cloud'].includes(ann.type)) {
+      const lc = ann.lineCap || 'butt', lj = ann.lineJoin || 'miter';
+      html += `<div class="property-row"><div class="property-label">Line Ends:</div><select id="prop-linecap" class="select-input">
+          <option value="butt" ${lc==='butt'?'selected':''}>Flat</option>
+          <option value="round" ${lc==='round'?'selected':''}>Round</option>
+          <option value="square" ${lc==='square'?'selected':''}>Square</option>
+        </select></div>
+        <div class="property-row"><div class="property-label">Corners:</div><select id="prop-linejoin" class="select-input">
+          <option value="miter" ${lj==='miter'?'selected':''}>Sharp</option>
+          <option value="round" ${lj==='round'?'selected':''}>Round</option>
+          <option value="bevel" ${lj==='bevel'?'selected':''}>Bevel</option>
+        </select></div>`;
+    }
+
     html += `<div class="slider-group"><div class="slider-label"><span>Opacity:</span><span id="prop-op-val">${ann.opacity||100}%</span></div>
       <input type="range" id="prop-opacity" class="slider" min="0" max="100" value="${ann.opacity||100}"></div>
-    <div class="property-row"><div class="property-label">Thickness:</div><input type="number" id="prop-thickness" class="property-input" min="0.5" max="10" step="0.5" value="${ann.thickness||2}"></div>`;
+    <div class="property-row"><div class="property-label" title="0 = no border at all (fill-only cards)">Thickness:</div><input type="number" id="prop-thickness" class="property-input" min="0" max="10" step="0.5" value="${ann.thickness !== undefined ? ann.thickness : 2}"></div>`;
 
     if (['line','arrow','measure','polyline','dimension'].includes(ann.type)) {
       html += `<div class="property-row"><div class="property-label">Style:</div><select id="prop-linestyle" class="select-input">
@@ -10763,6 +12010,46 @@ function getAnnotationPropertiesHTML(ann) {
       </select></div>`;
     }
     html += `</div></div>`;
+  }
+
+  // v3.22 — Arrange: stacking order, and grouping so a composed card (panel +
+  // value + caption) behaves as one object.
+  {
+    const inGroup = !!ann.groupId;
+    const members = inGroup ? annotations.filter(a => a.groupId === ann.groupId).length : 0;
+    html += `<div class="properties-section"><div class="properties-section-title">Arrange</div><div class="properties-section-content">
+      <div class="property-row" style="gap:6px">
+        <button class="modal-btn" style="flex:1" onclick="bringToFront()" title="Draw this on top of everything else">Front</button>
+        <button class="modal-btn" style="flex:1" onclick="bringForward()" title="One step up">Up</button>
+        <button class="modal-btn" style="flex:1" onclick="sendBackward()" title="One step down">Down</button>
+        <button class="modal-btn" style="flex:1" onclick="sendToBack()" title="Draw this behind everything else">Back</button>
+      </div>
+      <div class="property-row" style="gap:6px;margin-top:6px">
+        <button class="modal-btn" style="flex:1" onclick="groupPickedAnnotations()" title="Group the markups you Shift+clicked (Ctrl+G)">Group</button>
+        <button class="modal-btn" style="flex:1" onclick="ungroupSelected()" ${inGroup ? '' : 'disabled'} title="Split this group back into separate markups (Ctrl+Shift+G)">Ungroup</button>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${inGroup
+        ? 'In a group of ' + members + ' — they move and delete together.'
+        : 'Shift+click markups to pick them, then Group.'}</div>
+    </div></div>`;
+  }
+
+  // v3.22 — Style preset: apply a named house style instead of hand-picking
+  // colours. Explicit properties set afterwards still win.
+  {
+    const names = Object.keys(DATUM_PRESETS).filter(n => {
+      const t = DATUM_PRESETS[n].type;
+      return !t || t === ann.type;
+    });
+    if (names.length) {
+      const safeIds = names.map(n => `<option value="${n}" ${ann.preset === n ? 'selected' : ''}>${n}</option>`).join('');
+      html += `<div class="properties-section"><div class="properties-section-title">Style Preset</div><div class="properties-section-content">
+        <div class="property-row"><select id="prop-preset" class="select-input">
+          <option value="">— choose —</option>${safeIds}
+        </select></div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">House styles. Applying one overwrites this markup's colours, radius and shadow.</div>
+      </div></div>`;
+    }
   }
 
   // Rotation — 90° buttons for everything rotatable; exact angle for shapes
@@ -10902,6 +12189,12 @@ function populateSwatches() {
   });
 }
 
+function _escPM(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                  .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function attachAnnotationListeners(ann) {
   // Debounced history push — property edits are now undoable, but rapid
   // slider/typing changes collapse into a single undo step.
@@ -10948,6 +12241,107 @@ function attachAnnotationListeners(ann) {
   bind('prop-thickness', 'thickness', t => parseFloat(t.value));
   bind('prop-linestyle', 'lineStyle');
   bind('prop-hatch', 'hatch');
+  {
+    const pv = document.getElementById('prop-preset');
+    if (pv) pv.addEventListener('change', e => { if (e.target.value) applyDatumPreset(e.target.value); });
+  }
+  // ---- v3.22 appearance ----
+  bind('prop-radius', 'radius', t => Math.max(0, parseFloat(t.value) || 0));
+  bind('prop-boxpad', 'boxPad', t => t.value === '' ? undefined : Math.max(0, parseFloat(t.value) || 0));
+  bind('prop-valign', 'vAlign');
+  bind('prop-strokeside', 'strokeSide');
+  bind('prop-linecap', 'lineCap');
+  bind('prop-linejoin', 'lineJoin');
+  bind('prop-arrowhead', 'arrowHead');
+  bind('prop-arrowtail', 'arrowTail');
+  bind('prop-grad-angle', 'gradientAngle', t => parseFloat(t.value) || 0);
+  bind('prop-hatch-spacing', 'hatchSpacing', t => Math.max(1.5, parseFloat(t.value) || 6));
+  bind('prop-hatch-angle', 'hatchAngle', t => parseFloat(t.value) || 0);
+  // ---- v3.22 presentation content ----
+  bind('prop-pm-text', 'text');
+  bind('prop-pm-textarea', 'text');
+  bind('prop-pm-textcolor', 'textColor');
+  bind('prop-pm-fontsize', 'fontSize', t => t.value === '' ? undefined : Math.max(3, parseFloat(t.value) || 10));
+  bind('prop-badge-size', 'badgeSize', t => Math.max(8, parseFloat(t.value) || 22));
+  bind('prop-div-align', 'labelAlign');
+  bind('prop-bracket-orient', 'orientation');
+  bind('prop-banner-title', 'title');
+  bind('prop-banner-sub', 'subtitle');
+  bind('prop-quote-attr', 'attribution');
+  bind('prop-accent-color', ann.type === 'kpi' ? 'accent' : 'accentColor');
+  bind('prop-accent-width', 'accentWidth', t => Math.max(0, parseFloat(t.value) || 0));
+  bind('prop-kpi-value', 'value');
+  bind('prop-kpi-caption', 'caption');
+  bind('prop-kpi-delta', 'delta');
+  bind('prop-kpi-dir', 'deltaDirection');
+  bind('prop-bar-color', 'barColor');
+  bind('prop-active-color', 'activeColor');
+  bind('prop-done-color', 'doneColor');
+  bind('prop-chart-type', 'chartType');
+  bind('prop-chart-title', 'title');
+  bind('prop-progress-showval', 'showValue', t => t.checked);
+  bind('prop-chart-showvals', 'showValues', t => t.checked);
+  bind('prop-progress-value', 'value', t => {
+    const v = Math.max(0, Math.min(100, parseFloat(t.value) || 0));
+    const lbl = document.getElementById('prop-prog-val');
+    if (lbl) lbl.textContent = v + '%';
+    return v;
+  });
+  // Free-text editors that parse into structured arrays. Keeping the panel
+  // line-based means the reader edits a stage list or a data series the same
+  // way they'd type it, without a nested editor.
+  bind('prop-chevron-segs', 'segments', t => String(t.value || '').split('\n')
+      .map(s => s.trim()).filter(Boolean).map(label => ({ label })));
+  bind('prop-chevron-current', 'current', t => parseInt(t.value, 10));
+  bind('prop-timeline-ms', 'milestones', t => String(t.value || '').split('\n')
+      .map(l => l.trim()).filter(Boolean).map(l => {
+        const p = l.split('|').map(x => x.trim());
+        const st = (p[2] || 'todo').toLowerCase();
+        return { label: p[0] || '', date: p[1] || '',
+                 state: ['done','current','todo'].includes(st) ? st : 'todo' };
+      }));
+  bind('prop-chart-data', 'data', t => String(t.value || '').split('\n')
+      .map(l => l.trim()).filter(Boolean).map(l => {
+        const p = l.split('|').map(x => x.trim());
+        return { label: p[0] || '', value: parseFloat(p[1]) || 0 };
+      }));
+  // Checkbox-gated colour pickers (enable the picker, clear the property off).
+  const _pair = (cbId, colId, prop) => {
+    const cb = document.getElementById(cbId), col = document.getElementById(colId);
+    if (!cb || !col) return;
+    cb.addEventListener('change', () => {
+      col.disabled = !cb.checked;
+      if (cb.checked) ann[prop] = col.value; else delete ann[prop];
+      redrawAnnotations(); pushHistorySoon();
+    });
+    col.addEventListener('change', () => {
+      if (cb.checked) { ann[prop] = col.value; redrawAnnotations(); pushHistorySoon(); }
+    });
+  };
+  _pair('prop-grad-on', 'prop-grad-color', 'fillColor2');
+  // Shadow: one checkbox gating two numbers.
+  (() => {
+    const cb = document.getElementById('prop-shadow-on');
+    const blur = document.getElementById('prop-shadow-blur');
+    const dy = document.getElementById('prop-shadow-dy');
+    if (!cb) return;
+    const sync = () => {
+      ann.shadow = cb.checked;
+      if (blur) { blur.disabled = !cb.checked; ann.shadowBlur = parseFloat(blur.value) || 0; }
+      if (dy)   { dy.disabled   = !cb.checked; ann.shadowOffsetY = parseFloat(dy.value) || 0; }
+      redrawAnnotations(); pushHistorySoon();
+    };
+    cb.addEventListener('change', sync);
+    if (blur) blur.addEventListener('change', sync);
+    if (dy) dy.addEventListener('change', sync);
+  })();
+  const hoSlider = document.getElementById('prop-hatch-opacity');
+  if (hoSlider) hoSlider.addEventListener('input', e => {
+    ann.hatchOpacity = parseInt(e.target.value, 10);
+    const lbl = document.getElementById('prop-ho-val');
+    if (lbl) lbl.textContent = ann.hatchOpacity + '%';
+    redrawAnnotations(); pushHistorySoon();
+  });
   bind('prop-rotation', 'rotation', t => {
     let v = parseFloat(t.value) || 0;
     v %= 360; if (v < 0) v += 360;
@@ -13890,7 +15284,7 @@ function handleProjectLoad(event) {
   reader.onload = (e) => {
     try {
       const project = JSON.parse(e.target.result);
-      if (project.annotations) annotations = project.annotations;
+      if (project.annotations) { annotations = project.annotations; resolveAnnotationPresets(annotations); }
       if (project.pageCalibrations) pageCalibrations = project.pageCalibrations;
       if (project.countGroups) countGroups = project.countGroups;
       if (project.measurements) measurements = project.measurements;
