@@ -1029,3 +1029,56 @@ In-browser against the served build: `labelPillText` composes `"Wall type A\n615
 ### A trap when scripting edits to this file from Bash on Windows
 
 `\n` inside a JS template literal in a quoted heredoc arrived at Node as `\n` and was written to the HTML as a **real newline**, splitting `.split('\n')` across two lines and breaking the whole script block. `check-syntax.js` caught it. Build the two-character escape explicitly (`const NL = '\u005cn'`) rather than trying to escape a backslash through the shell.
+
+## v3.25 (23 Aug 2026) — hold Shift to resize a pasted image at its original proportions
+
+James: *"when I drop a photo or screenshot / snip into a PDF, I want to hold Shift to re-size at the same dimensions as the original."*
+
+### 1. Shift locks the aspect ratio on an image markup
+
+The proportion-keeping maths already existed inside `applyResize`'s two-point branch — written for signatures, which are always proportional. It now runs for `type:'image'` as well, gated on a new predicate:
+
+```js
+function aspectLockedResize(ann) {
+  if (ann.type === 'signature') return true;      // always
+  if (ann.type !== 'image') return false;
+  return ann.lockAspect ? !isShiftHeld : isShiftHeld;   // Shift INVERTS the tick
+}
+```
+
+- `isShiftHeld` needed no new plumbing — `onCanvasMouseMove` already refreshes it from `e.shiftKey` on every move, so pressing or releasing Shift **mid-drag** switches modes live.
+- `_signatureRatio` is renamed `_annImageRatio` (same body) because it now serves both types; `fixSelectedSignatureAspect` and the new `fixSelectedImageAspect` are both thin wrappers over `_fixSelectedPictureAspect(type, noun)`.
+- Every image annotation now records `aspect: h / w` at placement (both in `addImageFromBlob` and in `captureSnipRegion`), so the lock has a ratio to work from even before the image element finishes decoding.
+- **Corners are no longer always width-driven.** The old signature code took the horizontal drag and derived the height from it, so dragging a corner mostly *downwards* barely grew the box. Corners now use whichever axis the user dragged further (`h > w * r` → height drives width, pinning the untouched side edge). Mid-edge handles are unchanged: top/bottom-centre grows about the horizontal centre, left/right-centre about the vertical centre.
+
+### 2. `Properties ▸ Image` — for the iPad, which has no Shift key
+
+New panel section on `type:'image'`: a **Lock proportions** tick (`ann.lockAspect`, bound through the ordinary `bind()` helper, default off), a **Fix proportions** button that snaps an already-stretched image back to the shape it came in at (keeping its width), and one line of help. With the tick on, Shift reverses the behaviour and lets the image be stretched — the same convention Illustrator and PowerPoint use.
+
+Both placement toasts now say so: *"Image pasted — drag corners to resize (hold Shift to keep its proportions)"*.
+
+### 3. Bug found on the way: signatures had stopped resizing proportionally at all
+
+`BOX2_TYPES` — the list that decides which markups get 8 resize handles, a dashed bounding box, resize cursors and the two-point resize branch — did **not** contain `'signature'`. So a selected signature got only its two raw points as handles and resized through the generic move-a-vertex path at the bottom of `applyResize`. Consequences, all silent:
+
+- the proportion-keeping branch documented in the changelog **never executed** — every signature resize was a free stretch;
+- there were 2 handles, not 8, and handle index 1 (drawn where the *top-centre* handle belongs on an 8-handle box) moved the **bottom-right corner**.
+
+Fix is one word: `'signature'` added to `BOX2_TYPES`. Verified by the control run below — v3.24 stretched a 2:1 signature to 0.35, v3.25 holds it at 0.50.
+
+**Lesson for this codebase:** when a type list like `BOX2_TYPES` is extracted from what used to be an inline `includes([...])`, every branch that keys off the type silently changes behaviour for anything left out of the list. Grep the list's usages, not just the branch you are editing.
+
+### Verification
+
+Playwright, control-first — the same script run against v3.24 and v3.25 over local http (CDN routed to local `pdfjs-dist@3.11.174` / `pdf-lib`), a 200 × 100 image (ratio 0.5) placed at 200 × 100 page points and its bottom-right handle dragged:
+
+| case | v3.24 | v3.25 |
+|---|---|---|
+| free drag | 400 × 140 (0.35) | 400 × 140 (0.35) — unchanged |
+| Shift drag | 400 × 140 (0.35) | 400 × **200** (0.50) |
+| `lockAspect`, no Shift | 400 × 140 | 400 × 200 (0.50) |
+| `lockAspect` + Shift | 400 × 140 | 400 × 140 — stretches, as intended |
+| Shift, dragged mostly downwards | 220 × 400 (1.82) | **800** × 400 (0.50) |
+| signature, no Shift | 400 × 140 (0.35) | 400 × 200 (0.50) |
+
+Plus: the panel renders `#prop-image-lockaspect`, ticking it sets `ann.lockAspect`, the image reports 8 handle points, `fixSelectedImageAspect()` returns a stretched 200 × 300 box to ratio 0.50, and `_annotationsForSnapshot` keeps `aspect` / `lockAspect` while still dropping `_`-prefixed transients. Zero page errors; both inline `<script>` blocks `node --check` clean.

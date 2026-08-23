@@ -2005,7 +2005,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.24';
+const APP_VERSION = 'v3.25';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -6082,7 +6082,11 @@ function drawShapeNameLabel(ctx, ann) {
 // v3.22 — every shape defined by two opposite corners. Adding a type here
 // gives it selection, the 8 resize handles, hit-testing, rotation and the
 // dashed selection box without touching any of those functions.
-const BOX2_TYPES = ['rectangle','ellipse','highlight','cutcontent','image','symbol',
+// v3.25: 'signature' belongs here. Without it a signature got only its two
+// raw points as handles and resized through the generic move-a-vertex path,
+// which is why the proportion-keeping branch in applyResize never ran (and
+// why the top-centre handle moved the bottom-right corner).
+const BOX2_TYPES = ['rectangle','ellipse','highlight','cutcontent','image','signature','symbol',
   'chip','kpi','banner','quote','divider','chevron','timeline','bracket','chart','progress'];
 // Types whose whole look is a filled panel — they take radius / gradient /
 // shadow / padding and are what the presentation tools are built from.
@@ -6365,10 +6369,16 @@ function applyResize(ann, handleIdx, newPagePt) {
       case 6: maxY = newPagePt.y; break; // bottom-center
       case 7: maxX = newPagePt.x; maxY = newPagePt.y; break; // bottom-right
     }
-    // Signatures keep the image's proportions while resizing — free-form
-    // stretching turned every resize into a distorted signature.
-    if (ann.type === 'signature') {
-      const r = _signatureRatio(ann);
+    // Keep the picture's own proportions while resizing.
+    //   signature — ALWAYS (free-form stretching distorted every signature).
+    //   image     — while SHIFT is held (v3.25, James: a pasted screenshot or
+    //               snip should resize at the shape it came in at). A markup
+    //               with "Lock proportions" ticked is locked all the time and
+    //               Shift then INVERTS it, so it can still be stretched — that
+    //               tick is what makes this reachable on an iPad, which has no
+    //               Shift key.
+    if (aspectLockedResize(ann)) {
+      const r = _annImageRatio(ann);
       if (r) {
         const w = maxX - minX, h = maxY - minY;
         if (handleIdx === 1 || handleIdx === 6) {
@@ -6379,8 +6389,16 @@ function applyResize(ann, handleIdx, newPagePt) {
           // left/right-centre: width drives height, centred vertically
           const newH = w * r, cy = (minY + maxY) / 2;
           minY = cy - newH / 2; maxY = cy + newH / 2;
+        } else if (h > w * r) {
+          // corners, dragged mostly up/down: height drives width, the
+          // untouched side edge stays pinned. (v3.25 — before this, corners
+          // were always width-driven, so a vertical drag barely moved.)
+          const newW = h / r;
+          if (handleIdx === 0 || handleIdx === 5) minX = maxX - newW;
+          else maxX = minX + newW;
         } else {
-          // corners: width drives height, anchored to the untouched edge
+          // corners, dragged mostly sideways: width drives height, anchored
+          // to the untouched edge
           const newH = w * r;
           if (handleIdx === 0 || handleIdx === 2) minY = maxY - newH;
           else maxY = minY + newH;
@@ -7973,29 +7991,43 @@ function addSignatureStamp(point) {
   }
 }
 
-// The signature image's true height:width ratio — from the decoded image if
-// available, else the ratio recorded at placement time.
-function _signatureRatio(ann) {
+// The picture's true height:width ratio — from the decoded image if available,
+// else the ratio recorded at placement time. Shared by signatures and by
+// Shift-resize on a pasted image / snip (v3.25).
+function _annImageRatio(ann) {
   const img = getCachedImageElement(ann.src, null);
   if (img && img.naturalWidth > 0) return img.naturalHeight / img.naturalWidth;
   if (ann.aspect > 0) return ann.aspect;
   return null;
 }
 
-// "Fix proportions" (Properties panel) — snaps an already-stretched
-// signature box back to the image's real shape, keeping its width.
-function fixSelectedSignatureAspect() {
+// Should this resize keep the picture's proportions? Signatures always do.
+// Images do while Shift is held; if the markup's own "Lock proportions" tick
+// is on, that is reversed — locked by default, Shift to stretch.
+function aspectLockedResize(ann) {
+  if (!ann) return false;
+  if (ann.type === 'signature') return true;
+  if (ann.type !== 'image') return false;
+  return ann.lockAspect ? !isShiftHeld : isShiftHeld;
+}
+
+// "Fix proportions" (Properties panel) — snaps an already-stretched box back
+// to the picture's real shape, keeping its width. Shared by the signature and
+// (v3.25) the pasted-image / snip panel.
+function _fixSelectedPictureAspect(type, noun) {
   const ann = annotations.find(a => a.id === selectedAnnotationId);
-  if (!ann || ann.type !== 'signature') return;
-  const r = _signatureRatio(ann);
-  if (!r) { showToast('Signature image still loading — try again in a moment'); return; }
+  if (!ann || ann.type !== type) return;
+  const r = _annImageRatio(ann);
+  if (!r) { showToast(noun + ' still loading — try again in a moment'); return; }
   const [p1, p2] = ann.points;
   const x = Math.min(p1.x, p2.x), y = Math.min(p1.y, p2.y), w = Math.abs(p2.x - p1.x);
   ann.points = [{ x, y }, { x: x + w, y: y + w * r }];
   ann.aspect = r;
   saveToHistory(); redrawAnnotations();
-  showToast('Signature proportions restored');
+  showToast(noun + ' proportions restored');
 }
+function fixSelectedSignatureAspect() { _fixSelectedPictureAspect('signature', 'Signature'); }
+function fixSelectedImageAspect()     { _fixSelectedPictureAspect('image', 'Image'); }
 
 // Called from the signature tool panel's file input. Reads the chosen image,
 // stores it in localStorage, and refreshes the panel so the user sees the preview.
@@ -11789,6 +11821,15 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
   }
 
+  if (ann.type === 'image') {
+    html += `<div class="properties-section"><div class="properties-section-title">Image</div><div class="properties-section-content">
+      <div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" class="checkbox-input" id="prop-image-lockaspect" ${ann.lockAspect ? 'checked' : ''}> Lock proportions</label></div>
+      <button onclick="fixSelectedImageAspect()" class="modal-btn" style="width:100%;margin-top:6px;font-size:11px" title="Snap a stretched image back to the shape it came in at (keeps its width)">Fix proportions</button>
+      <div style="font-size:10px;color:var(--text-muted);padding:5px 2px 0">Hold <b>Shift</b> while you drag a handle to resize at the original proportions. With <b>Lock proportions</b> ticked it stays in proportion always — handy on an iPad — and Shift lets you stretch it.</div>
+    </div></div>`;
+  }
+
   if (ann.type === 'symbol') {
     const def = SYMBOL_DEFS[ann.symbolId];
     html += `<div class="properties-section"><div class="properties-section-title">Symbol</div><div class="properties-section-content">
@@ -12500,6 +12541,7 @@ function attachAnnotationListeners(ann) {
   bind('prop-legend-mode', 'legendMode');
   bind('prop-legend-scope', 'legendScope');
   bind('prop-legend-rates', 'showRates', t => t.checked);
+  bind('prop-image-lockaspect', 'lockAspect', t => t.checked);
   bind('prop-legend-scale', 'legendScale', t => Math.max(0.4, Math.min(6, (parseFloat(t.value) || 100) / 100)));
 
   const opSlider = document.getElementById('prop-opacity');
@@ -14352,6 +14394,8 @@ async function addImageFromBlob(blob) {
         { x: cx + w/2, y: cy + h/2 }
       ],
       src: dataUrl,
+      aspect: h / w,   // v3.25 — the shape it came in at, so Shift-resize has
+                       // something to lock to even before the image decodes
       opacity: 100
     };
     annotations.push(ann);
@@ -14360,7 +14404,7 @@ async function addImageFromBlob(blob) {
     redrawAnnotations();
     setTool('select');
     openPropertiesPanel();
-    showSaveToast('Image pasted — drag corners to resize');
+    showSaveToast('Image pasted — drag corners to resize (hold Shift to keep its proportions)');
   } catch (err) {
     console.error('Add image failed:', err);
     alert('Could not paste image: ' + (err.message || err.name));
@@ -14421,6 +14465,7 @@ async function captureSnipRegion(startScreen, endScreen) {
         { x: p2.x + offset, y: p2.y + offset }
       ],
       src: dataUrl,
+      aspect: tmp.height / tmp.width,   // v3.25 — see addImageFromBlob
       opacity: 100
     };
     annotations.push(ann);
@@ -14429,7 +14474,7 @@ async function captureSnipRegion(startScreen, endScreen) {
     redrawAnnotations();
     returnToNavTool();
     openPropertiesPanel();
-    showSaveToast('Region snipped — drag to reposition');
+    showSaveToast('Region snipped — drag to reposition (hold Shift while resizing to keep its proportions)');
   } catch (err) {
     console.error('Snip region failed:', err);
     alert('Could not capture the snipped region: ' + (err.message || err.name));
