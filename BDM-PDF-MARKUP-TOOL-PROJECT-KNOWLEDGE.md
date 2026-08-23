@@ -984,3 +984,48 @@ Until now the live site was updated by dragging files into the GitHub web UI, wh
 - **`deploy.ps1` refuses to push an app that doesn't parse.** It runs `check-syntax.js` (local only, not published), which `vm.Script`s both inline `<script>` blocks — the single-file design means one stray bracket is a white screen for every user. It also reads `APP_VERSION` out of the HTML for the commit message and **warns when the app changed but the badge didn't**.
 - Keep the script **ASCII-only**. Windows PowerShell 5.1 reads a `.ps1` as ANSI unless it has a BOM, so the em dashes in the first draft came back as mojibake and broke the parser 40 lines later.
 - The old `github-upload/` staging folder and the repo's `_to_delete/` junk were both removed once this landed - there is now exactly one copy of the app to edit.
+
+---
+
+## v3.24 (22 Aug 2026) — the Label actually appears, and the panel stops wasting the fold
+
+James, on a selected polyline: *"It shows a tab down the bottom which says label. I've put in a label, but it doesn't show on the actual line that I've selected. Also, the line joints are put round, but they're still not rounded. I don't understand what the line ends and line joints is, so either they don't belong there or those functions need to be added, and those we need a description of what they actually do. The arrange section and rotation section of the properties area is taking up too much room, these can be reduced."*
+
+### 1. `Properties ▸ General ▸ Label` now draws on the drawing
+
+The field writes `ann.measLabel`, which only ever fed the **Measurements list and the report** — nothing on the canvas read it. Typing a label and watching the page not change was indistinguishable from a broken input.
+
+- New `labelPillText(ann, measured)` composes the pill: the typed name on top, the measured value under it, a newline between. `drawLabel` now takes multi-line text and sizes one background around every line, so a named measurement is **one pill, two lines**, not two overlapping pills.
+- Two families, both driven off the same property:
+  - `MEASURE_LABEL_TYPES` (`measure`, `polyline`, `area`, `dimension`) fold the name into the pill they already draw.
+  - `NAME_LABEL_TYPES` (`rectangle`, `ellipse`, `line`, `arrow`, `polygon`, `cloud`, `pen`, `image`, `symbol`, `highlight`) had no pill at all; `drawShapeNameLabel` gives them one pinned above the shape's top edge, called once at the end of `drawAnnotation` so screen, bake, flatten, print and report all get it.
+  - Types that already carry their own words (`text`, `callout`, `stamp`, the presentation panels) are deliberately excluded — their content **is** the text.
+- Both families record `_labelRect`, so the name drags with the same code the measurement pill already used; the drag hit-test list is now `LABELLED_TYPES` instead of a hard-coded four.
+- **A polyline SHAPE no longer sets `hideLabel: true` at creation.** It was set so the (empty) measurement pill stayed off; with the name now sharing that pill it meant a typed label could never appear. `ann.label` is empty on a shape, so the pill still draws nothing until there is a name to draw.
+- The `Label` section is shown for every `LABELLED_TYPES` member, leads with a line saying where the text comes from, and the checkbox reads **"Hide label on the drawing"** instead of the opaque "Hide label (text only)".
+
+### 2. Line Joins was working — it just cannot be seen at 1 px
+
+Measured on a canvas: at `thickness: 10` switching miter → round changes **52 pixels**, miter → bevel **59**. At `thickness: 1` it changes **0**. The setting was correct and the feedback was nil, so it read as broken. (v3.23 had already put this in a tooltip; a tooltip you have to hover to find is not an answer.)
+
+- Both controls now carry their explanation **in the panel**, under the dropdown: what Flat / Round / Square do to a loose end, what Sharp / Round / Bevel do to a bend.
+- Below Line Joins, an amber note appears while `thickness < 3`: *"At 1px thick the join is under a pixel wide, so it looks like nothing changed — set Thickness to 3 or more to see it."* It follows the Thickness box live (`input` listener on `#prop-thickness`) rather than only being right at the moment the panel opened.
+- Neither control was removed. Both do real work at a usable line weight, and `Line Ends` matters on any open path.
+- Small correctness fix in `drawPolylineMeasure`: the path started `moveTo(points[0])` then `forEach(lineTo)`, so the first segment was zero-length. It now starts the loop at index 1.
+
+### 3. Arrange + Rotation: 274 px → 126 px
+
+Measured on a selected polyline at a 287 px panel width. Two sections of once-pressed buttons wrapped in helper prose were pushing the properties people actually edit below the fold.
+
+- They are now **one section, "Arrange & Rotate"**, three tight rows: `Front · Up · Down · Back` / `Group · Ungroup · ↺90° · ↻90°` / the angle row (`Angle °` + input for `ROT_PROP_TYPES`, `Turn by °` + input + `Apply` for the rest).
+- New `.mini-btn` / `.mini-lbl` / `.compact-btn-row` styles — 4 px padding, 10.5 px type, real button chrome (the old `.modal-btn` had no background outside a modal, so the row read as loose text).
+- Every line of helper prose became a `title=`. The group state ("In a group of 4 — they move and delete together") is now on the Group button's tooltip.
+- **Don't let the row wrap.** The first attempt put all six order/group buttons on one `flex-wrap` row; `Ungroup` fell to a second line and `flex: 1 1 auto` stretched it to the full 263 px. Four buttons per row, no wrap.
+
+### Verification
+
+In-browser against the served build: `labelPillText` composes `"Wall type A\n615mm"`; a named polyline measure draws a **23 px** two-line pill against **13 px** for the value alone, and `hitTestLabel` is true inside it and false outside; a named rectangle and a named polyline SHAPE both draw (650 changed pixels vs. the unnamed control) and `hideLabel` suppresses them completely (0 changed pixels). The join numbers above are from the same harness. Panel heights measured live: `Arrange 134 + Rotation 140` on v3.23 against `Arrange & Rotate 126` on v3.24, with no row wrapping at 287 px. Both inline `<script>` blocks parse clean.
+
+### A trap when scripting edits to this file from Bash on Windows
+
+`\n` inside a JS template literal in a quoted heredoc arrived at Node as `\n` and was written to the HTML as a **real newline**, splitting `.split('\n')` across two lines and breaking the whole script block. `check-syntax.js` caught it. Build the two-character escape explicitly (`const NL = '\u005cn'`) rather than trying to escape a backslash through the shell.

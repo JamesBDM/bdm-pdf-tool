@@ -854,6 +854,18 @@ input, select, textarea { font: inherit; color: inherit; }
 .property-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .property-label { color: var(--text-secondary); font-size: 11px; width: 70px; flex-shrink: 0; }
 .property-value { flex: 1; color: var(--text-primary); }
+/* v3.24 — dense action rows for Arrange & Rotate. Buttons that get pressed
+   once shouldn't cost eight rows of panel above the properties people edit. */
+.compact-btn-row { gap: 4px; }
+.mini-lbl { color: var(--text-muted); font-size: 10.5px; flex: 0 0 auto; white-space: nowrap; }
+.mini-btn {
+  flex: 1 1 auto; min-width: 0; padding: 4px 6px; border-radius: 3px;
+  font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  background: var(--bg-tertiary); color: var(--text-secondary);
+  border: 1px solid var(--border-color); cursor: pointer; transition: all .12s;
+}
+.mini-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent); }
+.mini-btn:disabled { opacity: .4; cursor: default; }
 .property-input {
   width: 100%; padding: 5px 8px; background: var(--bg-tertiary);
   border: 1px solid var(--border-color); border-radius: 4px;
@@ -1993,7 +2005,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.23';
+const APP_VERSION = 'v3.24';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -2705,6 +2717,19 @@ let toolPresets = [];
 // pill that shows 63.15m² / 4250mm). White reads far better on the dark pill
 // than the old redline red. Individual labels can still be recoloured.
 const DEFAULT_LABEL_TEXT_COLOR = '#ffffff';
+
+// v3.24: markups whose General → Label text (ann.measLabel) is DRAWN on the
+// page. It used to live only in the Measurements list and the report, so
+// typing a label and seeing nothing happen on the drawing read as a bug.
+//   MEASURE_LABEL_TYPES fold the name into their own measurement pill, on the
+//   line above the value; NAME_LABEL_TYPES have no pill of their own and get
+//   one from the generic pass at the end of drawAnnotation().
+// Both are draggable and share the Label section's colour / size / hide
+// controls. Types that already carry their own words (text, callout, stamp,
+// the presentation panels) are deliberately absent — their content IS the text.
+const MEASURE_LABEL_TYPES = ['measure','polyline','area','dimension'];
+const NAME_LABEL_TYPES = ['rectangle','ellipse','line','arrow','polygon','cloud','pen','image','symbol','highlight'];
+const LABELLED_TYPES = MEASURE_LABEL_TYPES.concat(NAME_LABEL_TYPES);
 
 // v3.9 calibration preferences (persisted in localStorage)
 //   calibrateAskAfterDraw — DRAW the line first, THEN type what it really is
@@ -4437,6 +4462,10 @@ function drawAnnotation(ctx, ann, isSelected) {
   }
   ctx.setLineDash([]);
 
+  // v3.24 — shapes with no pill of their own show the General → Label name
+  // here. Measurement types already folded it into their own pill above.
+  drawShapeNameLabel(ctx, ann);
+
   // Selection handles (constant screen size — divide by currentScale)
   if (isSelected) {
     ctx.globalAlpha = 1; ctx.fillStyle = '#E5432E';
@@ -4640,16 +4669,23 @@ function drawMeasureLine(ctx, ann) {
       drawPos = { x: basePos.x + px * off * sign, y: basePos.y + py * off * sign };
     }
   }
-  drawLabel(ctx, label, drawPos, { ann, recordKey: '_labelRect' });
+  drawLabel(ctx, labelPillText(ann, label), drawPos, { ann, recordKey: '_labelRect' });
 }
 
 function drawPolylineMeasure(ctx, ann) {
   if (!ann.points || ann.points.length < 2) return;
   if (ann.isDeduction) ctx.setLineDash([6, 4]);
   ctx.beginPath(); ctx.moveTo(ann.points[0].x, ann.points[0].y);
-  ann.points.forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke();
+  for (let i = 1; i < ann.points.length; i++) ctx.lineTo(ann.points[i].x, ann.points[i].y);
+  ctx.stroke();
   if (ann.isDeduction) ctx.setLineDash([]);
-  if (ann.isShape) return; // polyline SHAPE — no measurement label at all
+  // Polyline SHAPE — no measurement, but still shows the name typed into
+  // General → Label (v3.24). Pinned to the middle vertex like the measure pill.
+  if (ann.isShape) {
+    const mid = ann.points[Math.floor(ann.points.length/2)];
+    drawLabel(ctx, labelPillText(ann, ''), offsetPos(mid, ann), { ann, recordKey: '_labelRect' });
+    return;
+  }
   let totalDist = 0;
   for (let i = 1; i < ann.points.length; i++) totalDist += Math.hypot(ann.points[i].x-ann.points[i-1].x, ann.points[i].y-ann.points[i-1].y);
   let label = getCalibratedLabel(totalDist, ann.page, ann.points[0]);
@@ -4657,7 +4693,7 @@ function drawPolylineMeasure(ctx, ann) {
   ann.label = label;
   if (ann.points.length > 1) {
     const basePos = ann.points[Math.floor(ann.points.length/2)];
-    drawLabel(ctx, label, offsetPos(basePos, ann), { ann, recordKey: '_labelRect' });
+    drawLabel(ctx, labelPillText(ann, label), offsetPos(basePos, ann), { ann, recordKey: '_labelRect' });
   }
 }
 
@@ -4689,7 +4725,7 @@ function drawAreaMeasure(ctx, ann) {
   ann.label = areaLabel; ann.perimLabel = perimLabel;
   const c = getCentroid(ann.points);
   const labelPos = offsetPos(c, ann);
-  drawLabel(ctx, areaLabel, labelPos, { ann, recordKey: '_labelRect' });
+  drawLabel(ctx, labelPillText(ann, areaLabel), labelPos, { ann, recordKey: '_labelRect' });
   // Perimeter is opt-in per annotation (Properties → Label → "Show perimeter")
   if (ann.showPerimeter) {
     drawLabel(ctx, 'P: '+perimLabel, { x: labelPos.x, y: labelPos.y + 14 }, { ann, recordKey: '_perimRect' });
@@ -5205,7 +5241,7 @@ function drawDimensionAnn(ctx, ann) {
   const label = getCalibratedLabel(dist, ann.page, { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 });
   ann.label = label;
   const dimPos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
-  drawLabel(ctx, label, offsetPos(dimPos, ann), { ann, recordKey: '_labelRect' });
+  drawLabel(ctx, labelPillText(ann, label), offsetPos(dimPos, ann), { ann, recordKey: '_labelRect' });
 }
 
 function drawCutContentAnn(ctx, ann) {
@@ -5967,6 +6003,14 @@ function drawLabel(ctx, text, pos, opts) {
     if (opts.recordKey) ann[opts.recordKey] = null;
     return;
   }
+  // v3.24: the pill takes multiple lines — a newline separates the user's
+  // typed name from the measured value, so both share one background.
+  const lines = String(text === undefined || text === null ? '' : text)
+    .split('\n').map(l => l.trim()).filter(l => l !== '');
+  if (!lines.length) {
+    if (opts.recordKey) ann[opts.recordKey] = null;
+    return;
+  }
   const fontSize = ann.labelFontSize || 8;   // was 11 — measurement labels were too big on drawings
   const bg = ann.labelBg || 'rgba(18,19,26,0.8)';
   // v3.9: measurement labels are WHITE by default. Red-on-dark was hard to
@@ -5978,13 +6022,14 @@ function drawLabel(ctx, text, pos, opts) {
   ctx.font = `${fontSize}px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
-  const w = ctx.measureText(text).width + 8;
-  const h = fontSize + 5;
+  const lh = fontSize + 2;
+  const w = Math.max.apply(null, lines.map(l => ctx.measureText(l).width)) + 8;
+  const h = lines.length * lh + 3;
   const rx = pos.x - w/2, ry = pos.y - h - 2;
   ctx.fillStyle = bg;
   ctx.fillRect(rx, ry, w, h);
   ctx.fillStyle = fg;
-  ctx.fillText(text, pos.x, pos.y - 4);
+  lines.forEach((l, i) => ctx.fillText(l, pos.x, ry + (i + 1) * lh + 1));
   ctx.restore();
   // Stash the rendered rectangle so we can hit-test the label for dragging.
   if (opts.recordKey && opts.ann) {
@@ -5996,6 +6041,30 @@ function drawLabel(ctx, text, pos, opts) {
 function offsetPos(p, ann) {
   if (!ann || !ann.labelOffset) return p;
   return { x: p.x + (ann.labelOffset.dx || 0), y: p.y + (ann.labelOffset.dy || 0) };
+}
+
+// v3.24 — what actually goes in the pill. The name the user typed into
+// General → Label sits on top; the measured value (when there is one) below.
+// Either half on its own is fine, which is what lets a plain shape carry a
+// name and a measurement carry no name.
+function labelPillText(ann, measured) {
+  const name = (ann && ann.measLabel ? String(ann.measLabel) : '').trim();
+  const val = (measured === undefined || measured === null) ? '' : String(measured).trim();
+  if (name && val) return name + '\n' + val;
+  return name || val;
+}
+
+// v3.24 — the name label for shapes that have no measurement pill of their
+// own. Pinned just above the shape's top edge (draggable from there like any
+// other label). Called once for every annotation at the end of drawAnnotation.
+function drawShapeNameLabel(ctx, ann) {
+  if (!ann || !NAME_LABEL_TYPES.includes(ann.type)) return;
+  const name = (ann.measLabel || '').trim();
+  if (!name || !ann.points || !ann.points.length) { ann._labelRect = null; return; }
+  const xs = ann.points.map(p => p.x), ys = ann.points.map(p => p.y);
+  const base = { x: (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2,
+                 y: Math.min.apply(null, ys) - 2 };
+  drawLabel(ctx, name, offsetPos(base, ann), { ann, recordKey: '_labelRect' });
 }
 
 // ============================================================
@@ -6481,7 +6550,7 @@ function onCanvasMouseDown(e) {
     for (let i = annotations.length - 1; i >= 0; i--) {
       const a = annotations[i];
       if (a.page !== currentPage) continue;
-      if (!['measure','polyline','area','dimension'].includes(a.type)) continue;
+      if (!LABELLED_TYPES.includes(a.type)) continue;
       if (hitTestLabel(pagePt.x, pagePt.y, a)) {
         selectedAnnotationId = a.id;
         labelDragAnnotation = a;
@@ -8015,7 +8084,7 @@ function finishPolyShape() {
     // measurement label and no entry in the measurements tally.
     // (isShape keeps rebuildMeasurements from re-registering it later.)
     const ann = { id: generateId(), type: 'polyline', page: currentPage, points: [...pagePts],
-      label: '', measLabel: '', isShape: true, hideLabel: true,
+      label: '', measLabel: '', isShape: true,
       color: toolProperties.color, thickness: toolProperties.thickness,
       opacity: toolProperties.opacity, lineStyle: toolProperties.lineStyle };
     annotations.push(ann);
@@ -11648,7 +11717,7 @@ function getAnnotationPropertiesHTML(ann) {
   let html = `<div class="properties-section"><div class="properties-section-title">General</div><div class="properties-section-content">
     <div class="property-row"><div class="property-label">Type:</div><div class="property-value">${ann.type.charAt(0).toUpperCase()+ann.type.slice(1)}</div></div>
     <div class="property-row"><div class="property-label">Subject:</div><input type="text" id="prop-subject" class="property-input" value="${ann.subject||''}" placeholder="e.g. Beam check"></div>
-    <div class="property-row"><div class="property-label">Label:</div><input type="text" id="prop-measlabel" class="property-input" value="${ann.measLabel||''}" placeholder="e.g. Carpet Type A"></div>
+    <div class="property-row"><div class="property-label" title="A name for this markup. Shows on the drawing and in the Measurements list / reports.">Label:</div><input type="text" id="prop-measlabel" class="property-input" value="${ann.measLabel||''}" placeholder="e.g. Carpet Type A"></div>
   </div></div>`;
 
   if (ann.type === 'text' || ann.type === 'callout') {
@@ -11997,21 +12066,27 @@ function getAnnotationPropertiesHTML(ann) {
 
     // ---- v3.22: stroke cap / join ----
     // v3.23: renamed "Corners" → "Line Joins" and dropped from rectangles.
-    // It shapes where two strokes MEET, which on a box is half a line width —
-    // nothing you can see at 1px. Boxes get the real Corners picker above.
+    // v3.24: both controls now carry their explanation IN the panel. They only
+    // shape half a line width of geometry, so at 1–2px they are genuinely
+    // invisible — the note below spells that out rather than leaving the user
+    // to conclude the setting is broken.
     if (['line','arrow','polyline','polygon','rectangle','pen','cloud'].includes(ann.type)) {
       const lc = ann.lineCap || 'butt', lj = ann.lineJoin || 'miter';
-      html += `<div class="property-row"><div class="property-label">Line Ends:</div><select id="prop-linecap" class="select-input">
+      const th = ann.thickness !== undefined ? ann.thickness : 2;
+      const thin = th < 3;
+      html += `<div class="property-row"><div class="property-label" title="The shape of the two loose ends of the stroke.">Line Ends:</div><select id="prop-linecap" class="select-input">
           <option value="butt" ${lc==='butt'?'selected':''}>Flat</option>
           <option value="round" ${lc==='round'?'selected':''}>Round</option>
           <option value="square" ${lc==='square'?'selected':''}>Square</option>
-        </select></div>`;
+        </select></div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:-4px">How the stroke finishes at each loose end. <b>Flat</b> stops dead on the point, <b>Round</b> caps it with a half-circle, <b>Square</b> with a stub half a line width past it.</div>`;
       if (ann.type !== 'rectangle') {
-        html += `<div class="property-row"><div class="property-label" title="How the stroke turns a bend. Only reads at thicker line weights — to round a box's corners use Corners / Corner Radius above.">Line Joins:</div><select id="prop-linejoin" class="select-input">
+        html += `<div class="property-row"><div class="property-label" title="The shape of each bend where two segments meet.">Line Joins:</div><select id="prop-linejoin" class="select-input">
           <option value="miter" ${lj==='miter'?'selected':''}>Sharp</option>
           <option value="round" ${lj==='round'?'selected':''}>Round</option>
           <option value="bevel" ${lj==='bevel'?'selected':''}>Bevel</option>
-        </select></div>`;
+        </select></div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:-4px">How each bend is shaped where two segments meet. <b>Sharp</b> runs the edges to a point, <b>Round</b> arcs across the corner, <b>Bevel</b> cuts it off flat.<span id="prop-linejoin-thin" style="color:#e0a030;display:${thin ? 'inline' : 'none'}"> At <b id="prop-linejoin-thin-px">${th}</b>px thick the join is under a pixel wide, so it looks like nothing changed — set Thickness to 3 or more to see it.</span></div>`;
       }
     }
 
@@ -12032,23 +12107,37 @@ function getAnnotationPropertiesHTML(ann) {
 
   // v3.22 — Arrange: stacking order, and grouping so a composed card (panel +
   // value + caption) behaves as one object.
+  // v3.24 — Rotation folded in here and the whole thing squeezed onto two
+  // rows. It was eight rows of buttons and helper prose for controls people
+  // press once, pushing the properties that actually get edited below the fold.
+  // Everything it used to spell out now lives in the tooltips.
   {
     const inGroup = !!ann.groupId;
     const members = inGroup ? annotations.filter(a => a.groupId === ann.groupId).length : 0;
-    html += `<div class="properties-section"><div class="properties-section-title">Arrange</div><div class="properties-section-content">
-      <div class="property-row" style="gap:6px">
-        <button class="modal-btn" style="flex:1" onclick="bringToFront()" title="Draw this on top of everything else">Front</button>
-        <button class="modal-btn" style="flex:1" onclick="bringForward()" title="One step up">Up</button>
-        <button class="modal-btn" style="flex:1" onclick="sendBackward()" title="One step down">Down</button>
-        <button class="modal-btn" style="flex:1" onclick="sendToBack()" title="Draw this behind everything else">Back</button>
+    const rot = annCanRotate(ann);
+    const isProp = rot && ROT_PROP_TYPES.includes(ann.type);
+    html += `<div class="properties-section"><div class="properties-section-title">Arrange${rot ? ' &amp; Rotate' : ''}</div><div class="properties-section-content">
+      <div class="property-row compact-btn-row">
+        <button class="mini-btn" onclick="bringToFront()" title="Draw this on top of everything else">Front</button>
+        <button class="mini-btn" onclick="bringForward()" title="Move up one step in the stack">Up</button>
+        <button class="mini-btn" onclick="sendBackward()" title="Move down one step in the stack">Down</button>
+        <button class="mini-btn" onclick="sendToBack()" title="Draw this behind everything else">Back</button>
       </div>
-      <div class="property-row" style="gap:6px;margin-top:6px">
-        <button class="modal-btn" style="flex:1" onclick="groupPickedAnnotations()" title="Group the markups you Shift+clicked (Ctrl+G)">Group</button>
-        <button class="modal-btn" style="flex:1" onclick="ungroupSelected()" ${inGroup ? '' : 'disabled'} title="Split this group back into separate markups (Ctrl+Shift+G)">Ungroup</button>
-      </div>
-      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${inGroup
-        ? 'In a group of ' + members + ' — they move and delete together.'
-        : 'Shift+click markups to pick them, then Group.'}</div>
+      <div class="property-row compact-btn-row">
+        <button class="mini-btn" onclick="groupPickedAnnotations()" title="${inGroup ? 'In a group of ' + members + ' — they move and delete together. ' : ''}Shift+click markups to pick them, then Group (Ctrl+G)">Group</button>
+        <button class="mini-btn" onclick="ungroupSelected()" ${inGroup ? '' : 'disabled'} title="Split this group back into separate markups (Ctrl+Shift+G)">Ungroup</button>${rot ? `
+        <button class="mini-btn" onclick="rotateSelectedAnnotation(-90)" title="Rotate 90° anti-clockwise">&#8634; 90&deg;</button>
+        <button class="mini-btn" onclick="rotateSelectedAnnotation(90)" title="Rotate 90° clockwise">&#8635; 90&deg;</button>` : ''}
+      </div>${!rot ? '' : isProp ? `
+      <div class="property-row compact-btn-row">
+        <span class="mini-lbl" title="Exact angle in degrees. Or drag the round handle above the shape (Shift = 15° steps).">Angle &deg;</span>
+        <input type="number" id="prop-rotation" class="property-input" min="-360" max="360" step="1" value="${Math.round(ann.rotation||0)}" style="flex:1">
+      </div>` : `
+      <div class="property-row compact-btn-row">
+        <span class="mini-lbl" title="Turn the shape by this many degrees. Or drag the round handle above it (Shift = 15° steps).">Turn by &deg;</span>
+        <input type="number" id="prop-rotate-by" class="property-input" step="1" value="15" style="flex:1">
+        <button class="mini-btn" style="flex:0 0 auto" onclick="rotateSelectedAnnotation(parseFloat(document.getElementById('prop-rotate-by').value)||0)" title="Turn the shape by the angle on the left">Apply</button>
+      </div>`}
     </div></div>`;
   }
 
@@ -12070,22 +12159,8 @@ function getAnnotationPropertiesHTML(ann) {
     }
   }
 
-  // Rotation — 90° buttons for everything rotatable; exact angle for shapes
-  // that carry a stored rotation, "rotate by" for shapes whose points are
-  // rotated permanently (lines, polygons, measurements...).
-  if (annCanRotate(ann)) {
-    const isProp = ROT_PROP_TYPES.includes(ann.type);
-    html += `<div class="properties-section"><div class="properties-section-title">Rotation</div><div class="properties-section-content">
-      <div class="property-row" style="gap:6px">
-        <button class="modal-btn" style="flex:1" onclick="rotateSelectedAnnotation(-90)" title="Rotate 90° anti-clockwise">&#8634; 90&deg;</button>
-        <button class="modal-btn" style="flex:1" onclick="rotateSelectedAnnotation(90)" title="Rotate 90° clockwise">&#8635; 90&deg;</button>
-      </div>
-      ${isProp
-        ? `<div class="property-row"><div class="property-label">Angle (&deg;):</div><input type="number" id="prop-rotation" class="property-input" min="-360" max="360" step="1" value="${Math.round(ann.rotation||0)}"></div>`
-        : `<div class="property-row"><div class="property-label">By (&deg;):</div><input type="number" id="prop-rotate-by" class="property-input" step="1" value="15" style="width:60px"><button class="modal-btn" onclick="rotateSelectedAnnotation(parseFloat(document.getElementById('prop-rotate-by').value)||0)">Apply</button></div>`}
-      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Or drag the round handle above the selected shape (Shift = 15&deg; steps)</div>
-    </div></div>`;
-  }
+  // v3.24: Rotation used to be its own section here — it now shares the
+  // Arrange section above, which halved the space the two of them took.
 
   // Takeoff assignment — link/unlink this shape to a takeoff item after the fact
   if (['measure','polyline','dimension','area','count'].includes(ann.type) && takeoffItems.length) {
@@ -12177,15 +12252,16 @@ function getAnnotationPropertiesHTML(ann) {
 
   // Label styling for measurement annotations — text colour, background colour,
   // font size, and a reset-position button to undo any manual label drag.
-  if (['measure','polyline','area','dimension'].includes(ann.type)) {
+  if (LABELLED_TYPES.includes(ann.type)) {
     const lc = ann.labelColor || DEFAULT_LABEL_TEXT_COLOR;
     // Convert the rgba default background to a hex for the colour input. The
     // input value is what the user sees as a starting swatch.
     const lbg = ann.labelBg || '#12131a';
     html += `<div class="properties-section"><div class="properties-section-title">Label</div><div class="properties-section-content">
+      <div style="font-size:10px;color:var(--text-muted)">The pill on the drawing shows the <b>Label</b> you type up in General${ann.label ? ', with the measured value under it' : ''}. Drag it on the page to reposition.</div>
       <div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
         <input type="checkbox" id="prop-labelhide" class="checkbox-input" ${ann.hideLabel?'checked':''}>
-        Hide label (text only)</label></div>
+        Hide label on the drawing</label></div>
       <div class="property-row"><div class="property-label">Text Color:</div><input type="color" id="prop-labelcolor" class="color-picker" value="${lc}"></div>
       <div class="color-swatches" data-target="prop-labelcolor"></div>
       <div class="property-row"><div class="property-label">Background:</div><input type="color" id="prop-labelbg" class="color-picker" value="${lbg}"></div>
@@ -12311,6 +12387,18 @@ function attachAnnotationListeners(ann) {
   bind('prop-strokeside', 'strokeSide');
   bind('prop-linecap', 'lineCap');
   bind('prop-linejoin', 'lineJoin');
+  // The join warning is only true while the stroke is thin — follow Thickness
+  // live rather than only being right at the moment the panel opened.
+  {
+    const thEl = document.getElementById('prop-thickness');
+    const warn = document.getElementById('prop-linejoin-thin');
+    if (thEl && warn) thEl.addEventListener('input', () => {
+      const v = parseFloat(thEl.value);
+      const px = document.getElementById('prop-linejoin-thin-px');
+      if (px && isFinite(v)) px.textContent = v;
+      warn.style.display = (isFinite(v) && v < 3) ? 'inline' : 'none';
+    });
+  }
   bind('prop-arrowhead', 'arrowHead');
   bind('prop-arrowtail', 'arrowTail');
   bind('prop-grad-angle', 'gradientAngle', t => parseFloat(t.value) || 0);
