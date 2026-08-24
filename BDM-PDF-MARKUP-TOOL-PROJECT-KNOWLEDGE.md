@@ -1082,3 +1082,143 @@ Playwright, control-first — the same script run against v3.24 and v3.25 over l
 | signature, no Shift | 400 × 140 (0.35) | 400 × 200 (0.50) |
 
 Plus: the panel renders `#prop-image-lockaspect`, ticking it sets `ann.lockAspect`, the image reports 8 handle points, `fixSelectedImageAspect()` returns a stretched 200 × 300 box to ratio 0.50, and `_annotationsForSnapshot` keeps `aspect` / `lockAspect` while still dropping `_`-prefixed transients. Zero page errors; both inline `<script>` blocks `node --check` clean.
+
+---
+
+## v3.26 (24 Aug 2026) — Snip Shape: click around something and copy it at that shape
+
+James: *"can you add a 'snip' tool where you can click around an image/shape and copy paste the same shape into the drawings."*
+
+### What was already there
+
+`snipregion` (Edit ▸ Snip Region as Image) drags a **rectangle** over the sheet, composites `pdf-canvas` + `annotation-canvas` into a temp canvas and pushes the result back as a `type:'image'` annotation offset 16 screen px down-and-right. That covers "copy this patch of drawing", but it always returns a rectangle — drop it over a busy plan and the white card around the symbol wipes out whatever it lands on.
+
+### The new tool — `sniplasso`, "Snip Shape"
+
+Same capture, **clipped to a traced outline** instead of a box. Click a point at each corner of the thing you want, double-click / Enter to close; everything outside the outline stays transparent in the PNG, so the copy drops onto a drawing with nothing but the shape itself.
+
+Interaction is the polygon tool's, reused rather than rewritten — `sniplasso` was added to the same five places `polygon` appears:
+
+| site | what it buys |
+|---|---|
+| `onCanvasMouseDown` polygon branch | click-per-vertex collection into `polylinePoints` |
+| `drawInProgress` poly branch | live outline + vertex markers |
+| `onCanvasDoubleClick` / Enter handler | close the shape |
+| `SHAPE_BAR_TOOLS` (+ the `need = 3` line) | the iPad's floating **Undo point / Finish / Cancel** bar, free |
+| `finishPolyShape` | entry point — see below |
+
+Backspace-undo-a-point, Esc / right-click cancel, and the zoom-time rescale of `polylinePoints` are all written against `polylinePoints` generally, so they needed no edit at all.
+
+Two deliberate *exclusions*:
+
+- **`sniplasso` is in the no-snap list** in `onCanvasMouseDown`. Snapping vertices to nearby markup endpoints is right for a measurement and wrong for a cut line — it drags the outline off the thing you are tracing.
+- **`sniplasso` is NOT in the `hasDraft` list** that arms typed-distance entry. Typing "2400" while tracing a cut line has no meaning; leaving it out keeps digits inert.
+
+`finishPolyShape` gets a one-line escape hatch at the top, before the `< 2 points` guard, because the traced outline is a cut line and must not fall through into any of the markup branches:
+
+```js
+if (currentTool === 'sniplasso') { captureSnipLasso(polylinePoints.slice()); return; }
+```
+
+### `captureSnipLasso` — and the one non-obvious trap
+
+Sibling of `captureSnipRegion`, with two differences:
+
+1. **Clip before compositing, and never fill white.** `tctx.clip()` on the traced path, then the two `drawImage` calls — the PDF layer (which is opaque white paper, so the inside of the shape reads normally) then the markup layer. Pixels outside the path are never written, so they stay `alpha 0`.
+2. **Wipe the draft before photographing the canvas.** The live preview of the outline is drawn *on `annotation-canvas`* — one of the two layers being captured. Clear `polylinePoints` / `isDrawing` / `selectedAnnotationId` / `lastSnapHit`, call `redrawAnnotations()`, and only then read the canvas; otherwise the dashed trace, the vertex squares and any selection handles are baked into the snip. This is the same class of bug as photographing a screen that is showing the camera.
+
+The result is a plain `type:'image'` annotation (`aspect` recorded per v3.25), so everything images already do — Shift-resize, Lock proportions, opacity, rotation, flatten, save/reopen, and **Ctrl+C / Ctrl+V to stamp more copies** — works on a snip with no further code.
+
+Guards: fewer than 3 points, or a bounding box under 4 × 4 screen px, cancels quietly (`"That outline is too small to snip"`); no `pdf-canvas` / `annotation-canvas` means continuous or side-by-side view, which gets the same *"Snip is only available in single-page view"* message `captureSnipRegion` gives.
+
+### Where it lives in the UI
+
+Tool rail ▸ **EDIT** group, after Select Text (dashed-pentagon icon with vertex dots), and Edit menu ▸ *Snip Shape (click around it)*, directly under the existing *Snip Region as Image*. No keyboard shortcut — the sensible letters were all taken.
+
+### Verification
+
+Driven live in Chrome over local http against `Datum-Agent-Trial-2-Measure-BOQ.pdf`:
+
+- Triangle traced at (300,200)-(500,200)-(400,340) → one `type:'image'` annotation, 200 × 140, offset +16 page units, auto-selected, tool back to `select`. Alpha probe: inside = 255 at top / middle / apex, outside = **0** at both bottom corners.
+- **Nothing baked in:** the snipped PNG was diffed channel-by-channel against a fresh composite of the same rectangle taken after the tool had returned to Select — 0 of 64,000 channels differ, max delta 0.
+- Enter closes (1 annotation added), double-click closes (1, not 2), a 2 × 2 px outline adds none, a 2-point outline adds none and leaves `polylinePoints` empty.
+- Toolbar button arms the tool (`canvas-area.sniplasso`, `cursor: crosshair`, indicator reads "Snip Shape"), Backspace drops the last vertex (3 → 2), Esc clears the draft but leaves the tool armed.
+- Ctrl+C / Ctrl+V on a finished snip duplicates it, same `src`, offset points.
+- Zero page errors; both inline `<script>` blocks `node check-syntax.js` clean.
+
+---
+
+## v3.26 (24 Aug 2026) — the symbol chest redrawn and doubled: 84 → 160
+
+James: *"add more images and options to the toolbox for pre-set images — see examples in the attached drawing, beds, couches, stairs, toilets, vanitys, landscaping, plants etc etc. Make them look more architectural (current set is basic)."*
+
+Reference was Impact Design's CD set for 9 Illawarra Court, Tugun (`ID376 … REV D.pdf`, sheets SD05–SD07). Worth recording how those symbols are actually drawn, because it is not how the old library drew them:
+
+| element | what the real set draws |
+|---|---|
+| bed | mattress rectangle, **two pillows** in a band at the head, the **doona turned back** across the bed with a **mitred corner** each side, round-cornered **bedsides** flanking the head |
+| sofa | one outline for the whole piece, a line across the **back**, **arms**, and the seat split into **cushions** |
+| stair | a real flight of ~12 treads, a **direction arrow** off the bottom nosing, a landing with its **diagonal**, the flight above the cut line **dashed** |
+| WC | **cistern** rectangle + flared **pan** + the **seat line** inside it |
+| vanity | counter, **oval basin(s)**, **waste**, **tap** behind |
+| planting | a **scalloped** canopy with branch structure inside — never a plain circle; hedges are a **run of overlapping crowns** |
+
+The old library's bed was a rectangle with two squares in it, its sofa three stacked rectangles, its tree a circle with a cross through it. Recognisable, but nothing you would leave on a drawing going to a client.
+
+### What changed
+
+**160 symbols in 11 categories** (was 84 in 8). Three new categories — **Furniture — Bedroom** (12), **Furniture — Living & Dining** (15), **Kitchen & Laundry** (15), **Landscape & External** (26) — and **Architectural** grew from 10 to 17, almost all of it stairs. Sanitary went from a handful of outlines to 18 properly drawn fixtures. Electrical, mechanical, fire and the drafting markers are untouched.
+
+**Every id survives.** `u-bed-d`, `p-wc`, `c-tree`, `a-stair` and the rest keep their ids and now resolve to the redrawn artwork, so a project saved by any earlier version still finds its symbols — it just gets better ones. The only thing that disappeared is the *category* id `furn`, which nothing stores.
+
+### The one structural change: `def.b`
+
+Symbols were authored in a 0–100 **square** and placed in a square box. That is fine for a north arrow and wrong for a sofa, which is 2100 × 900. Definitions now carry an optional content box:
+
+```js
+b: [x, y, w, h]   // the part of the 0-100 box the artwork actually fills
+```
+
+Three places read it, and all three degrade to the old behaviour when it is absent (which is every pre-v3.26 symbol, so the drafting markers and services are bit-identical):
+
+- `drawSymbolAnn` maps the artwork through `b` instead of through the full box — `sx = w / bw`, and the matrix translate picks up `- bx * sx`. Because the placer derives height from the same ratio, `sx === sy`: circles stay circles.
+- `addSymbolAnn` places at `h = w * (b[3] / b[2])`, so a bed lands bed-shaped and its selection handles sit on the artwork rather than out in empty space.
+- `symbolTileSVG` uses `b` as the viewBox; the tile is square and `preserveAspectRatio` letterboxes it, so the panel preview shows the true shape.
+
+**Backwards compatibility needed a migration, not just a default.** A WC saved by v3.25 is a 38 × 38 square. Draw the new pan through `b:[21.45,0,57.1,100]` in that square and it comes out squashed to half height. `migrateSymbolBoxes(annotations)` runs wherever a saved payload is restored (both call sites, right after `resolveAnnotationPresets`) and re-boxes any symbol **still in a perfectly square box** — i.e. one the user never resized — to the symbol's true shape, keeping its centre and its width. A symbol the user *has* resized is left exactly as they left it. Verified: square 38 × 38 WC → 38 × 66.55 with its centre held; a hand-resized 60 × 40 untouched; a shrub (no `b`) untouched.
+
+### Sizing, and the compromise in it
+
+Artwork is proportioned from real millimetres — king bed 1830 × 2030, 3-seat sofa 2100 × 900, WC 400 × 700 — and the default placed width is roughly `mm / 34`, about 1:100 on A3. So the whole set sits correctly against itself: a single bed really is half a king, a shrub really is a third of a mature tree.
+
+Two deliberate departures:
+
+- **Floor of 25 page units** on small fittings. Linework scales with the box (`k = w / bw`, unchanged since v3.4), so a WC placed at its true 17 units draws hairlines next to an 80-unit bed. 25 is still small, still resizable, and legible the moment it lands. The old library was far looser about this — its WC placed at 38.
+- **Cap of 90** so a mature tree or a 6.3 m pool doesn't land across a third of the sheet.
+
+### Generated path data
+
+Canopies, bowls and scatter are unreadable hand-written as arc soup, so a set of builders generate them: `_symCircle`, `_symEllipse`, `_symRRect`, `_symLines`, `_symBlob` (scalloped canopy), `_symStar` (conifer), `_symRadial` (palm fronds, spiral treads), `_symSpokes` (branches), `_symWave` (pool ripples), `_symDots` (stipple). They return ordinary path data, cached by `_symPath` like any hand-written string, so nothing downstream knows the difference.
+
+All of them are **deterministic** — no `Math.random()`. A tree must be the same tree in every session and every save, so `_symBlob` wobbles its radius with `sin(i * 2.399 + seed)`. `_symDots` uses a **Halton (2,3)** sequence: the first cut used two multiples of the same irrational, which lined every dot up on a diagonal and read as a dotted line rather than as ground cover.
+
+### Finding things in a 160-symbol chest
+
+- `SYMBOL_KEYWORDS` — an id → alias-string map applied onto the definitions after the library is built (kept separate so the definitions stay readable). The search now also matches it, so **couch** finds the sofas, **loo** the pan, **plant** the planting, **tallboy** the chest of drawers, **jacuzzi** the spa.
+- **Expand all / Collapse all** beside the search box, plus a live symbol count.
+
+### Verification
+
+Driven live in Chrome against the app over local http:
+
+- **Every symbol was looked at.** Three contact sheets rendered through the real `drawSymbolAnn` — all 160, each in its own `b`-shaped box — then read back. That is what caught the diagonal stipple, an oven handle sitting on the carcass line, a cut line that read as an X, an armchair with no seat, an island sink too small to see, and a wardrobe whose eleven hanger ticks read as a comb. All fixed and re-rendered.
+- **A full furniture layout composited onto a real PDF page** at default sizes, to check the set holds together at one scale rather than symbol by symbol. That is what produced the size floor.
+- All 160 draw without throwing; the panel builds 160 tiles in 11 categories; collapse-all → 0 tiles, expand-all → 160; a sofa tile carries `viewBox="0 28.55 100 42.9"`; typing "couch" through the real input yields exactly the three sofas.
+- Placement through the real click path: `u-bed-k` lands 80 × 59.5, ratio 0.744, matching its `b` exactly; the symbol is selectable, rotatable and resizable as before.
+- Zero page errors; `node check-syntax.js` clean.
+
+### Note for next time — reading a client PDF on this machine
+
+The reference set could not be rasterised locally: no poppler, Ghostscript or ImageMagick installed, so `Read` on a PDF fails with *"pdftoppm is not installed"*. What worked: a throwaway node server (serving the project folder, the reference PDF on `/refpdf`, and a `POST /save` that writes a base64 body to disk), pdf.js in the preview browser rendering pages to a canvas and posting PNGs back, then `Read` on the PNG.
+
+**`intent: 'print'` is the trick.** pdf.js drives its default render loop off `requestAnimationFrame`, which a hidden browser pane freezes — so `page.render()` hangs forever with no error and no output. `page.render({ canvasContext, viewport, intent: 'print' })` takes the non-rAF path and returns immediately. The same server then lifted the symbol contact sheets straight out of a canvas.
