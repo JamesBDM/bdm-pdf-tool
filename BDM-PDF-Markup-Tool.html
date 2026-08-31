@@ -1148,6 +1148,12 @@ body.touch-ui #canvas-wrapper { scrollbar-width: thin; }
 .merge-pdf-item { display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-tertiary); border-radius: 4px; border-left: 3px solid var(--accent); margin-bottom: 6px; }
 .merge-pdf-name { flex: 1; font-size: 12px; font-weight: 500; }
 .merge-pdf-pages { font-size: 11px; color: var(--text-secondary); }
+/* Drop target wrapping the "+ Add PDF Files" button — files can be dragged in
+   from Explorer instead of going through the file picker. */
+.merge-drop-area { border: 2px dashed var(--border-color); border-radius: 6px; padding: 12px; transition: border-color .12s, background .12s; }
+.merge-drop-area .merge-drop-hint { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+.merge-drop-area.dragging { border-color: var(--accent); background: rgba(229, 67, 46, 0.08); }
+.merge-drop-area.dragging .merge-drop-hint { color: var(--accent); font-weight: 600; }
 
 /* Tool Chest */
 .preset-tile {
@@ -2007,7 +2013,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.26';
+const APP_VERSION = 'v3.27';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -2927,6 +2933,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global drag-drop for initial PDF open
   document.addEventListener('dragover', (e) => { e.preventDefault(); });
   document.addEventListener('drop', async (e) => {
+    // A dialog on top of the page owns its own drops (e.g. Combine / Split).
+    if (currentModal) return;
     if (!pdfDoc && e.dataTransfer.files[0]?.type === 'application/pdf') {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
@@ -17414,7 +17422,12 @@ function openMergeDialog() {
       </div>` : '';
   const body = `
     <div style="display:flex;flex-direction:column;gap:12px">
-      <button onclick="document.getElementById('merge-input').click()" style="width:100%;padding:10px;background:var(--accent);color:white;border-radius:4px;font-weight:600">+ Add PDF Files</button>
+      <div id="merge-drop-area" class="merge-drop-area"
+           ondragenter="mergeDropDragOver(event)" ondragover="mergeDropDragOver(event)"
+           ondragleave="mergeDropDragLeave(event)" ondrop="mergeDropFiles(event)">
+        <button onclick="document.getElementById('merge-input').click()" style="width:100%;padding:10px;background:var(--accent);color:white;border-radius:4px;font-weight:600">+ Add PDF Files</button>
+        <div class="merge-drop-hint">or drag &amp; drop PDFs here</div>
+      </div>
       <div id="merge-list" style="min-height:60px"><div style="text-align:center;color:var(--text-muted);padding:20px;font-size:12px">No PDFs added yet</div></div>
       <div id="merge-progress-bar" class="hidden"><div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">Processing...</div><div class="progress-bar"><div class="progress-fill" id="merge-fill"></div></div></div>
       ${positionPicker}
@@ -17440,10 +17453,43 @@ function openMergeDialog() {
 }
 
 function handleMergeFiles(event) {
-  const files = Array.from(event.target.files);
-  files.forEach(f => { if (f.type === 'application/pdf') mergeFiles.push(f); });
-  updateMergeListUI();
+  addMergeFiles(event.target.files);
   event.target.value = '';
+}
+
+// Shared by the file picker and the dialog's drop target. Explorer drops don't
+// always carry a MIME type, so fall back to the extension.
+function addMergeFiles(fileList) {
+  let added = 0;
+  Array.from(fileList || []).forEach(f => {
+    if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) { mergeFiles.push(f); added++; }
+  });
+  updateMergeListUI();
+  return added;
+}
+
+// --- Drag & drop into the Combine / Split dialog --------------------------
+// stopPropagation keeps the drop off the document-level handler that opens a
+// dropped PDF outright when nothing is loaded yet.
+function mergeDropDragOver(e) {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+  e.preventDefault(); e.stopPropagation();
+  e.dataTransfer.dropEffect = 'copy';
+  document.getElementById('merge-drop-area')?.classList.add('dragging');
+}
+function mergeDropDragLeave(e) {
+  const area = document.getElementById('merge-drop-area');
+  if (!area) return;
+  // Ignore the leave events fired while moving between child elements.
+  if (e.relatedTarget && area.contains(e.relatedTarget)) return;
+  area.classList.remove('dragging');
+}
+function mergeDropFiles(e) {
+  e.preventDefault(); e.stopPropagation();
+  document.getElementById('merge-drop-area')?.classList.remove('dragging');
+  const files = e.dataTransfer?.files;
+  if (!files || !files.length) return;
+  if (addMergeFiles(files) === 0) alert('Only PDF files can be combined.');
 }
 
 async function updateMergeListUI() {

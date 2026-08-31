@@ -1222,3 +1222,49 @@ Driven live in Chrome against the app over local http:
 The reference set could not be rasterised locally: no poppler, Ghostscript or ImageMagick installed, so `Read` on a PDF fails with *"pdftoppm is not installed"*. What worked: a throwaway node server (serving the project folder, the reference PDF on `/refpdf`, and a `POST /save` that writes a base64 body to disk), pdf.js in the preview browser rendering pages to a canvas and posting PNGs back, then `Read` on the PNG.
 
 **`intent: 'print'` is the trick.** pdf.js drives its default render loop off `requestAnimationFrame`, which a hidden browser pane freezes — so `page.render()` hangs forever with no error and no output. `page.render({ canvasContext, viewport, intent: 'print' })` takes the non-rAF path and returns immediately. The same server then lifted the symbol contact sheets straight out of a canvas.
+
+---
+
+## v3.27 — Drag & drop into the Combine / Split dialog
+
+The dialog only ever accepted files through the picker (`+ Add PDF Files` → hidden
+`#merge-input`), even though the app already took drops everywhere else — onto the canvas
+(`mergeDroppedFiles`), onto the thumbnail strip (`insertPdfFilesAtIndex`) and onto the empty
+drop zone. The button is now wrapped in `#merge-drop-area`, a dashed drop target with an
+"or drag & drop PDFs here" hint that turns accent-coloured while a drag is over it.
+
+- `addMergeFiles(fileList)` is the one place files enter `mergeFiles`; both the picker
+  (`handleMergeFiles`) and the drop handler call it. It accepts a file whose `type` is
+  `application/pdf` **or** whose name ends `.pdf` — Explorer drops frequently arrive with an
+  empty MIME type, and the old `type === 'application/pdf'` test silently dropped them.
+- `mergeDropDragOver` / `mergeDropDragLeave` / `mergeDropFiles` are wired as inline
+  attributes in the dialog HTML rather than listeners added after `showModal`, because the
+  modal body is built from an HTML string and re-created on every open.
+- The dragleave handler ignores events whose `relatedTarget` is still inside the area,
+  otherwise the highlight flickers off as the cursor crosses the button.
+- Non-PDFs mixed into a drop are skipped quietly; a drop containing *only* non-PDFs alerts.
+
+**The global drop handler had to yield.** `document`'s drop listener opens a dropped PDF
+outright when nothing is loaded yet. With the dialog open and no document, a drop landed a
+file in the queue *and* opened it, closing the dialog. The handler now returns early if
+`currentModal` is set — a dialog on top of the page owns its own drops — and the dialog's
+own handler calls `stopPropagation()` as well.
+
+### Verification
+
+Driven live in Chrome against the app over local http, using `DataTransfer` with real
+pdf-lib-generated `File` objects:
+
+- A dropped PDF with an **empty MIME type** queues and reports its page count — the case the
+  old filter would have rejected.
+- A two-PDF drop queues both with reorder/remove controls; a `.txt` in the same drop is
+  skipped without complaint; a `.txt`-only drop alerts and queues nothing.
+- The dialog stays open across drops, and the highlight class goes on at dragover and off at
+  drop.
+- `node check-syntax.js` clean.
+
+**Careful reading computed styles in the hidden preview pane.** The highlight looked broken —
+`getComputedStyle` kept returning the *old* border and background after the class was added,
+while an identical element created fresh styled correctly. The pane is `document.hidden`, so
+CSS transitions sit frozen at `currentTime: 0` and the computed value is the transition's
+start value. `el.getAnimations().forEach(a => a.finish())` before reading gives the truth.
