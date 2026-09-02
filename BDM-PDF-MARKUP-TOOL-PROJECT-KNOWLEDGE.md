@@ -1268,3 +1268,79 @@ pdf-lib-generated `File` objects:
 while an identical element created fresh styled correctly. The pane is `document.hidden`, so
 CSS transitions sit frozen at `currentTime: 0` and the computed value is the transition's
 start value. `el.getAnimations().forEach(a => a.finish())` before reading gives the truth.
+
+---
+
+## v3.28 — Copy and paste whole pages in the thumbnail strip
+
+The strip could already insert, duplicate, extract, reorder and delete pages, but there was
+no way to lift a page out of one place and drop a copy somewhere else — and no way at all to
+move a page between two open documents. Copy / paste closes both.
+
+**The clipboard is a standalone mini-PDF, not a page reference.** `copyPagesToClipboard(pages)`
+copies the selected pages into a fresh `PDFLib.PDFDocument`, saves it, and keeps the bytes in
+`pageClipboard = { bytes, count, anns, cals, vps, srcName }`. Holding indices into
+`currentPdfBytes` would have been cheaper but goes stale the moment the source pages are
+deleted, reordered or replaced by a revision — and would be meaningless after a document
+switch. Bytes survive all of it, which is what makes cross-document paste work for free.
+
+- `pageClipboard` is declared beside `thumbSelectedPages` and is deliberately **not** part of
+  the per-document capture/restore in `captureDocState` / `restoreDocState` — it is app-wide,
+  so you can copy in one tab and paste in another.
+- Markups, calibrations and viewports on the copied pages ride along, stored against their
+  index *within the clipboard* (0..n-1) rather than the source page number.
+- On paste the markups get fresh ids via `generateId()` so they are independent of the
+  originals, but `takeoffItemId` is kept — a pasted measurement still totals against the same
+  takeoff item, which is the point of copying a page of takeoff in the first place.
+- `rebuildMeasurements()` runs after the paste because `measurements[]` is keyed by annotation
+  id, and every pasted markup has a new one.
+
+**`shiftPageStateForInsert(atIdx, count)` is now the one place insertion shifts page state.**
+Insert Blank, Insert Pages…, Duplicate Page and Paste each had (or would have had) their own
+copy of the "shift annotations and calibrations down" loop. They now share this helper, which
+also shifts `viewports` and `sheetLabels` — the older hand-rolled loops moved only annotations
+and calibrations, so a viewport region silently stayed on the page number it started on when
+a page was inserted above it. Sheet *links* still self-heal via `_sheetIndexAfterPageOp()`.
+
+Note the boundary condition: the helper takes the index pages are inserted **at** and shifts
+`page >= atIdx`, whereas the old inline loops took the right-clicked page and shifted
+`page > thumbCtxPage`. Callers pass `thumbCtxPage + 1`, which is the same thing — worth
+remembering if a future caller inserts anywhere other than "after the clicked page".
+
+**Ctrl+C / Ctrl+V had to be shared with the markup clipboard.** In `onKeyDown` the page
+branch is checked *before* the markup branch:
+
+- **Ctrl+C** copies pages whenever `thumbSelectedPages` is non-empty — a thumbnail selection
+  is unambiguous intent.
+- **Ctrl+V** pastes pages only while `thumbPanelFocused && showThumbnails`. `thumbPanelFocused`
+  is set by a capture-phase `mousedown` listener: true inside `#thumbnail-strip`, false inside
+  `#canvas-area` / `#panel` / `#toolbar`. Without that flag Ctrl+V in the strip would have gone
+  on pasting a markup onto the canvas, and Ctrl+V on the canvas would have started inserting
+  pages.
+- Both branches `preventDefault()`, which also suppresses the document `paste` event — otherwise
+  the screenshot-paste handler would fire straight after and drop an image annotation as well.
+
+Paste lands **before** or **after** the right-clicked page (two menu rows); the keyboard route
+pastes after the last selected page, or after the current page when nothing is selected. Both
+menu rows carry the clipboard count ("Paste 2 Pages After") and are greyed out until something
+has been copied, and the selection bar gained a Copy button next to Delete.
+
+### Verification
+
+Driven live in Chrome over local http against a generated 4-page PDF with a markup, a
+calibration and a viewport on page 2:
+
+- Copy page 2, paste before page 1 → page order `2,1,2,3,4`; the original markup/viewport moved
+  from page 1 to page 2 and the copies landed on page 0; calibrations ended on 0 and 2.
+- Multi-select two pages, Copy from the selection bar, paste after page 1 → both pages inserted
+  in order, remaining markups shifted by 2, selection cleared.
+- Keyboard: click a thumbnail, Ctrl+C, Ctrl+V → page duplicated directly below it. Clicking the
+  canvas first and pressing Ctrl+V left the page count unchanged.
+- Copy in `Test4.pdf`, `switchToDoc(0)`, paste → the page appeared in `Trial.pdf`, clipboard
+  still reporting `srcName: Test4.pdf`.
+- No unhandled rejections from either the paste or the existing Duplicate Page path.
+- `node check-syntax.js` clean.
+
+**Page ops still clear the undo stack.** `resetHistoryAfterPageOp()` wipes `history[]`, so a
+paste can't be undone with Ctrl+Z — same as delete, duplicate and insert. Left as-is for
+consistency rather than making paste the one page op that undoes.

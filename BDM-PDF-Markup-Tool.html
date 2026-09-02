@@ -735,6 +735,8 @@ input, select, textarea { font: inherit; color: inherit; }
 #thumb-select-bar.visible { display: flex; }
 #thumb-select-bar button { font-size: 10px; padding: 2px 7px; border-radius: 3px; cursor: pointer; }
 #thumb-select-bar .tsb-del { background: var(--danger, #e74c3c); color: #fff; font-weight: 700; }
+#thumb-select-bar .tsb-copy { background: none; border: 1px solid var(--border-color); color: var(--text-secondary); }
+#thumb-select-bar .tsb-copy:hover { background: var(--bg-hover); color: var(--text-primary); }
 #thumb-select-bar .tsb-clear { background: none; border: 1px solid var(--border-color); color: var(--text-secondary); }
 .thumbnail-canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
 .thumb-label {
@@ -1694,6 +1696,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       </div>
       <div id="thumb-select-bar" title="Ctrl+click toggles pages · Shift+click selects a range">
         <span id="thumb-select-count" style="flex:1"></span>
+        <button class="tsb-copy" onclick="copySelectedThumbPages()" title="Copy the selected pages (Ctrl+C) — paste them back here, or into another open document">Copy</button>
         <button class="tsb-del" onclick="deleteSelectedThumbPages()" title="Delete all selected pages">Delete</button>
         <button class="tsb-clear" onclick="clearThumbSelection()" title="Clear selection (Esc)">✕</button>
       </div>
@@ -1878,6 +1881,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 <!-- Thumbnail context menu -->
 <div id="thumb-context-menu" class="thumb-context-menu">
   <div class="thumb-ctx-label">Page</div>
+  <div class="thumb-ctx-item" id="thumb-ctx-copy" onclick="thumbCtxCopy()">Copy Page</div>
+  <div class="thumb-ctx-item" id="thumb-ctx-paste-before" onclick="thumbCtxPaste('before')">Paste Pages Before</div>
+  <div class="thumb-ctx-item" id="thumb-ctx-paste-after" onclick="thumbCtxPaste('after')">Paste Pages After</div>
+  <div class="thumb-ctx-sep"></div>
   <div class="thumb-ctx-item" onclick="thumbCtxInsertBlank()">Insert Blank Page</div>
   <div class="thumb-ctx-item" onclick="thumbCtxInsertPdf()">Insert Pages...</div>
   <div class="thumb-ctx-item" onclick="thumbCtxReplaceRevision()">Replace with Revision…</div>
@@ -2013,7 +2020,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.27';
+const APP_VERSION = 'v3.28';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -7656,6 +7663,21 @@ function onKeyDown(e) {
     return;
   }
 
+  // Ctrl+C / Ctrl+V in the thumbnail strip — whole PAGES rather than markups.
+  // Copy applies whenever pages are selected; paste applies while the strip is
+  // the panel last clicked in, so Ctrl+V on the canvas still pastes a markup.
+  if (mod && key === 'c' && thumbSelectedPages.size) {
+    e.preventDefault();
+    copySelectedThumbPages();
+    return;
+  }
+  if (mod && key === 'v' && pageClipboard && thumbPanelFocused && showThumbnails) {
+    e.preventDefault();
+    const at = thumbSelectedPages.size ? Math.max(...thumbSelectedPages) + 1 : currentPage + 1;
+    pastePagesFromClipboard(at);
+    return;
+  }
+
   // Ctrl+C / Ctrl+V on a selected annotation — duplicate it.
   // Handled BEFORE the tool-shortcut block so plain "c" still picks the Count tool
   // but Ctrl+C copies the selection instead of switching tools.
@@ -9680,7 +9702,7 @@ function _buildWindowMenu() {
 function showShortcutsHelp() {
   const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['I / C','Dimension / Count'],
     ['N / W / Y','Line / Arrow / Polyline shape'],['R / O / Q / D','Rect / Ellipse / Polygon / Cloud'],['T / B / S / J','Text / Callout / Stamp / Tick'],
-    ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
+    ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup — or whole pages, in the thumbnail strip'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
     ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['H','Crosshair guides'],['Alt+←','Back after following a sheet link'],['Esc / right-click','Cancel draft']];
   showModal('Keyboard Shortcuts', '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
     rows.map(r => `<tr><td style="padding:4px 10px;font-family:var(--font-mono);color:var(--accent-text);white-space:nowrap">${r[0]}</td><td style="padding:4px 10px;color:var(--text-secondary)">${r[1]}</td></tr>`).join('') +
@@ -13911,6 +13933,16 @@ let thumbCtxPage = -1;
 let thumbSelectedPages = new Set();
 let thumbSelectAnchor = -1;      // range start for Shift+click
 
+// Page clipboard (v3.28): copy whole pages in the thumbnail strip and paste
+// them back — into this document or any other one open in the tabs. Held as a
+// self-contained mini-PDF (plus the markups / calibrations / viewports that
+// were on those pages) so it survives page edits and document switches.
+// Deliberately NOT part of per-document capture/restore — it's app-wide.
+let pageClipboard = null;        // { bytes, count, anns, cals, vps, srcName }
+// Which panel the last click landed in — decides whether Ctrl+V pastes PAGES
+// (thumbnail strip) or a markup / image (canvas).
+let thumbPanelFocused = false;
+
 // Unsaved-changes tracking (v2.8.3): true once the active document has been
 // edited since open/last save. Per-doc via capture/restore; closing a dirty
 // tab (or the window) prompts to save first.
@@ -14255,6 +14287,20 @@ function showThumbContextMenu(x, y) {
   const delItem = document.getElementById('thumb-ctx-delete');
   if (delItem) delItem.textContent = (thumbSelectedPages.size > 1 && thumbSelectedPages.has(thumbCtxPage))
     ? 'Delete ' + thumbSelectedPages.size + ' Selected Pages' : 'Delete Page';
+  // Copy / paste (v3.28) — copy follows the multi-selection the same way delete
+  // does; the two paste rows are greyed out until something has been copied.
+  const copyItem = document.getElementById('thumb-ctx-copy');
+  if (copyItem) copyItem.textContent = (thumbSelectedPages.size > 1 && thumbSelectedPages.has(thumbCtxPage))
+    ? 'Copy ' + thumbSelectedPages.size + ' Selected Pages' : 'Copy Page';
+  const clipN = pageClipboard ? pageClipboard.count : 0;
+  ['thumb-ctx-paste-before', 'thumb-ctx-paste-after'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('disabled', !clipN);
+    const where = id.endsWith('before') ? 'Before' : 'After';
+    el.textContent = clipN ? 'Paste ' + clipN + ' Page' + (clipN === 1 ? '' : 's') + ' ' + where : 'Paste Pages ' + where;
+    el.title = clipN && pageClipboard.srcName ? 'Copied from ' + pageClipboard.srcName : '';
+  });
   // Enable/disable move up/down
   document.getElementById('thumb-ctx-moveup').classList.toggle('disabled', thumbCtxPage <= 0);
   document.getElementById('thumb-ctx-movedown').classList.toggle('disabled', thumbCtxPage >= pdfDoc.numPages - 1);
@@ -14279,6 +14325,15 @@ function hideThumbContextMenu() {
   document.getElementById('thumb-context-menu').classList.remove('visible');
 }
 
+// Track which panel the user is working in, so Ctrl+V knows whether it means
+// "paste pages" (thumbnail strip) or "paste markup / image" (canvas).
+document.addEventListener('mousedown', (e) => {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  if (t.closest('#thumbnail-strip')) thumbPanelFocused = true;
+  else if (t.closest('#canvas-area') || t.closest('#panel') || t.closest('#toolbar')) thumbPanelFocused = false;
+}, true);
+
 // Close context menu on click anywhere
 document.addEventListener('click', hideThumbContextMenu);
 document.addEventListener('contextmenu', (e) => {
@@ -14297,6 +14352,130 @@ async function rebuildPdf(pdfLibDoc) {
   renderPage(currentPage);
   updatePageIndicator();
   generateThumbnails();
+}
+
+// Shift every page-indexed piece of state down by `count` to make room for
+// pages inserted AT `atIdx` (pages currently at atIdx and beyond move down).
+// Used by insert-blank, insert-PDF, duplicate and paste so they all keep
+// markups, calibrations, viewports and sheet labels attached to their page.
+function shiftPageStateForInsert(atIdx, count) {
+  if (!count) return;
+  annotations = annotations.map(a => (a.page >= atIdx ? { ...a, page: a.page + count } : a));
+  viewports = viewports.map(v => (v.page >= atIdx ? { ...v, page: v.page + count } : v));
+  const newCals = {};
+  Object.keys(pageCalibrations).forEach(k => {
+    const pg = parseInt(k);
+    newCals[pg >= atIdx ? pg + count : pg] = pageCalibrations[pg];
+  });
+  pageCalibrations = newCals;
+  if (typeof sheetLabels === 'object' && sheetLabels) {
+    const newLabels = {};
+    Object.keys(sheetLabels).forEach(k => {
+      const pg = parseInt(k);
+      newLabels[pg >= atIdx ? pg + count : pg] = sheetLabels[pg];
+    });
+    sheetLabels = newLabels;
+  }
+}
+
+// ---------- Page copy / paste (v3.28) ----------
+// Copy whole pages onto the app-wide page clipboard. The pages themselves go
+// into a standalone mini-PDF, so the clipboard keeps working after the source
+// pages are moved, replaced or deleted — and pastes into any open document.
+async function copyPagesToClipboard(pages) {
+  if (!pdfDoc || !currentPdfBytes) return;
+  pages = Array.from(new Set(pages)).filter(p => p >= 0 && p < pdfDoc.numPages).sort((a, b) => a - b);
+  if (!pages.length) return;
+  try {
+    const src = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    const clip = await PDFLib.PDFDocument.create();
+    const copied = await clip.copyPages(src, pages);
+    copied.forEach(p => clip.addPage(p));
+    // Page index in the source → its position within the clipboard
+    const rel = new Map();
+    pages.forEach((p, i) => rel.set(p, i));
+    const clone = o => JSON.parse(JSON.stringify(o));
+    const cals = {};
+    pages.forEach((p, i) => { if (pageCalibrations[p]) cals[i] = clone(pageCalibrations[p]); });
+    pageClipboard = {
+      bytes: new Uint8Array(await clip.save()).slice(),
+      count: pages.length,
+      anns: annotations.filter(a => rel.has(a.page)).map(a => ({ ...clone(a), page: rel.get(a.page) })),
+      cals: cals,
+      vps: viewports.filter(v => rel.has(v.page)).map(v => ({ ...clone(v), page: rel.get(v.page) })),
+      srcName: currentFilename || 'Untitled'
+    };
+    const marks = pageClipboard.anns.length;
+    showToast(pages.length + ' page' + (pages.length === 1 ? '' : 's') + ' copied'
+      + (marks ? ' with ' + marks + ' markup' + (marks === 1 ? '' : 's') : '')
+      + ' — right-click a thumbnail to paste');
+  } catch (err) { alert('Error copying pages: ' + err.message); }
+}
+
+// Paste the clipboard pages so the first one lands at index `atIdx`.
+// Markups, calibrations and viewports ride along; the pasted markups get fresh
+// ids so they're independent of the originals (their takeoff links are kept,
+// so a pasted measurement still totals against the same takeoff item).
+async function pastePagesFromClipboard(atIdx) {
+  if (!pageClipboard) { showToast('Nothing copied yet — right-click a page and choose Copy Page'); return; }
+  if (!pdfDoc) return;
+  try {
+    const base = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
+    const clipDoc = await PDFLib.PDFDocument.load(pageClipboard.bytes.slice());
+    const n = clipDoc.getPageCount();
+    if (!n) return;
+    atIdx = Math.max(0, Math.min(atIdx, base.getPageCount()));
+    const copied = await base.copyPages(clipDoc, clipDoc.getPageIndices());
+    for (let i = 0; i < copied.length; i++) base.insertPage(atIdx + i, copied[i]);
+    shiftPageStateForInsert(atIdx, n);
+    const clone = o => JSON.parse(JSON.stringify(o));
+    pageClipboard.anns.forEach(a => {
+      const copy = clone(a);
+      copy.id = generateId();
+      copy.page = atIdx + a.page;
+      delete copy._labelRect; delete copy._perimRect;
+      annotations.push(copy);
+    });
+    Object.keys(pageClipboard.cals).forEach(k => {
+      pageCalibrations[atIdx + parseInt(k)] = clone(pageClipboard.cals[k]);
+    });
+    pageClipboard.vps.forEach(v => {
+      const copy = clone(v);
+      copy.id = generateId();
+      copy.page = atIdx + v.page;
+      viewports.push(copy);
+    });
+    thumbSelectedPages.clear();
+    thumbSelectAnchor = -1;
+    selectedAnnotationId = null;
+    currentPage = atIdx;
+    await rebuildPdf(base);
+    if (typeof rebuildMeasurements === 'function') rebuildMeasurements();
+    resetHistoryAfterPageOp();
+    if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
+    goToPage(atIdx);
+    showToast(n + ' page' + (n === 1 ? '' : 's') + ' pasted at page ' + (atIdx + 1));
+  } catch (err) { alert('Error pasting pages: ' + err.message); }
+}
+
+// Copy whatever the thumbnail strip has selected (falling back to the current page)
+function copySelectedThumbPages() {
+  const pages = thumbSelectedPages.size ? Array.from(thumbSelectedPages) : [currentPage];
+  copyPagesToClipboard(pages);
+}
+
+function thumbCtxCopy() {
+  hideThumbContextMenu();
+  // Right-clicking inside a multi-selection copies the whole selection
+  const pages = (thumbSelectedPages.size > 1 && thumbSelectedPages.has(thumbCtxPage))
+    ? Array.from(thumbSelectedPages) : [thumbCtxPage];
+  copyPagesToClipboard(pages);
+}
+
+function thumbCtxPaste(where) {
+  hideThumbContextMenu();
+  if (!pageClipboard) return;
+  pastePagesFromClipboard(where === 'before' ? thumbCtxPage : thumbCtxPage + 1);
 }
 
 async function reorderPage(fromIdx, toIdx) {
@@ -14336,14 +14515,8 @@ async function thumbCtxInsertBlank() {
     const existingPage = doc.getPage(thumbCtxPage);
     const { width, height } = existingPage.getSize();
     doc.insertPage(thumbCtxPage + 1, [width, height]);
-    // Shift annotations on pages after insertion
-    annotations = annotations.map(ann => ({ ...ann, page: ann.page > thumbCtxPage ? ann.page + 1 : ann.page }));
-    const newCals = {};
-    Object.keys(pageCalibrations).forEach(k => {
-      const pg = parseInt(k);
-      newCals[pg > thumbCtxPage ? pg + 1 : pg] = pageCalibrations[pg];
-    });
-    pageCalibrations = newCals;
+    // Shift markups / calibrations / viewports / labels on pages after insertion
+    shiftPageStateForInsert(thumbCtxPage + 1, 1);
     await rebuildPdf(doc);
     goToPage(thumbCtxPage + 1);
     resetHistoryAfterPageOp();
@@ -14369,14 +14542,8 @@ async function handleThumbInsert(event) {
     for (let i = 0; i < copiedPages.length; i++) {
       baseDoc.insertPage(thumbCtxPage + 1 + i, copiedPages[i]);
     }
-    // Shift annotations
-    annotations = annotations.map(ann => ({ ...ann, page: ann.page > thumbCtxPage ? ann.page + insertCount : ann.page }));
-    const newCals = {};
-    Object.keys(pageCalibrations).forEach(k => {
-      const pg = parseInt(k);
-      newCals[pg > thumbCtxPage ? pg + insertCount : pg] = pageCalibrations[pg];
-    });
-    pageCalibrations = newCals;
+    // Shift markups / calibrations / viewports / labels on pages after insertion
+    shiftPageStateForInsert(thumbCtxPage + 1, insertCount);
     await rebuildPdf(baseDoc);
     goToPage(thumbCtxPage + 1);
     resetHistoryAfterPageOp();
@@ -14900,14 +15067,8 @@ async function thumbCtxDuplicate() {
     const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice());
     const [page] = await doc.copyPages(doc, [thumbCtxPage]);
     doc.insertPage(thumbCtxPage + 1, page);
-    // Shift annotations on pages after
-    annotations = annotations.map(ann => ({ ...ann, page: ann.page > thumbCtxPage ? ann.page + 1 : ann.page }));
-    const newCals = {};
-    Object.keys(pageCalibrations).forEach(k => {
-      const pg = parseInt(k);
-      newCals[pg > thumbCtxPage ? pg + 1 : pg] = pageCalibrations[pg];
-    });
-    pageCalibrations = newCals;
+    // Shift markups / calibrations / viewports / labels on pages after the copy
+    shiftPageStateForInsert(thumbCtxPage + 1, 1);
     await rebuildPdf(doc);
     resetHistoryAfterPageOp();
   } catch(err) { alert('Error duplicating: ' + err.message); }
