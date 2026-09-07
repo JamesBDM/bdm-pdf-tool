@@ -1658,8 +1658,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="tool-group" data-group="markup">
         <div class="tool-group-label" onclick="toggleToolGroup('markup')" title="Markup tools — click to collapse/expand"><span class="tg-label-text">MARKUP</span><span class="tg-chevron">▼</span></div>
         <div class="tool-group-body">
-          <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
-          <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
+          <button class="tool-btn" data-tool="text" onclick="setTool('text')" title="Text — click where the note goes and type. Return starts a new line; Ctrl+Return or a click away finishes it (T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="8" y1="20" x2="16" y2="20"/></svg><span class="shortcut">T</span></button>
+          <button class="tool-btn" data-tool="callout" onclick="setTool('callout')" title="Callout — click what you're pointing at, then double-click where the note goes. Return starts a new line; Ctrl+Return or a click away finishes it (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg><span class="shortcut">B</span></button>
           <button class="tool-btn" data-tool="table" onclick="setTool('table')" title="Legend / Table — drop a custom table on the drawing with text cells and colour-key boxes. Click the page to place it, then double-click it to edit."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="14.5" x2="21" y2="14.5"/><line x1="9" y1="9" x2="9" y2="20"/></svg></button>
           <button class="tool-btn" data-tool="stamp" onclick="setTool('stamp')" title="Stamp (S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 10h8M8 14h8"/></svg><span class="shortcut">S</span></button>
           <button class="tool-btn" data-tool="tick" onclick="setTool('tick')" title="Tick / Check Mark (J)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5,13 10,18 20,6"/></svg><span class="shortcut">J</span></button>
@@ -2020,7 +2020,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.28';
+const APP_VERSION = 'v3.29';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -8227,6 +8227,82 @@ function finishPolyShape() {
 // same weight/slant/underline, same line spacing (fontSize + 2, as used by
 // drawTextAnn), and — with padding and border now zero in CSS — the same
 // top-left origin. What you see while typing is what gets drawn.
+// v3.29 — typing happens INSIDE the box.
+// Return used to finish the markup, so a callout could never be given a second
+// line while typing, and the editor ran off in one long line while the drawn
+// callout wrapped to its box — the editor read as a separate widget floating
+// over the box rather than as the box itself. Now: Return breaks the line,
+// Ctrl/Cmd+Return or clicking away commits, Escape still abandons the edit.
+function _insertLineBreak() {
+  try { if (document.execCommand('insertLineBreak')) return; } catch (e) {}
+  try { document.execCommand('insertHTML', false, '<br>'); } catch (e) {}
+}
+
+// Shared by the three text editors (new text, new callout, edit existing).
+function _bindTextOverlayKeys(overlay) {
+  overlay.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); overlay._cancelled = true; overlay.blur(); return; }
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (ev.ctrlKey || ev.metaKey) { overlay.blur(); return; }
+      _insertLineBreak();
+      _placeEditorHint(overlay);
+    }
+  });
+}
+
+// Small caption under the editor, because Return no longer means "done".
+function _attachEditorHint(overlay) {
+  const hint = document.createElement('div');
+  hint.textContent = 'Return = new line · Ctrl+Return or click away = done · Esc = cancel';
+  hint.style.cssText = 'position:absolute;z-index:11;pointer-events:none;white-space:nowrap;' +
+    'font:10px Arial,sans-serif;color:#fff;background:rgba(20,24,33,.85);padding:2px 6px;border-radius:3px;';
+  overlay._hint = hint;
+  return hint;
+}
+function _placeEditorHint(overlay) {
+  const h = overlay._hint;
+  if (!h) return;
+  h.style.left = overlay.offsetLeft + 'px';
+  h.style.top  = (overlay.offsetTop + overlay.offsetHeight + 5) + 'px';
+}
+function _removeEditorHint(overlay) {
+  if (overlay._hint) { overlay._hint.remove(); overlay._hint = null; }
+}
+
+// Give the editor the shape of the drawn box: a text / callout that has been
+// resized (ann.boxW) wraps in the editor exactly where it wraps on the page.
+function _sizeOverlayToBox(overlay, ann) {
+  overlay.style.whiteSpace = 'pre-wrap';   // Return-inserted breaks stay visible
+  // boxW/boxH are the TEXT area, not the outer box — the app's global
+  // border-box would have quietly eaten the callout's padding and wrapped the
+  // editor a word earlier than the drawn markup.
+  overlay.style.boxSizing = 'content-box';
+  if (ann.boxW) {
+    overlay.style.width = (ann.boxW * currentScale) + 'px';
+    overlay.style.overflowWrap = 'break-word';
+  }
+  if (ann.boxH) overlay.style.minHeight = (ann.boxH * currentScale) + 'px';
+  if (ann.textAlign) overlay.style.textAlign = ann.textAlign;
+}
+
+// After an edit, a fixed-depth box that no longer fits its text grows to suit.
+// The width the user dragged is kept — only the depth follows the wrap.
+function _fitBoxHeightToText(ann) {
+  if (!ann.boxW || !ann.boxH) return;
+  const c = (typeof getActiveAnnotationCanvas === 'function') ? getActiveAnnotationCanvas() : null;
+  const ctx = c && c.getContext ? c.getContext('2d') : null;
+  if (!ctx) return;
+  const isCallout = ann.type === 'callout';
+  const fs = ann.fontSize || (isCallout ? 12 : 14);
+  ctx.save();
+  ctx.font = `${ann.fontStyle || 'normal'} ${ann.fontWeight || 'normal'} ${fs}px ${ann.fontFamily || 'Arial'}`;
+  const lines = _wrapTextLines(ctx, ann.text || '', ann.boxW);
+  ctx.restore();
+  const need = lines.length * (fs + (isCallout ? 3 : 2));
+  if (need > ann.boxH) ann.boxH = need;
+}
+
 function _styleTextOverlay(overlay, o) {
   const fs = o.fontSize || 14;
   overlay.style.fontFamily = o.fontFamily || 'Arial';
@@ -8254,10 +8330,13 @@ function showTextInput(screenPt) {
   overlay.addEventListener('mousedown', (e) => e.stopPropagation());
   overlay.addEventListener('mouseup', (e) => e.stopPropagation());
   overlay.addEventListener('click', (e) => e.stopPropagation());
+  overlay.style.whiteSpace = 'pre-wrap';   // v3.29: Return breaks the line while typing
   _appendOverlayAtActivePage(overlay);
+  _appendOverlayAtActivePage(_attachEditorHint(overlay));
   // Delay focus to let the mousedown/up cycle complete first
-  setTimeout(() => overlay.focus(), 10);
+  setTimeout(() => { overlay.focus(); _placeEditorHint(overlay); }, 10);
   overlay.addEventListener('blur', () => {
+    _removeEditorHint(overlay);
     const text = overlay.innerText.trim();
     if (text && !overlay._cancelled) {
       const ann = { id: generateId(), type: 'text', page: currentPage, points: [pagePt], text,
@@ -8272,10 +8351,7 @@ function showTextInput(screenPt) {
     overlay.remove();
     returnToNavTool();
   });
-  overlay.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { overlay._cancelled = true; overlay.blur(); }  // Escape = abort, don't commit
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); overlay.blur(); }
-  });
+  _bindTextOverlayKeys(overlay);
 }
 
 function showCalloutTextInput(anchor, knees, textPos) {
@@ -8287,7 +8363,9 @@ function showCalloutTextInput(anchor, knees, textPos) {
   const screenTextPos = toScreen(textPos);
   // v3.13: the finished callout's padding scales with the font, so the editor's
   // must too — otherwise the text jumps when you finish typing a small note.
-  const CALLOUT_PAD = calloutPad({ fontSize: toolProperties.fontSize || 12 });
+  // v3.29: the pad is in page units, so it has to be scaled like everything
+  // else — at any zoom but 100% the editor used to sit off the box.
+  const CALLOUT_PAD = calloutPad({ fontSize: toolProperties.fontSize || 12 }) * currentScale;
   overlay.style.padding = CALLOUT_PAD + 'px';
   overlay.style.left = (screenTextPos.x - CALLOUT_PAD) + 'px';
   overlay.style.top  = (screenTextPos.y - CALLOUT_PAD) + 'px';
@@ -8300,13 +8378,16 @@ function showCalloutTextInput(anchor, knees, textPos) {
     color: '#000000',        // finished callout uses black text on white
     lineGap: 3               // drawCalloutAnn steps lines by fontSize + 3
   });
+  overlay.style.whiteSpace = 'pre-wrap';   // v3.29: Return starts a new line in the box
   // Prevent clicks on the overlay from propagating to the canvas beneath
   overlay.addEventListener('mousedown', (e) => e.stopPropagation());
   overlay.addEventListener('mouseup', (e) => e.stopPropagation());
   overlay.addEventListener('click', (e) => e.stopPropagation());
   _appendOverlayAtActivePage(overlay);
-  setTimeout(() => overlay.focus(), 10);
+  _appendOverlayAtActivePage(_attachEditorHint(overlay));
+  setTimeout(() => { overlay.focus(); _placeEditorHint(overlay); }, 10);
   overlay.addEventListener('blur', () => {
+    _removeEditorHint(overlay);
     if (overlay._cancelled) { overlay.remove(); returnToNavTool(); redrawAnnotations(); return; }
     const text = overlay.innerText.trim() || 'Note';
     const ann = { id: generateId(), type: 'callout', page: currentPage, anchor: {...anchor}, knees: knees.map(k=>({...k})), textPos: {...textPos}, text,
@@ -8322,10 +8403,7 @@ function showCalloutTextInput(anchor, knees, textPos) {
     overlay.remove();
     returnToNavTool();
   });
-  overlay.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { overlay._cancelled = true; overlay.blur(); }  // Escape = abort, don't commit
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); overlay.blur(); }
-  });
+  _bindTextOverlayKeys(overlay);
 }
 
 // Text-editing overlays are positioned in canvas-relative coordinates. In
@@ -8350,7 +8428,9 @@ function editTextAnnotationInline(ann, e) {
   overlay.contentEditable = true;
   // Same WYSIWYG rule as showTextInput: zero chrome offset, so the existing
   // text stays put the instant you start editing it (no visible jump).
-  const pad = isCallout ? calloutPad(ann) : 0;   // v3.13: font-scaled, matches the drawn box
+  // v3.13: font-scaled, matches the drawn box. v3.29: scaled to the zoom too,
+  // so the editor sits on the box rather than beside it when zoomed.
+  const pad = (isCallout ? calloutPad(ann) : 0) * currentScale;
   if (isCallout) overlay.style.padding = pad + 'px';
   overlay.style.left = (screenPos.x - pad) + 'px';
   overlay.style.top = (screenPos.y - pad) + 'px';
@@ -8364,6 +8444,9 @@ function editTextAnnotationInline(ann, e) {
     color: isCallout ? (ann.textColor || ann.color || '#000000') : _textInkColor(ann),
     lineGap: isCallout ? 3 : 2
   });
+  // v3.29: edit inside the box — same width, same wrap, same alignment as the
+  // drawn markup, so the editor IS the box instead of a line running past it.
+  _sizeOverlayToBox(overlay, ann);
   if (isCallout && ann.fillColor) overlay.style.background = ann.fillColor;
   overlay.innerText = ann.text || '';
   overlay.addEventListener('mousedown', (ev) => ev.stopPropagation());
@@ -8374,21 +8457,21 @@ function editTextAnnotationInline(ann, e) {
   // editing or the old text ghosts through. Callouts keep drawing — their
   // opaque white editor box already covers the original.
   if (!isCallout) { ann._editingInline = true; redrawAnnotations(); }
-  setTimeout(() => { overlay.focus(); selectAllText(overlay); }, 10);
+  _appendOverlayAtActivePage(_attachEditorHint(overlay));
+  setTimeout(() => { overlay.focus(); selectAllText(overlay); _placeEditorHint(overlay); }, 10);
   overlay.addEventListener('blur', () => {
     delete ann._editingInline;
+    _removeEditorHint(overlay);
     if (!overlay._cancelled) {  // Escape = keep the original text untouched
-      const newText = overlay.innerText.trim();
+      const newText = overlay.innerText.replace(/s+$/, '');
       if (newText) { ann.text = newText; } else { ann.text = ann.text || 'Text'; }
+      _fitBoxHeightToText(ann);   // extra lines deepen the box instead of spilling out
       saveToHistory();
     }
     redrawAnnotations();
     overlay.remove();
   });
-  overlay.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { overlay._cancelled = true; overlay.blur(); }
-    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); overlay.blur(); }
-  });
+  _bindTextOverlayKeys(overlay);
 }
 
 function selectAllText(el) {
@@ -9703,7 +9786,7 @@ function showShortcutsHelp() {
   const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['I / C','Dimension / Count'],
     ['N / W / Y','Line / Arrow / Polyline shape'],['R / O / Q / D','Rect / Ellipse / Polygon / Cloud'],['T / B / S / J','Text / Callout / Stamp / Tick'],
     ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup — or whole pages, in the thumbnail strip'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
-    ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['H','Crosshair guides'],['Alt+←','Back after following a sheet link'],['Esc / right-click','Cancel draft']];
+    ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['H','Crosshair guides'],['Alt+←','Back after following a sheet link'],['Return / Ctrl+Return','While typing: new line / finish the text'],['Esc / right-click','Cancel draft']];
   showModal('Keyboard Shortcuts', '<table style="width:100%;border-collapse:collapse;font-size:12px">' +
     rows.map(r => `<tr><td style="padding:4px 10px;font-family:var(--font-mono);color:var(--accent-text);white-space:nowrap">${r[0]}</td><td style="padding:4px 10px;color:var(--text-secondary)">${r[1]}</td></tr>`).join('') +
     '</table>', [{ text: 'Close', class: 'primary', onclick: 'closeCurrentModal()' }]);

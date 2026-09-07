@@ -1344,3 +1344,72 @@ calibration and a viewport on page 2:
 **Page ops still clear the undo stack.** `resetHistoryAfterPageOp()` wipes `history[]`, so a
 paste can't be undone with Ctrl+Z — same as delete, duplicate and insert. Left as-is for
 consistency rather than making paste the one page op that undoes.
+
+---
+
+## v3.29 — Type inside the box, and Return starts a new line
+
+**The complaint.** Double-clicking a callout to edit it looked like a separate widget had
+opened *over* the markup rather than the markup itself becoming editable: the editor ran the
+whole note out as one long line off the right of the box, while the callout underneath still
+showed its three wrapped lines. And there was no way to give a callout a second line while
+typing — Return finished the markup.
+
+Three separate causes:
+
+1. **The editor never wrapped.** `.text-input-overlay` is `white-space: pre` with no width.
+   The drawn markup wraps to `ann.boxW` (`_wrapTextLines`), the editor didn't, so the two
+   disagreed the moment a box had been resized.
+2. **Return committed.** All three editors (new text, new callout, edit existing) blurred on
+   `Enter && !shiftKey`. Shift+Enter did nothing useful either — the overlay was `pre` and the
+   commit path `.trim()`ed.
+3. **The callout editor's padding wasn't scaled.** `calloutPad(ann)` returns *page* units and
+   was written straight into `style.padding`/`left`/`top` as px, so at any zoom but 100% the
+   editor sat off the box it was meant to be.
+
+### What changed
+
+New shared helpers next to `_styleTextOverlay`:
+
+- `_bindTextOverlayKeys(overlay)` — the one key policy for all three editors. **Return inserts
+  a line break** (`document.execCommand('insertLineBreak')`, falling back to `insertHTML <br>`),
+  **Ctrl/Cmd+Return or clicking away commits**, **Esc still abandons** the edit.
+- `_attachEditorHint` / `_placeEditorHint` / `_removeEditorHint` — a small caption under the
+  editor ("Return = new line · Ctrl+Return or click away = done · Esc = cancel"), because
+  changing what Return does is not discoverable on its own. It is repositioned as lines are
+  added and removed on blur, cancel included.
+- `_sizeOverlayToBox(overlay, ann)` — gives the editor the drawn box's shape: `width =
+  boxW * currentScale`, `min-height = boxH * currentScale`, `pre-wrap`, `break-word`, and the
+  annotation's `textAlign`.
+- `_fitBoxHeightToText(ann)` — after an edit, a fixed-depth box that no longer fits grows to
+  the wrapped line count. The width the user dragged is kept; only the depth follows.
+
+`editTextAnnotationInline` also stopped `.trim()`ing the whole edit (it now only strips trailing
+whitespace) so a deliberate leading indent survives, and both callout editors multiply
+`calloutPad()` by `currentScale`.
+
+**`box-sizing: content-box` on the overlay is load-bearing.** The app sets `border-box`
+globally, so `width: boxW` would have included the callout's padding and wrapped the editor
+about a word earlier than the canvas — the exact mismatch this change existed to remove.
+`boxW`/`boxH` are the *text* area, so the editor is forced back to content-box and the outer
+box lands at `boxW + pad*2` — the same rectangle `drawCalloutAnn` fills.
+
+### Verification
+
+Driven live in Chrome over local http on a blank A4:
+
+- A callout with `boxW 148 / boxH 99` at 14pt: editor content width 148, outer box 162×113 —
+  exactly the drawn rect — and the editor wrapped to the same 3 lines `_wrapTextLines` produced.
+- At `currentScale = 2`: width 296, padding 14, font 28, left/top `220*2-14` / `200*2-14`.
+- Return twice mid-edit produced `"…this\nsecond line\nthird"`, committed on blur, overlay and
+  hint both removed.
+- `boxH 40` with four lines of text committed at `boxH 68` (4 × (14+3)); five lines inside a
+  99-deep box left `boxH` alone.
+- A plain text annotation with `boxW 120` and `textAlign: center` wrapped and centred in the
+  editor; padding stayed 0 (text has no box padding).
+- A brand-new callout via `showCalloutTextInput` took `First line\nSecond line` and committed
+  both lines. No leftover overlays or hints; no console errors.
+- `node check-syntax.js` clean.
+
+Help gained a `Return / Ctrl+Return` row, and the Text / Callout tool tooltips now say what
+Return does instead of just naming the tool.
