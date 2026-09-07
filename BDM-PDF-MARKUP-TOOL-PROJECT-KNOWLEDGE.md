@@ -1413,3 +1413,99 @@ Driven live in Chrome over local http on a blank A4:
 
 Help gained a `Return / Ctrl+Return` row, and the Text / Callout tool tooltips now say what
 Return does instead of just naming the tool.
+
+## v3.30 — The estimate's headings became a control surface
+
+The workbook was a fixed nine-column table: Code, Description, Unit, Qty, Rate, MU %, Amount,
+Comments and the row buttons, at widths hard-coded into the `<thead>`. Every estimate is shaped
+the same, but every job isn't — a lump-sum bill doesn't need Qty and Rate on screen, a subbie
+comparison wants a Supplier column that nothing in the app provided, and nobody could widen
+Description on a wide monitor.
+
+Headings now do the work: **drag a heading's right edge to set the width, double-click that
+edge to reset it, and right-click any heading (or the new ▦ Columns button in the workbook
+toolbar) for the column list** — tick a column off to hide it, tick it back to bring it
+back, rename or delete your own, and `＋ Add column` makes a new one.
+
+### The two kinds of column
+
+The split is deliberate, and it's the thing to keep straight when touching this code:
+
+- **Built-in columns** (`WB_COL_DEFAULTS`) can be hidden but never deleted. Description is
+  `always: true` — it can't even be hidden, because it's the only column that carries the
+  line's identity, and because the layout uses it as the flexible one.
+- **User columns** are free text stored on the item itself (`item.cols[colId]`). They are
+  *data*, so they travel with the estimate: the `.datumwb` payload, the copy embedded in a
+  saved PDF, the autosave record, and the undo snapshot all carry `wbUserColumns`, and both
+  exports append them after Comments.
+
+Which columns are **hidden** and how **wide** they are is a per-machine view preference in
+`localStorage['datum-wb-cols']` — not saved into the file. Someone else opening the estimate
+gets their own widths but sees your columns, which is the right way round.
+
+### How hiding stays aligned
+
+Two mechanisms, and both are needed:
+
+1. `wbColStyleTag()` emits a `<style>` with `#wb-table [data-c="qty"]{display:none}` for each
+   hidden column, and **every** `<td>`/`<th>` in the table now carries `data-c="<column id>"`.
+   The cells stay in the DOM, so nothing has to re-render to bring a column back.
+2. Every `colspan` in the table is computed by `wbSpan([...])` — the count of those columns
+   that are currently visible. The heading rows, the "no shapes measured yet" row, the
+   per-shape rows and the ESTIMATE TOTAL row all span a *variable* number of columns now.
+   Hard-coding `colspan="5"` again is how you'd knock the table out of line: a spanned cell
+   isn't removed when the columns under it are hidden, so the row would be one wider than the
+   rest and every column below it would step sideways.
+
+The regression test for any change here is: for each row, the sum of `colSpan` over cells whose
+computed `display` isn't `none` must equal the number of visible columns. That was checked in
+the browser for the default set, with three columns hidden, with two user columns added, and
+with the row-buttons column hidden as well.
+
+### Layout: `table-layout: fixed`
+
+`#wb-table` moved to `table-layout: fixed` with `overflow: hidden` on the cells, because with
+auto layout a dragged width is only a suggestion — the browser re-widens a column around its
+content and the drag feels broken. `wbApplyLayout()` then writes the widths onto the `<th>`s
+after every render, on window resize, and while the dock is being dragged.
+
+Description is the flexible one: with no stored width (`w: 0`) it takes `available − everything
+else`, floored at 150px, and the table is sized to the exact sum so nothing drifts. Drag its
+edge and it pins like any other column; `↺ Reset widths` puts it back to flexible.
+
+**Consequence, accepted deliberately:** in the left dock the widths are honoured rather than
+squeezed, so the table scrolls sideways a little sooner than v3.29 did (v3.29 already
+overflowed there — 807px into a 379px dock — this is ~180px more). That is the trade for
+widths meaning what they say, and hiding two columns now fixes it permanently.
+
+### Excel and CSV
+
+User columns are appended **after** Comments, never inserted, because `_buildEstimateSheet`
+writes live formulas with literal column letters (`D{n}*E{n}*(1+F{n}/100)`, `SUM(G…)`).
+Anything inserted before Amount would silently point the estimate's arithmetic at the wrong
+cells. Verified: with two user columns the item row still exports `=D3*E3*(1+F3/100)`.
+
+### Undo
+
+Adding, renaming and deleting a column all `saveToHistory()`, and `wbUserColumns` rides in the
+snapshot, so Ctrl+Z brings back a deleted column *and* the cells that went with it. Deleting
+asks first and says how many lines have text in them.
+
+### Verification
+
+Driven live in Chrome over local http, workbook populated with a six-line tiling estimate:
+
+- Row/colspan audit clean in four configurations (default 9 columns; Code + Unit + MU % hidden;
+  two user columns added; row-buttons column hidden as well).
+- Dragging the Rate grip took it 84 → 161px, Description absorbed the difference, and
+  `localStorage['datum-wb-cols']` held the new width; double-clicking the grip returned it to 84.
+- A page reload restored a hidden MU %, a 210px Comments and both user columns in their slot.
+- `_workbookPayload()` carried `wbUserColumns`; clearing them and calling `wbMergeUserCols` with
+  that payload restored both, correctly positioned before the row-buttons column.
+- Delete column → undo → redo → undo: the column and `item.cols` moved together every time.
+- Excel header ends `…Comments, Supplier, Supplier ref` with widths appended; CSV header and
+  rows likewise. No console errors; `node check-syntax.js` clean.
+
+Not done, and worth knowing it was a choice: columns can't be **reordered** by dragging. The
+heading-row colspans assume Description → MU % stay contiguous, so reordering is a bigger
+change than it looks.

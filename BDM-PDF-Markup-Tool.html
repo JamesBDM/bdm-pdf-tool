@@ -981,7 +981,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .xhair.on { display: block; }
 #xhair-v { top: 0; bottom: 0; width: 1px; background: var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.5); opacity: .85; }
 #xhair-h { left: 0; right: 0; height: 1px; background: var(--accent); box-shadow: 0 0 0 1px rgba(255,255,255,.5); opacity: .85; }
-#wb-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+#wb-table { width: 100%; border-collapse: collapse; font-size: 11.5px; table-layout: fixed; }
 #wb-table th { position: sticky; top: 0; z-index: 2; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--border-color); }
 #wb-table th.wb-left { text-align: left; }
 #wb-table td { padding: 2px 6px; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
@@ -1004,6 +1004,17 @@ input, select, textarea { font: inherit; color: inherit; }
 .wb-exp { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 10px; width: 14px; padding: 0; flex: none; }
 .wb-tag { flex: none; font-size: 8.5px; font-weight: 700; color: var(--text-muted); border: 1px solid var(--border-color); border-radius: 3px; padding: 0 3px; }
 #wb-table tr.wb-sel td { background: rgba(229,67,46,0.16); }
+/* v3.30 — column headings are a control surface: every heading carries a drag
+   grip on its right edge, and hidden columns are switched off by a generated
+   rule (the cells stay in the DOM, so nothing has to re-render to show them). */
+#wb-table th, #wb-table td { overflow: hidden; }
+#wb-table th { user-select: none; }
+.wb-grip { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; }
+.wb-grip:hover, .wb-grip.dragging { background: var(--accent); opacity: .6; }
+#wb-col-menu button.wb-menu-btn { background: none; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); cursor: pointer; font-size: 11px; padding: 3px 8px; width: 100%; text-align: left; }
+#wb-col-menu button.wb-menu-btn:hover { border-color: var(--accent); color: var(--accent-text, var(--text-primary)); }
+#wb-col-menu button.wb-menu-ico { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 0 3px; }
+#wb-col-menu button.wb-menu-ico:hover { color: var(--text-primary); }
 tr.wb-flash td { animation: wbflash 1.2s ease-out; }
 @keyframes wbflash { 0% { background: rgba(229,67,46,0.5); } 100% { background: transparent; } }
 #split-divider { display: none; flex: 0 0 5px; cursor: col-resize; background: var(--border-color); }
@@ -1785,6 +1796,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <button class="topbar-btn" onclick="wbAddMeasuredItem(null)" title="Add a measured line — creates the item and arms it so you can start measuring on the plan straight away">+ Measured line</button>
       <button class="topbar-btn" onclick="wbAddManualItem(null)" title="Add a manual line — typed quantity, not measured from the drawings (prelims, PC sums, allowances)">+ Manual line</button>
       <div class="separator"></div>
+      <button class="topbar-btn" onclick="wbColumnsMenu(event)" title="Columns — hide or show a column, rename it, add your own, reset the widths. You can also right-click any heading in the table, or drag a heading's right edge to resize it.">▦ Columns</button>
       <button class="topbar-btn" onclick="wbSetAll(false)" title="Expand every package">Expand all</button>
       <button class="topbar-btn" onclick="wbSetAll(true)" title="Collapse to packages">Collapse all</button>
       <div class="separator"></div>
@@ -2020,7 +2032,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.29';
+const APP_VERSION = 'v3.30';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -3686,12 +3698,12 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
           const known = new Set(takeoffItems.map(i => i.id));
           const newOnes = embedded.filter(i => i && !known.has(i.id));
           if (newOnes.length && confirm('"' + (filename || 'This PDF') + '" carries its own embedded estimate (' + newOnes.length + ' item(s) not in your workbook).\n\nImport them into the workbook "' + workbookFileName + '"?\n\n(Cancel ignores the embedded copy — the workbook stays as-is.)')) {
-            mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings);
+            mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings, restoredProject.wbUserColumns);
             markWorkbookFileDirty();
           }
         }
       } else {
-        mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings);
+        mergeTakeoffIntoJob(restoredProject.takeoffItems, restoredProject.takeoffZones, restoredProject.takeoffHeadings, restoredProject.wbUserColumns);
       }
       if (Array.isArray(restoredProject.viewports)) viewports = restoredProject.viewports;
       if (restoredProject.sheetLabels && typeof restoredProject.sheetLabels === 'object') sheetLabels = restoredProject.sheetLabels;
@@ -9033,7 +9045,7 @@ function _findShapeDoc(annId) {
 // Merge a loaded file's takeoff into the job estimate. Empty job adopts the
 // file's items wholesale; otherwise items/zones the job doesn't have (by id)
 // are appended, so re-opening files saved together reunites one estimate.
-function mergeTakeoffIntoJob(items, zones, headings) {
+function mergeTakeoffIntoJob(items, zones, headings, userCols) {
   let added = 0;
   if (Array.isArray(items)) {
     if (!takeoffItems.length) { takeoffItems = items; added = -1; }
@@ -9050,6 +9062,7 @@ function mergeTakeoffIntoJob(items, zones, headings) {
   if (Array.isArray(headings)) {
     headings.forEach(hd => { if (hd && !takeoffHeadings.includes(hd)) takeoffHeadings.push(hd); });
   }
+  wbMergeUserCols(userCols);   // v3.30 — adopt any user column the file's items are filled in under
   if (added > 0) showToast(added + ' takeoff item(s) from this file added to the job estimate');
 }
 
@@ -10238,7 +10251,8 @@ function _workbookPayload() {
   return JSON.stringify({
     app: 'Datum', kind: 'workbook', version: 1,
     savedAt: new Date().toISOString(),
-    takeoffItems, takeoffZones, takeoffHeadings
+    takeoffItems, takeoffZones, takeoffHeadings,
+    wbUserColumns: wbUserColsPayload()      // v3.30 — the estimate's own columns
   }, null, 1);
 }
 function _wbFileChipRefresh() {
@@ -10296,6 +10310,7 @@ async function openWorkbookFile() {
     takeoffItems = data.takeoffItems;
     takeoffZones = Array.isArray(data.takeoffZones) ? data.takeoffZones : [];
     takeoffHeadings = Array.isArray(data.takeoffHeadings) ? data.takeoffHeadings : [];
+    wbApplyUserCols(Array.isArray(data.wbUserColumns) ? data.wbUserColumns : []);
     activeTakeoffItemId = null; activeTakeoffZoneId = null; highlightTakeoffItemId = null; highlightTakeoffPkgKey = null; highlightTakeoffShapeId = null;
     workbookFileHandle = h;
     workbookFileName = file.name;
@@ -10370,10 +10385,267 @@ function refreshWorkbook() {
   const body = document.getElementById('workbook-body');
   if (!body || !workbookOpen) return;
   body.innerHTML = getWorkbookHTML();
+  wbApplyLayout();                 // v3.30 — column widths after every render
   const status = document.getElementById('wb-status');
   if (status) status.textContent = openDocs.length > 1
     ? '— one estimate across ' + openDocs.length + ' documents'
     : (takeoffItems.length ? '— ' + takeoffItems.length + ' item(s)' : '');
+}
+
+// ============================================================
+// WORKBOOK COLUMNS (v3.30)
+// The estimate's headings are a real control surface. Every heading has a
+// drag grip on its right edge, and the Columns menu (▦ in the toolbar, or
+// right-click any heading) hides, restores, renames, adds and deletes
+// columns. Built-in columns can be hidden but never deleted; USER columns
+// are free text held on the item itself (item.cols[colId]), so they save
+// with the estimate and ride into the Excel and CSV exports.
+//
+// Split of responsibility, deliberately:
+//   • widths + which columns are hidden  → per machine (localStorage), a
+//     view preference that shouldn't follow a file to someone else's screen;
+//   • the user columns themselves        → travel WITH the estimate (PDF,
+//     .datumwb, autosave, undo), because their cells are data.
+//
+// Layout is table-layout:fixed so a dragged width is the width you get.
+// Description has no stored width by default and absorbs whatever is left
+// (wbApplyLayout); drag its grip and it pins like any other column.
+// ============================================================
+const WB_COL_DEFAULTS = [
+  { id: 'code',     label: 'Code',        w: 52,  left: true,  tip: 'Line number — follows the heading tree' },
+  { id: 'desc',     label: 'Description', w: 0,   left: true,  always: true, tip: 'Item description — always shown; with no width of its own it takes up whatever space is left' },
+  { id: 'unit',     label: 'Unit',        w: 44,  tip: 'Unit of measure' },
+  { id: 'qty',      label: 'Qty',         w: 96,  tip: 'Quantity — measured off the drawings, or typed on a manual line' },
+  { id: 'rate',     label: 'Rate',        w: 84,  tip: 'Rate per unit' },
+  { id: 'mu',       label: 'MU %',        w: 52,  tip: 'Markup %' },
+  { id: 'amount',   label: 'Amount',      w: 104, tip: 'Qty × Rate × (1 + MU%)' },
+  { id: 'comments', label: 'Comments',    w: 150, left: true, tip: 'Notes per line — saved with the estimate and included in the Excel export' },
+  { id: 'act',      label: '',            w: 66,  tip: 'Row buttons — measure, hide, highlight, delete' }
+];
+let wbCols = WB_COL_DEFAULTS.map(c => ({ ...c }));
+let _wbGrip = null;
+
+function wbColDef(id) { return wbCols.find(c => c.id === id); }
+function wbColVis(id) { const c = wbColDef(id); return !!c && !c.hidden; }
+// How many of these columns are on screen — every colspan in the table is
+// computed with this, so hiding a column can never knock a row out of line.
+function wbSpan(ids) { return ids.reduce((t, id) => t + (wbColVis(id) ? 1 : 0), 0); }
+function wbUserCols() { return wbCols.filter(c => c.custom); }
+function wbVisUserCols() { return wbCols.filter(c => c.custom && !c.hidden); }
+function wbUserBlanks() { return wbVisUserCols().map(c => `<td data-c="${c.id}"></td>`).join(''); }
+function wbUserItemCells(item) {
+  return wbVisUserCols().map(c => `<td data-c="${c.id}"><input class="wb-input" style="font-size:10.5px" value="${escapeHtml((item.cols && item.cols[c.id]) || '')}" placeholder="…"
+    title="${escapeHtml(c.label)} — your own column; saved with the estimate and exported to Excel"
+    onchange="wbSetUserCell('${item.id}','${c.id}',this.value)"></td>`).join('');
+}
+function wbSetUserCell(itemId, colId, v) {
+  const it = getTakeoffItem(itemId);
+  if (!it) return;
+  if (!it.cols) it.cols = {};
+  it.cols[colId] = v;
+  saveToHistory();   // no re-render: the value is already in the input
+}
+function _wbInsertCol(col) {
+  const ai = wbCols.findIndex(c => c.id === 'act');   // user columns sit just before the buttons
+  if (ai < 0) wbCols.push(col); else wbCols.splice(ai, 0, col);
+}
+
+// ---- persistence ----
+function wbSaveColPrefs() {
+  try {
+    localStorage.setItem('datum-wb-cols', JSON.stringify(wbCols.map(c =>
+      ({ id: c.id, label: c.label, w: c.w, hidden: !!c.hidden, custom: !!c.custom }))));
+  } catch (e) {}
+}
+function wbRestoreColPrefs() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('datum-wb-cols') || 'null'); } catch (e) {}
+  if (Array.isArray(saved) && saved.length) wbColsFromList(saved);
+}
+// Rebuild wbCols from a saved list: the built-ins always come from the
+// defaults (so a new column added to the app appears for existing users) and
+// only take width/hidden from the save; user columns are appended in order.
+function wbColsFromList(list) {
+  const byId = {};
+  list.forEach(c => { if (c && c.id) byId[c.id] = c; });
+  const out = WB_COL_DEFAULTS.map(d => {
+    const sv = byId[d.id] || {};
+    return { ...d, w: (typeof sv.w === 'number' ? sv.w : d.w), hidden: !d.always && !!sv.hidden };
+  });
+  wbCols = out;
+  list.forEach(c => {
+    if (!c || !c.id || !c.custom || wbColDef(c.id)) return;
+    _wbInsertCol({ id: c.id, label: c.label || 'Column', w: (typeof c.w === 'number' ? c.w : 120), hidden: !!c.hidden, left: true, custom: true });
+  });
+}
+// What travels with the estimate (file / autosave / undo snapshot)
+function wbUserColsPayload() { return wbUserCols().map(c => ({ id: c.id, label: c.label, w: c.w, custom: true })); }
+// Opening a file: adopt any user column this session doesn't have yet, so the
+// cells stored on its items have a heading to appear under.
+function wbMergeUserCols(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  let added = 0;
+  list.forEach(c => {
+    if (!c || !c.id || wbColDef(c.id)) return;
+    _wbInsertCol({ id: c.id, label: c.label || 'Column', w: (typeof c.w === 'number' ? c.w : 120), left: true, custom: true });
+    added++;
+  });
+  if (added) { wbSaveColPrefs(); if (workbookOpen) refreshWorkbook(); }
+}
+// Undo/redo: user columns are part of the estimate, so a snapshot replaces
+// them outright (local widths/hidden for surviving columns are kept).
+function wbApplyUserCols(list) {
+  if (!Array.isArray(list)) return;
+  const prev = {};
+  wbUserCols().forEach(c => { prev[c.id] = c; });
+  wbCols = wbCols.filter(c => !c.custom);
+  list.forEach(c => {
+    if (!c || !c.id) return;
+    const p = prev[c.id];
+    _wbInsertCol({ id: c.id, label: c.label || 'Column', w: (p ? p.w : (typeof c.w === 'number' ? c.w : 120)), hidden: p ? !!p.hidden : false, left: true, custom: true });
+  });
+  wbSaveColPrefs();
+}
+
+// ---- layout: widths applied after every render ----
+function wbApplyLayout() {
+  const t = document.getElementById('wb-table');
+  if (!t) return;
+  const body = document.getElementById('workbook-body');
+  const avail = Math.max(240, (body ? body.clientWidth : 900) - 2);
+  const vis = wbCols.filter(c => !c.hidden);
+  let sum = 0, flex = null;
+  vis.forEach(c => { if (c.id === 'desc' && !(c.w > 0)) flex = c; else sum += (c.w > 0 ? c.w : 90); });
+  const flexW = flex ? Math.max(150, avail - sum) : 0;
+  t.style.width = (sum + flexW) + 'px';
+  vis.forEach(c => {
+    const th = t.querySelector('th[data-c="' + c.id + '"]');
+    if (th) th.style.width = ((c === flex) ? flexW : (c.w > 0 ? c.w : 90)) + 'px';
+  });
+}
+function wbColStyleTag() {
+  const hid = wbCols.filter(c => c.hidden).map(c => `#wb-table [data-c="${c.id}"]`);
+  return hid.length ? `<style>${hid.join(',')}{display:none}</style>` : '';
+}
+function wbHeadHTML() {
+  return wbCols.map(c => {
+    const tip = escapeHtml((c.tip || c.label || '') + ' — drag the right edge to resize; right-click for the column list');
+    return `<th data-c="${c.id}"${c.left ? ' class="wb-left"' : ''} title="${tip}" oncontextmenu="wbColumnsMenu(event)">${escapeHtml(c.label || '')}<span class="wb-grip" onmousedown="wbGripDown(event,'${c.id}')" ondblclick="wbResetColWidth('${c.id}')"></span></th>`;
+  }).join('');
+}
+
+// ---- drag to resize ----
+function wbGripDown(ev, id) {
+  ev.preventDefault(); ev.stopPropagation();
+  const th = ev.target.parentElement;
+  if (!wbColDef(id) || !th) return;
+  _wbGrip = { id, startX: ev.clientX, startW: th.getBoundingClientRect().width };
+  ev.target.classList.add('dragging');
+  document.addEventListener('mousemove', _wbGripMove);
+  document.addEventListener('mouseup', _wbGripUp);
+}
+function _wbGripMove(e) {
+  if (!_wbGrip) return;
+  const c = wbColDef(_wbGrip.id);
+  if (c) c.w = Math.max(28, Math.round(_wbGrip.startW + (e.clientX - _wbGrip.startX)));
+  wbApplyLayout();
+}
+function _wbGripUp() {
+  document.removeEventListener('mousemove', _wbGripMove);
+  document.removeEventListener('mouseup', _wbGripUp);
+  document.querySelectorAll('.wb-grip.dragging').forEach(g => g.classList.remove('dragging'));
+  if (_wbGrip) { _wbGrip = null; wbSaveColPrefs(); }
+}
+function wbResetColWidth(id) {
+  const c = wbColDef(id);
+  if (!c) return;
+  const d = WB_COL_DEFAULTS.find(x => x.id === id);
+  c.w = d ? d.w : 120;
+  wbSaveColPrefs(); wbApplyLayout();
+}
+
+// ---- the Columns menu ----
+function wbColumnsMenu(ev) {
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const open = document.getElementById('wb-col-menu');
+  if (open) { _wbCloseColMenu(); return; }
+  const m = document.createElement('div');
+  m.id = 'wb-col-menu';
+  m.style.cssText = 'position:fixed;z-index:9999;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;box-shadow:0 10px 28px rgba(0,0,0,.45);padding:6px 0;min-width:224px;font-size:11.5px;color:var(--text-primary)';
+  let h = '<div style="padding:3px 12px 6px;font-size:9.5px;letter-spacing:.5px;color:var(--text-muted);font-weight:700;text-transform:uppercase">Columns</div>';
+  wbCols.forEach(c => {
+    const nm = c.id === 'act' ? 'Row buttons' : (c.label || '(untitled)');
+    h += `<div style="display:flex;align-items:center;gap:5px;padding:2px 10px">
+      <label style="flex:1;display:flex;align-items:center;gap:6px;${c.always ? 'opacity:.5;cursor:default' : 'cursor:pointer'}"${c.always ? ' title="Description is always shown"' : ''}>
+        <input type="checkbox" ${c.hidden ? '' : 'checked'} ${c.always ? 'disabled' : ''} onchange="wbToggleCol('${c.id}')" style="margin:0">
+        <span>${escapeHtml(nm)}</span>${c.custom ? '<span style="color:var(--text-muted);font-size:9px">yours</span>' : ''}
+      </label>
+      ${c.custom ? `<button class="wb-menu-ico" onclick="wbRenameCol('${c.id}')" title="Rename this column">✎</button><button class="wb-menu-ico" onclick="wbDeleteCol('${c.id}')" title="Delete this column and its cells">×</button>` : ''}
+    </div>`;
+  });
+  h += `<div style="border-top:1px solid var(--border-color);margin:6px 0 5px"></div>
+    <div style="padding:2px 10px 3px"><button class="wb-menu-btn" onclick="wbAddCol()" title="Add your own free-text column — it saves with the estimate and exports to Excel">＋ Add column</button></div>
+    <div style="padding:2px 10px 3px"><button class="wb-menu-btn" onclick="wbResetCols()" title="Back to the default widths, with every column showing">↺ Reset widths &amp; show all</button></div>
+    <div style="padding:4px 12px 2px;font-size:9.5px;color:var(--text-muted);line-height:1.5">Drag a heading's right edge to resize · double-click it to reset</div>`;
+  m.innerHTML = h;
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  const x = (ev && ev.clientX) || 200, y = (ev && ev.clientY) || 200;
+  m.style.left = Math.max(6, Math.min(x, window.innerWidth - r.width - 8)) + 'px';
+  m.style.top = Math.max(6, Math.min(y + 4, window.innerHeight - r.height - 8)) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', _wbColMenuAway), 0);
+}
+function _wbCloseColMenu() {
+  const m = document.getElementById('wb-col-menu');
+  if (m) m.remove();
+  document.removeEventListener('mousedown', _wbColMenuAway);
+}
+function _wbColMenuAway(e) {
+  const m = document.getElementById('wb-col-menu');
+  if (!m) { document.removeEventListener('mousedown', _wbColMenuAway); return; }
+  if (!m.contains(e.target)) _wbCloseColMenu();
+}
+function wbToggleCol(id) {
+  const c = wbColDef(id);
+  if (!c || c.always) return;
+  c.hidden = !c.hidden;
+  wbSaveColPrefs(); refreshWorkbook();
+}
+function wbAddCol() {
+  const v = prompt('New column heading:\n\n(A free-text column on every line — saved with the estimate and exported to Excel.)', 'Notes');
+  if (v === null) return;
+  const label = v.trim();
+  if (!label) return;
+  _wbInsertCol({ id: 'uc' + Date.now().toString(36) + Math.floor(Math.random() * 46656).toString(36), label, w: 120, left: true, custom: true });
+  wbSaveColPrefs(); saveToHistory(); _wbCloseColMenu(); refreshWorkbook();
+  showToast('Column "' + label + '" added');
+}
+function wbRenameCol(id) {
+  const c = wbColDef(id);
+  if (!c) return;
+  const v = prompt('Rename column:', c.label);
+  if (v === null || !v.trim()) return;
+  c.label = v.trim();
+  wbSaveColPrefs(); saveToHistory(); _wbCloseColMenu(); refreshWorkbook();
+}
+function wbDeleteCol(id) {
+  const c = wbColDef(id);
+  if (!c || !c.custom) return;
+  const used = takeoffItems.filter(it => it.cols && it.cols[id] !== undefined && it.cols[id] !== '').length;
+  if (!confirm('Delete the column "' + c.label + '"?' + (used ? '\n\n' + used + ' line(s) have text in it — that text goes too (Ctrl+Z brings it back).' : ''))) return;
+  wbCols = wbCols.filter(x => x.id !== id);
+  takeoffItems.forEach(it => { if (it.cols) delete it.cols[id]; });
+  wbSaveColPrefs(); saveToHistory(); _wbCloseColMenu(); refreshWorkbook();
+  showToast('Column "' + c.label + '" deleted');
+}
+function wbResetCols() {
+  wbCols.forEach(c => {
+    const d = WB_COL_DEFAULTS.find(x => x.id === c.id);
+    c.w = d ? d.w : 120;
+    c.hidden = false;
+  });
+  wbSaveColPrefs(); _wbCloseColMenu(); refreshWorkbook();
+  showToast('Columns reset');
 }
 
 function getWorkbookHTML() {
@@ -10396,7 +10668,7 @@ function getWorkbookHTML() {
   const measRows = (item, depth) => {
     const entries = allTakeoffShapes(item.id);
     if (!entries.length) {
-      return `<tr class="wb-meas"><td></td><td colspan="7" style="padding-left:${22 + (depth + 1) * 14}px;color:var(--text-muted)">no shapes measured yet</td><td></td></tr>`;
+      return `<tr class="wb-meas"><td data-c="code"></td><td data-c="desc" colspan="${wbSpan(['desc','unit','qty','rate','mu','amount','comments'])}" style="padding-left:${22 + (depth + 1) * 14}px;color:var(--text-muted)">no shapes measured yet</td>${wbUserBlanks()}<td data-c="act"></td></tr>`;
     }
     return entries.map(({ a, docIdx }) => {
       const zone = a.zoneId && getTakeoffZone(a.zoneId);
@@ -10406,11 +10678,11 @@ function getWorkbookHTML() {
       const shLit = highlightTakeoffShapeId === a.id;
       const shBtns = `<button onclick="event.stopPropagation();toggleTakeoffShapeHidden('${a.id}')" title="${shHid ? 'This measurement is HIDDEN on the drawing — click to show it again' : 'Hide just this measurement on the drawing'}" style="color:${shHid ? 'var(--warning)' : 'var(--text-muted)'}">${shHid ? '⊘' : '👁'}</button><button onclick="event.stopPropagation();toggleTakeoffShapeHighlight(${docIdx},'${a.id}')" title="Highlight just this measurement on the drawing" style="color:${shLit ? (a.color || item.color) : 'var(--text-muted)'}">${shLit ? '◉' : '◎'}</button>`;
       return `<tr class="wb-meas" data-ann-id="${a.id}" onclick="jumpToTakeoffShape(${docIdx},'${a.id}')" title="Click to jump to this shape on the drawing"${shHid ? ' style="opacity:.5"' : ''}>
-        <td></td>
-        <td colspan="2" style="padding-left:${22 + (depth + 1) * 14}px">${multiDoc ? escapeHtml(_docShortLabel(docIdx)) + ' · ' : ''}p${a.page + 1}${zone ? ' · ' + escapeHtml(zone.name) : ''}${a.isDeduction ? ' · <span style="color:#e74c3c">deduct</span>' : ''}${shared ? ' <span title="Shared with other items">⇄</span>' : ''}</td>
-        <td class="wb-num">${escapeHtml((a.label || a.type))}</td>
-        <td></td><td></td><td></td><td></td>
-        <td class="wb-act">${local
+        <td data-c="code"></td>
+        <td data-c="desc" colspan="${wbSpan(['desc','unit'])}" style="padding-left:${22 + (depth + 1) * 14}px">${multiDoc ? escapeHtml(_docShortLabel(docIdx)) + ' · ' : ''}p${a.page + 1}${zone ? ' · ' + escapeHtml(zone.name) : ''}${a.isDeduction ? ' · <span style="color:#e74c3c">deduct</span>' : ''}${shared ? ' <span title="Shared with other items">⇄</span>' : ''}</td>
+        <td data-c="qty" class="wb-num">${escapeHtml((a.label || a.type))}</td>
+        <td data-c="rate"></td><td data-c="mu"></td><td data-c="amount"></td><td data-c="comments"></td>${wbUserBlanks()}
+        <td data-c="act" class="wb-act">${local
           ? `<button onclick="event.stopPropagation();toggleShapeDeduction('${a.id}')" title="Flip deduction">±</button><button onclick="event.stopPropagation();unassignTakeoffShape('${a.id}','${item.id}')" title="Unlink from this item">⤴</button>`
           : `<span title="In ${escapeHtml(_docLabel(docIdx))} — click the row to jump there">↗</span>`}${shBtns}</td>
       </tr>`;
@@ -10427,8 +10699,8 @@ function getWorkbookHTML() {
     const isLit = item.id === highlightTakeoffItemId;
     const typeTag = isMan ? 'M' : (isAsm ? 'AS' : ({ length: 'L', area: 'A', vertical: 'V', volume: 'V³', count: 'C' }[item.resultType] || '?'));
     let h = `<tr class="wb-item" data-item-id="${item.id}">
-      <td class="wb-code">${code}</td>
-      <td style="padding-left:${8 + depth * 14}px"><div style="display:flex;align-items:center;gap:5px">
+      <td data-c="code" class="wb-code">${code}</td>
+      <td data-c="desc" style="padding-left:${8 + depth * 14}px"><div style="display:flex;align-items:center;gap:5px">
         ${isMan
           ? `<span class="wb-exp" style="cursor:default" title="Manual entry — typed quantity, no drawing shapes">•</span>`
           : `<button class="wb-exp" onclick="wbToggleItem('${item.id}')" title="${exp ? 'Hide' : 'Show'} this item's measurements (${r.shapes})">${exp ? '▾' : '▸'}</button>`}
@@ -10446,23 +10718,24 @@ function getWorkbookHTML() {
         </select>
         <button class="wb-exp" style="width:auto" onclick="wbEditPackage('${item.id}')" title="Move to another package — current: ${escapeHtml(item.trade || 'General')}">✎</button>
       </div></td>
-      <td class="wb-num" style="color:var(--text-secondary)">${isMan
+      <td data-c="unit" class="wb-num" style="color:var(--text-secondary)">${isMan
         ? `<input class="wb-input" style="width:46px;text-align:right" value="${escapeHtml(item.unit || '')}" placeholder="item" title="Unit — item, weeks, visits..." onchange="updateTakeoffItemField('${item.id}','unit',this.value)">`
         : unit}</td>
-      <td class="wb-num" style="color:${item.color};font-weight:700" title="${isMan ? 'Typed quantity' : r.shapes + ' shape(s)' + (r.uncal ? ' — check calibration / height-depth!' : '')}">${isMan
+      <td data-c="qty" class="wb-num" style="color:${item.color};font-weight:700" title="${isMan ? 'Typed quantity' : r.shapes + ' shape(s)' + (r.uncal ? ' — check calibration / height-depth!' : '')}">${isMan
         ? `<input class="wb-input wb-num-input" type="number" step="0.01" value="${item.manualQty || ''}" placeholder="qty" onchange="updateTakeoffItemField('${item.id}','manualQty',this.value)">`
         : formatTakeoffQty(item, r.qty) + (r.uncal ? ' ⚠' : '')}</td>
-      <td class="wb-num">${isAsm
+      <td data-c="rate" class="wb-num">${isAsm
         ? `<span style="color:var(--text-muted)" title="Assembly — priced from its parts">parts</span>`
         : builtUp
           ? `<span title="Built up from rate components (edit in the Takeoff panel)">${formatMoney(effectiveTakeoffRate(item))}</span>`
           : `<input class="wb-input wb-num-input" type="number" step="0.01" value="${item.rate || ''}" placeholder="rate" onchange="updateTakeoffItemField('${item.id}','rate',this.value)">`}</td>
-      <td class="wb-num"><input class="wb-input wb-num-input" style="width:44px" type="number" step="0.5" value="${item.markup || ''}" placeholder="0" title="Markup %" onchange="updateTakeoffItemField('${item.id}','markup',this.value)"></td>
-      <td class="wb-num" style="color:var(--success, #4ade80)">${r.amount > 0 ? formatMoney(r.amount) : ''}</td>
-      <td><input class="wb-input" style="font-size:10.5px" value="${escapeHtml(item.comment || '')}" placeholder="…"
+      <td data-c="mu" class="wb-num"><input class="wb-input wb-num-input" style="width:44px" type="number" step="0.5" value="${item.markup || ''}" placeholder="0" title="Markup %" onchange="updateTakeoffItemField('${item.id}','markup',this.value)"></td>
+      <td data-c="amount" class="wb-num" style="color:var(--success, #4ade80)">${r.amount > 0 ? formatMoney(r.amount) : ''}</td>
+      <td data-c="comments"><input class="wb-input" style="font-size:10.5px" value="${escapeHtml(item.comment || '')}" placeholder="…"
            title="Comment / note for this line — saved with the estimate and included in the Excel export"
            onchange="updateTakeoffItemField('${item.id}','comment',this.value)"></td>
-      <td class="wb-act">
+      ${wbUserItemCells(item)}
+      <td data-c="act" class="wb-act">
         ${isMan ? '' : `<button onclick="setActiveTakeoffItem('${item.id}')" title="${activeTakeoffItemId === item.id ? 'Measuring this item now — click to stop' : 'Measure — arm this item and draw its quantity straight onto the plan'}" style="color:${activeTakeoffItemId === item.id ? item.color : 'var(--text-muted)'};font-weight:${activeTakeoffItemId === item.id ? '700' : '400'}">${activeTakeoffItemId === item.id ? '■' : '✏'}</button>`}
         ${isMan ? '' : `<button onclick="toggleTakeoffItemShapes('${item.id}')" title="${hiddenTakeoffItemIds.has(item.id) ? 'Shapes HIDDEN — click to show this item’s shapes again' : 'Hide this item’s shapes on the drawings — declutter while measuring another trade'}" style="color:${hiddenTakeoffItemIds.has(item.id) ? 'var(--warning)' : 'var(--text-muted)'}">${hiddenTakeoffItemIds.has(item.id) ? '⊘' : '👁'}</button>`}
         ${isMan ? '' : `<button onclick="toggleTakeoffHighlight('${item.id}')" title="Highlight this item's shapes on the drawing" style="color:${isLit ? item.color : 'var(--text-muted)'}">${isLit ? '◉' : '◎'}</button>`}
@@ -10472,15 +10745,16 @@ function getWorkbookHTML() {
     if (isAsm) {
       r.subRows.forEach(s => {
         h += `<tr class="wb-part">
-          <td></td>
-          <td style="padding-left:${22 + (depth + 1) * 14}px">– ${escapeHtml(s.name)} <span style="color:var(--text-muted);font-size:9.5px">(${SUBITEM_BASIS_LABELS[s.basis] || s.basis} × ${s.factor})</span></td>
-          <td class="wb-num">${escapeHtml(s.unit || '')}</td>
-          <td class="wb-num">${s.qty.toFixed(2)}</td>
-          <td class="wb-num">${s.rate > 0 ? formatMoney(s.rate) : ''}</td>
-          <td></td>
-          <td class="wb-num">${s.rate > 0 ? formatMoney(s.amount) : ''}</td>
-          <td></td>
-          <td></td>
+          <td data-c="code"></td>
+          <td data-c="desc" style="padding-left:${22 + (depth + 1) * 14}px">– ${escapeHtml(s.name)} <span style="color:var(--text-muted);font-size:9.5px">(${SUBITEM_BASIS_LABELS[s.basis] || s.basis} × ${s.factor})</span></td>
+          <td data-c="unit" class="wb-num">${escapeHtml(s.unit || '')}</td>
+          <td data-c="qty" class="wb-num">${s.qty.toFixed(2)}</td>
+          <td data-c="rate" class="wb-num">${s.rate > 0 ? formatMoney(s.rate) : ''}</td>
+          <td data-c="mu"></td>
+          <td data-c="amount" class="wb-num">${s.rate > 0 ? formatMoney(s.amount) : ''}</td>
+          <td data-c="comments"></td>
+          ${wbUserBlanks()}
+          <td data-c="act"></td>
         </tr>`;
       });
     }
@@ -10495,11 +10769,12 @@ function getWorkbookHTML() {
     const pkgHid = pkgShapesHidden(node.key);
     const pkgLit = highlightTakeoffPkgKey === node.key;
     rows += `<tr class="wb-pkg" onclick="wbTogglePkgIdx(${idx})" title="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(node.key)}">
-      <td class="wb-code">${code}</td>
-      <td colspan="5" style="padding-left:${8 + depth * 14}px">${collapsed ? '▸' : '▾'} ${escapeHtml(node.name.toUpperCase())} <span style="color:var(--text-muted);font-weight:400;font-size:10px">(${node.items.length + node.children.length ? countPkgItems(node) + ' items' : 'empty'})</span></td>
-      <td class="wb-num">${amt > 0 ? formatMoney(amt) : ''}</td>
-      <td></td>
-      <td class="wb-act" onclick="event.stopPropagation()">
+      <td data-c="code" class="wb-code">${code}</td>
+      <td data-c="desc" colspan="${wbSpan(['desc','unit','qty','rate','mu'])}" style="padding-left:${8 + depth * 14}px">${collapsed ? '▸' : '▾'} ${escapeHtml(node.name.toUpperCase())} <span style="color:var(--text-muted);font-weight:400;font-size:10px">(${node.items.length + node.children.length ? countPkgItems(node) + ' items' : 'empty'})</span></td>
+      <td data-c="amount" class="wb-num">${amt > 0 ? formatMoney(amt) : ''}</td>
+      <td data-c="comments"></td>
+      ${wbUserBlanks()}
+      <td data-c="act" class="wb-act" onclick="event.stopPropagation()">
         <button onclick="wbAddMeasuredItem(_wbPkgKeys[${idx}])" title="Add a MEASURED line in this package — arms it so you can draw on the plan straight away">＋▱</button>
         <button onclick="toggleTakeoffPkgShapes(${idx})" title="${pkgHid ? 'Shapes under this heading are HIDDEN — click to show them again' : 'Hide every measurement under this heading on the drawings'}" style="color:${pkgHid ? 'var(--warning)' : 'var(--text-muted)'}">${pkgHid ? '⊘' : '👁'}</button>
         <button onclick="toggleTakeoffPkgHighlight(${idx})" title="Highlight every measurement under this heading on the drawing" style="color:${pkgLit ? 'var(--warning)' : 'var(--text-muted)'}">${pkgLit ? '◉' : '◎'}</button>
@@ -10517,21 +10792,12 @@ function getWorkbookHTML() {
 
   tree.children.forEach((c, i) => { grand += pkgAmount(c); walk(c, 0, String(i + 1)); });
 
-  return `<table id="wb-table">
-    <thead><tr>
-      <th class="wb-left" style="width:52px">Code</th>
-      <th class="wb-left">Description</th>
-      <th style="width:44px">Unit</th>
-      <th style="width:96px">Qty</th>
-      <th style="width:84px">Rate</th>
-      <th style="width:52px" title="Markup %">MU %</th>
-      <th style="width:104px">Amount</th>
-      <th class="wb-left" style="width:150px" title="Notes per line — saved with the estimate and included in the Excel export">Comments</th>
-      <th style="width:66px"></th>
-    </tr></thead>
+  return `${wbColStyleTag()}<table id="wb-table">
+    <thead><tr>${wbHeadHTML()}</tr></thead>
     <tbody>${rows}
-      <tr class="wb-total"><td></td><td>ESTIMATE TOTAL</td><td></td><td></td><td></td><td></td>
-        <td class="wb-num" style="color:var(--success, #4ade80)">${grand > 0 ? formatMoney(grand) : '—'}</td><td></td><td></td></tr>
+      <tr class="wb-total"><td data-c="code"></td><td data-c="desc" colspan="${wbSpan(['desc','unit','qty','rate','mu'])}">ESTIMATE TOTAL</td>
+        <td data-c="amount" class="wb-num" style="color:var(--success, #4ade80)">${grand > 0 ? formatMoney(grand) : '—'}</td>
+        <td data-c="comments"></td>${wbUserBlanks()}<td data-c="act"></td></tr>
     </tbody></table>`;
 }
 
@@ -10605,6 +10871,10 @@ function restoreCrosshairState() {
 
 // Restore persisted dock state (called once from DOMContentLoaded)
 function restoreWorkbookState() {
+  try { wbRestoreColPrefs(); } catch (e) {}      // v3.30 — remembered column widths / hidden columns
+  try {
+    window.addEventListener('resize', () => { if (workbookOpen) wbApplyLayout(); });
+  } catch (e) {}
   try {
     // Position first — setWorkbookDock applies the saved size for that axis
     setWorkbookDock(localStorage.getItem('bdm-workbook-dock') === 'left' ? 'left' : 'bottom', true);
@@ -10667,6 +10937,7 @@ function wireWorkbookResizer() {
     if (from.left) {
       const w = Math.max(220, Math.min(Math.round(window.innerWidth * 0.7), from.w + (e.clientX - from.x)));
       dock.style.width = w + 'px';
+      if (typeof wbApplyLayout === 'function') wbApplyLayout();   // v3.30 — Description re-fills the new width
     } else {
       const h = Math.max(120, Math.min(Math.round(window.innerHeight * 0.75), from.h + (from.y - e.clientY)));
       dock.style.height = h + 'px';
@@ -11514,16 +11785,19 @@ function applyTableEditor() {
 
 function exportTakeoffCSV() {
   if (takeoffItems.length === 0) { showToast('No takeoff items yet'); return; }
-  let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Markup %,Amount,Shapes,Deductions\n';
+  const uCols = wbUserCols();   // v3.30 — user columns tail the standard set
+  const csvQ = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  let csv = 'Trade,Item,Type,Height-Depth mm,Unit,Quantity,Rate,Markup %,Amount,Shapes,Deductions'
+          + uCols.map(c => ',' + csvQ(c.label)).join('') + '\n';
   takeoffItems.forEach(item => {
     const { qty, shapes, amount, rate, subRows } = computeTakeoffQty(item);
     const deds = allTakeoffShapes(item.id).filter(x => x.a.isDeduction).length;
     const unit = takeoffItemUnit(item);
     const qv = item.resultType === 'count' ? qty : qty.toFixed(3);
     const typeTxt = item.manual ? 'manual' : (subRows ? 'assembly ('+item.resultType+')' : item.resultType);
-    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${typeTxt},${item.factor||''},${unit},${qv},${subRows?'':(rate||'')},${item.markup||''},${amount>0?amount.toFixed(2):''},${shapes},${deds}\n`;
+    csv += `"${(item.trade||'General').replace(/"/g,'""')}","${item.name.replace(/"/g,'""')}",${typeTxt},${item.factor||''},${unit},${qv},${subRows?'':(rate||'')},${item.markup||''},${amount>0?amount.toFixed(2):''},${shapes},${deds}${uCols.map(c => ',' + csvQ(item.cols && item.cols[c.id])).join('')}\n`;
     if (subRows) subRows.forEach(s => {
-      csv += `"${(item.trade||'General').replace(/"/g,'""')}","  - ${s.name.replace(/"/g,'""')}",part (${SUBITEM_BASIS_LABELS[s.basis]||s.basis} x ${s.factor}),,${s.unit},${s.qty.toFixed(3)},${s.rate||''},,${s.rate>0?s.amount.toFixed(2):''},,\n`;
+      csv += `"${(item.trade||'General').replace(/"/g,'""')}","  - ${s.name.replace(/"/g,'""')}",part (${SUBITEM_BASIS_LABELS[s.basis]||s.basis} x ${s.factor}),,${s.unit},${s.qty.toFixed(3)},${s.rate||''},,${s.rate>0?s.amount.toFixed(2):''},,${uCols.map(() => ',').join('')}\n`;
     });
   });
   downloadBlob(csv, 'text/csv', currentFilename.replace(/\.pdf$/i, '') + '_takeoff.csv');
@@ -11700,7 +11974,12 @@ function _buildEstimateSheet() {
   takeoffItems.forEach(it => { R[it.id] = computeTakeoffQty(it); });
   const tree = buildTakeoffTree();
   const rows = [];
-  rows.push([{ v: 'Code', s: 2 }, { v: 'Description', s: 2 }, { v: 'Unit', s: 2 }, { v: 'Qty', s: 2 }, { v: 'Rate', s: 2 }, { v: 'MU %', s: 2 }, { v: 'Amount', s: 2 }, { v: 'Comments', s: 2 }]);
+  // v3.30 — user columns are appended AFTER Comments so the A–H formula
+  // references below (D/E/F/G) stay exactly where they are.
+  const uCols = wbUserCols();
+  const uVals = item => uCols.map(c => (item.cols && item.cols[c.id]) || '');
+  rows.push([{ v: 'Code', s: 2 }, { v: 'Description', s: 2 }, { v: 'Unit', s: 2 }, { v: 'Qty', s: 2 }, { v: 'Rate', s: 2 }, { v: 'MU %', s: 2 }, { v: 'Amount', s: 2 }, { v: 'Comments', s: 2 },
+    ...uCols.map(c => ({ v: c.label, s: 2 }))]);
   const topRefs = [];
   let grand = 0;
 
@@ -11718,7 +11997,7 @@ function _buildEstimateSheet() {
       if (r.subRows) {
         const itemRowNum = rows.length + 1;
         rows.push([icode, '  '.repeat(depth + 1) + item.name + '  (assembly)', unit,
-          { v: Number(r.qty.toFixed(3)), s: 4 }, '', mu || '', null, item.comment || '']);
+          { v: Number(r.qty.toFixed(3)), s: 4 }, '', mu || '', null, item.comment || '', ...uVals(item)]);
         const partRefs = [];
         r.subRows.forEach(s2 => {
           const pn = rows.length + 1;
@@ -11735,7 +12014,7 @@ function _buildEstimateSheet() {
         const rn = rows.length + 1;
         rows.push([icode, '  '.repeat(depth + 1) + item.name, unit,
           { v: Number(r.qty.toFixed(3)), s: 4 }, { v: Number((r.rate || 0).toFixed(2)), s: 5 }, mu || '',
-          { f: `D${rn}*E${rn}*(1+F${rn}/100)`, v: Number(r.amount.toFixed(2)), s: 5 }, item.comment || '']);
+          { f: `D${rn}*E${rn}*(1+F${rn}/100)`, v: Number(r.amount.toFixed(2)), s: 5 }, item.comment || '', ...uVals(item)]);
         amountRefs.push('G' + rn);
       }
     });
@@ -11760,7 +12039,7 @@ function _buildEstimateSheet() {
     topRefs.length ? { f: `SUM(${topRefs.join(',')})`, v: Number(grand.toFixed(2)), s: 6 } : { s: 6 }]);
   rows.push([]);
   rows.push(['', { v: 'Quantities measured in the BDM PDF tool' + (openDocs.length > 1 ? ' across ' + openDocs.length + ' documents' : '') + ' — see Shape Breakdown for every measurement\'s drawing, page and scale.', s: 7 }]);
-  return { name: 'Estimate', rows, cols: [8, 48, 7, 12, 12, 8, 14, 32] };
+  return { name: 'Estimate', rows, cols: [8, 48, 7, 12, 12, 8, 14, 32, ...uCols.map(() => 20)] };
 }
 
 function exportTakeoffXLSX() {
@@ -13236,6 +13515,7 @@ function saveToHistory() {
     takeoffItems: takeoffItems,
     takeoffZones: takeoffZones,
     takeoffHeadings: takeoffHeadings,
+    wbUserColumns: wbUserColsPayload(),   // v3.30 — adding/removing a column is undoable with its cells
     viewports: viewports
   }));
   if (history.length > 50) { history.shift(); historyIndex--; }
@@ -13263,6 +13543,7 @@ function _applyHistorySnapshot(snap) {
     takeoffItems = s.takeoffItems || takeoffItems;
     if (s.takeoffZones) takeoffZones = s.takeoffZones;
     if (s.takeoffHeadings) takeoffHeadings = s.takeoffHeadings;
+    if (s.wbUserColumns) wbApplyUserCols(s.wbUserColumns);
     if (s.viewports) viewports = s.viewports;
   }
   selectedAnnotationId = null;
@@ -15828,6 +16109,7 @@ async function saveProject() {
       takeoffItems: workbookFileHandle ? [] : takeoffItems,
       takeoffZones: workbookFileHandle ? [] : takeoffZones,
       takeoffHeadings: workbookFileHandle ? [] : takeoffHeadings,
+      wbUserColumns: workbookFileHandle ? [] : wbUserColsPayload(),
       workbookManaged: workbookFileHandle ? (workbookFileName || true) : undefined,
       viewports: viewports,
       sheetLabels: sheetLabels, sheetLinks: sheetLinks, sheetRegion: sheetRegion, sheetTitleRegion: sheetTitleRegion,
@@ -20831,7 +21113,7 @@ async function autosaveSweep() {
         projectJson: JSON.stringify(project),
         // Job-level takeoff rides along on every record; restore merges it
         // (mergeTakeoffIntoJob dedupes by id, so multi-doc restores are safe).
-        takeoffJson: JSON.stringify({ items: takeoffItems || [], zones: takeoffZones || [], headings: takeoffHeadings || [] })
+        takeoffJson: JSON.stringify({ items: takeoffItems || [], zones: takeoffZones || [], headings: takeoffHeadings || [], userCols: wbUserColsPayload() })
       });
       // The PDF bytes only change on page ops / open — skip the heavy write
       // when this exact Uint8Array has already been stored for this record.
@@ -20915,7 +21197,7 @@ async function autosaveRestoreOffer() {
       try {
         const t = JSON.parse(m.takeoffJson || '{}');
         if (!workbookFileHandle && t && (t.items || []).length) {
-          mergeTakeoffIntoJob(t.items, t.zones, t.headings);
+          mergeTakeoffIntoJob(t.items, t.zones, t.headings, t.userCols);
         }
       } catch (e) {}
       const tp = Math.min(Math.max(0, p.currentPage || 0), pdfDoc ? pdfDoc.numPages - 1 : 0);
