@@ -1509,3 +1509,51 @@ Driven live in Chrome over local http, workbook populated with a six-line tiling
 Not done, and worth knowing it was a choice: columns can't be **reordered** by dragging. The
 heading-row colspans assume Description → MU % stay contiguous, so reordering is a bigger
 change than it looks.
+
+## v3.31 (8 Sep 2026) — 15 material and pattern hatches, concrete included
+
+The Hatch menu offered five entries even though the engine already knew nine (`diagonal-rev`,
+`diagonal-cross`, `dots` and `solid` were reachable only from the agent skill). James asked
+for about fifteen more, including a concrete look. The menu now lists 24 in three groups:
+
+- **Lines** — the original nine, all exposed.
+- **Materials** — concrete, brick, blockwork, steel, timber, insulation, earth, gravel,
+  sand, stone, grass.
+- **Patterns** — water/wave, zigzag, herringbone, honeycomb, checker.
+
+### How they are drawn
+
+Everything still goes through `drawHatchPattern`, so the v3.22 clipping, angle, gap, weight
+and opacity options apply to every new pattern unchanged, and screen, bake, flatten, print
+and report all agree. Two tiny engines sit under the new patterns:
+
+- **`fam(angle, ox, oy, dx, dy, dash)`** is an AutoCAD `.pat` line family: parallel lines
+  `dy` apart, each successive line slid `dx` along itself, with an optional dash array
+  anchored at the line's origin. Brick (`BRICK`), steel (`ANSI32`), earth (`EARTH`) and
+  herringbone (`AR-HBONE`) are their acad.pat definitions with the unit scaled to the Hatch
+  Gap, which is why they look like the CAD hatches people are used to. Blockwork is brick
+  at double the course height.
+- **`cells(size, fn)`** walks a world-anchored grid and gives each cell its own seeded RNG
+  (`cellRng`, a hash of the cell index into mulberry32). Concrete, gravel, sand, stone and
+  grass scatter with it, so the "random" texture is identical on every redraw — no shimmer
+  while dragging, and the report shows the same stones as the screen.
+
+Concrete is the `AR-CONC` look: three fine dots per cell, a triangular stone in ~70% of
+cells, a small round pebble in ~30%, the stones outlined rather than filled so it reads as
+concrete rather than dirt at the default 30% opacity.
+
+Patterns are anchored to world (0,0), not the shape's corner. Nudging a shape reveals the
+texture beneath it, as a CAD hatch does, rather than the whole pattern crawling with the
+shape. Honeycomb and stone draw each shared edge exactly once (three edges per hexagon;
+one top and one left edge per stone cell) so joints don't double up darker at partial opacity.
+
+The menu itself lives in `HATCH_OPTIONS` / `hatchOptionsHtml()` beside the drawing code, so
+the properties panel is no longer the only copy of the list.
+
+### Verification
+
+Rendered all 24 patterns into a swatch board through `drawHatchPattern` and inspected the
+PNG; brick at 30° on a rectangle and herringbone at −20° inside an ellipse both clipped
+correctly. In the app on a blank A4, a rectangle with `hatch: 'concrete'` drew without
+errors, the panel's Hatch select showed the three optgroups (9 / 11 / 5) with concrete
+selected and the Hatch Gap / Angle / Opacity fields present. `node check-syntax.js` clean.

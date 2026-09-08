@@ -2032,7 +2032,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.30';
+const APP_VERSION = 'v3.31';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -4402,13 +4402,227 @@ function drawHatchPattern(ctx, bounds, hatchType, color, clip, ann) {
     for (let y = by; y < by + bh; y += sp) for (let x = bx; x < bx + bw; x += sp) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
   };
 
-  if (hatchType === 'horizontal' || hatchType === 'cross') H();
-  if (hatchType === 'vertical'   || hatchType === 'cross') V();
-  if (hatchType === 'diagonal'     || hatchType === 'diagonal-cross') D1();
-  if (hatchType === 'diagonal-rev' || hatchType === 'diagonal-cross') D2();
-  if (hatchType === 'dots') DOTS();
-  if (hatchType === 'solid') { ctx.fillStyle = color; ctx.fillRect(bx, by, bw, bh); }
+  // ---------------------------------------------------------------
+  // v3.31 — material and pattern hatches.
+  //
+  // Two small engines underneath, so each pattern is a few lines:
+  //
+  //  fam(angle, ox, oy, dx, dy, dash) — an AutoCAD .pat "line family":
+  //    parallel lines at `angle`, `dy` apart, each successive line slid `dx`
+  //    along itself, with an optional dash array. Brick, steel, earth and
+  //    herringbone are literally their acad.pat definitions scaled so the
+  //    unit is the Hatch Gap.
+  //
+  //  cells(size, fn) — walks a world-anchored grid of square cells and hands
+  //    fn a per-cell seeded RNG. Concrete, gravel, sand, stone and grass use
+  //    it so their "random" scatter is identical on every redraw (no shimmer
+  //    while dragging) and identical on screen, bake, print and report.
+  //
+  // Everything is anchored to world (0,0) rather than the shape's corner, so
+  // a shape nudged a few points reveals the pattern beneath it — the way a
+  // CAD hatch behaves — instead of the whole texture crawling with it.
+  // ---------------------------------------------------------------
+  const lw = ctx.lineWidth;
+  const L  = R * 2;
+  const fam = (angle, ox, oy, dx, dy, dash) => {
+    const t = angle * Math.PI / 180, ux = Math.cos(t), uy = Math.sin(t), nx = -uy, ny = ux;
+    const period = dash ? dash.reduce((a, b) => a + b, 0) : 0;
+    ctx.setLineDash(dash || []);
+    const dC = (cx - ox) * nx + (cy - oy) * ny;          // centre's distance across the family
+    const a = (dC - R * 1.5) / dy, b = (dC + R * 1.5) / dy;
+    const i0 = Math.floor(Math.min(a, b)), i1 = Math.ceil(Math.max(a, b));
+    for (let i = i0; i <= i1; i++) {
+      const px = ox + i * (dx * ux + dy * nx), py = oy + i * (dx * uy + dy * ny);
+      const s  = (cx - px) * ux + (cy - py) * uy;         // slide to centre the segment on the shape
+      const qx = px + s * ux, qy = py + s * uy;
+      if (period) ctx.lineDashOffset = (((s - L) % period) + period) % period;
+      ctx.beginPath(); ctx.moveTo(qx - L * ux, qy - L * uy); ctx.lineTo(qx + L * ux, qy + L * uy); ctx.stroke();
+    }
+    ctx.setLineDash([]); ctx.lineDashOffset = 0;
+  };
+  const cellRng = (i, j) => {
+    let h = (Math.imul(i, 73856093) ^ Math.imul(j, 19349663) ^ 0x5bd1e995) >>> 0;
+    return () => { h = (h + 0x6D2B79F5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  };
+  const cells = (c, fn) => {
+    const i0 = Math.floor(bx / c), i1 = Math.ceil((bx + bw) / c), j0 = Math.floor(by / c), j1 = Math.ceil((by + bh) / c);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) fn(i * c, j * c, cellRng(i, j));
+  };
+  const rows = (step, fn) => { for (let y = Math.floor(by / step) * step, k = Math.floor(by / step); y < by + bh; y += step, k++) fn(y, k); };
+  const dot = (x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
+
+  // Concrete — the AR-CONC look: fine aggregate dots, a scatter of
+  // triangular stones and the odd rounded pebble. Outlined, not filled, so
+  // it reads as concrete rather than dirt at 30% opacity.
+  const CONCRETE = () => {
+    const c = sp * 2; ctx.fillStyle = color;
+    cells(c, (x, y, r) => {
+      for (let k = 0; k < 3; k++) dot(x + r() * c, y + r() * c, Math.max(0.4, lw * 0.8));
+      if (r() < 0.7) {
+        const tx = x + r() * c, ty = y + r() * c, s = sp * (0.35 + r() * 0.35), a0 = r() * Math.PI * 2;
+        ctx.beginPath();
+        for (let k = 0; k < 3; k++) { const a = a0 + k * Math.PI * 2 / 3; const px = tx + Math.cos(a) * s, py = ty + Math.sin(a) * s; k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+        ctx.closePath(); ctx.stroke();
+      }
+      if (r() < 0.3) { ctx.beginPath(); ctx.arc(x + r() * c, y + r() * c, sp * (0.15 + r() * 0.2), 0, Math.PI * 2); ctx.stroke(); }
+    });
+  };
+  // Brick / blockwork — running bond, units 2:1 (acad BRICK). Blockwork is
+  // the same bond at double the course height.
+  const BRICK = (u) => { fam(0, 0, 0, 0, u); fam(90, 0, 0, u, u, [u, u]); };
+  // Steel — ANSI32: pairs of 45° lines.
+  const STEEL = () => { fam(45, 0, 0, 0, sp); fam(45, sp * 0.4714, 0, 0, sp); };
+  // Earth — acad EARTH: alternating tiles of three short horizontal and
+  // three short vertical strokes.
+  const EARTH = () => {
+    const k = sp * 8, d = [0.25 * k, 0.25 * k];
+    [0, 0.09375, 0.1875].forEach(oy => fam(0, 0, oy * k, 0.25 * k, 0.25 * k, d));
+    [0.03125, 0.125, 0.21875].forEach(ox => fam(90, ox * k, 0.21875 * k, 0.25 * k, 0.25 * k, d));
+  };
+  // Herringbone — acad AR-HBONE, planks 3 gaps long by 1 gap wide.
+  const HERRINGBONE = () => { fam(45, 0, 0, sp, sp, [3 * sp, sp]); fam(135, sp * 0.7071, sp * 0.7071, sp, -sp, [3 * sp, sp]); };
+  // Gravel — one outlined pebble per cell, sized and turned at random.
+  const GRAVEL = () => {
+    const c = sp * 1.6;
+    cells(c, (x, y, r) => {
+      const rx = sp * (0.3 + r() * 0.3), ry = rx * (0.5 + r() * 0.35);
+      ctx.beginPath(); ctx.ellipse(x + c * (0.3 + r() * 0.4), y + c * (0.3 + r() * 0.4), rx, ry, r() * Math.PI, 0, Math.PI * 2); ctx.stroke();
+    });
+  };
+  // Sand — fine random stipple.
+  const SAND = () => {
+    ctx.fillStyle = color; const r0 = Math.max(0.3, lw * 0.5);
+    cells(sp, (x, y, r) => { for (let k = 0; k < 3; k++) dot(x + r() * sp, y + r() * sp, r0); });
+  };
+  // Stone — a grid whose corners have been jostled, drawn one top edge and
+  // one left edge per cell so no joint is stroked twice.
+  const STONE = () => {
+    const c = sp * 2.5, J = c * 0.32;
+    const vtx = (i, j) => { const r = cellRng(i * 7 + 3, j * 11 + 5); return [i * c + (r() - 0.5) * 2 * J, j * c + (r() - 0.5) * 2 * J]; };
+    const i0 = Math.floor(bx / c), i1 = Math.ceil((bx + bw) / c), j0 = Math.floor(by / c), j1 = Math.ceil((by + bh) / c);
+    ctx.beginPath();
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const p = vtx(i, j), q = vtx(i + 1, j), s = vtx(i, j + 1);
+      ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.moveTo(p[0], p[1]); ctx.lineTo(s[0], s[1]);
+    }
+    ctx.stroke();
+  };
+  // Grass — three-blade tufts on a jittered grid.
+  const GRASS = () => {
+    const c = sp * 1.5;
+    cells(c, (x, y, r) => {
+      if (r() > 0.85) return;
+      const tx = x + c * (0.2 + r() * 0.6), ty = y + c * (0.4 + r() * 0.5), len = sp * (0.55 + r() * 0.35);
+      ctx.beginPath();
+      [-0.45, 0, 0.45].forEach(a => { ctx.moveTo(tx, ty); ctx.lineTo(tx + Math.sin(a) * len, ty - Math.cos(a) * len * (a ? 0.8 : 1)); });
+      ctx.stroke();
+    });
+  };
+  // Timber — long, shallow grain lines with a slow drift between them.
+  const TIMBER = () => {
+    rows(sp * 0.9, (y, k) => {
+      ctx.beginPath();
+      for (let x = bx, first = true; x <= bx + bw; x += sp / 2, first = false) {
+        const yy = y + Math.sin(x / (sp * 4.5) + k * 1.7) * sp * 0.22 + Math.sin(x / (sp * 1.6) + k * 0.9) * sp * 0.06;
+        first ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    });
+  };
+  // Insulation — the batt symbol: a serpentine between two boundary lines.
+  const INSULATION = () => {
+    const band = sp * 2;
+    rows(band, (y, k) => {
+      ctx.beginPath(); ctx.moveTo(bx, y); ctx.lineTo(bx + bw, y); ctx.stroke();
+      const yc = y + band / 2, x0 = Math.floor(bx / sp) * sp;
+      ctx.beginPath(); ctx.moveTo(x0, yc);
+      for (let x = x0, up = true; x < bx + bw; x += sp, up = !up) ctx.quadraticCurveTo(x + sp / 2, up ? y + sp * 0.12 : y + band - sp * 0.12, x + sp, yc);
+      ctx.stroke();
+    });
+  };
+  // Water — rows of scallops, alternate rows offset by half a wave.
+  const WAVE = () => {
+    rows(sp, (y, k) => {
+      const x0 = Math.floor(bx / (2 * sp)) * 2 * sp - (k & 1 ? sp : 0);
+      ctx.beginPath(); ctx.moveTo(x0, y);
+      for (let x = x0; x < bx + bw + 2 * sp; x += 2 * sp) ctx.quadraticCurveTo(x + sp, y - sp * 0.7, x + 2 * sp, y);
+      ctx.stroke();
+    });
+  };
+  // Zigzag — parallel chevron lines.
+  const ZIGZAG = () => {
+    rows(sp * 1.25, (y) => {
+      const x0 = Math.floor(bx / (2 * sp)) * 2 * sp;
+      ctx.beginPath(); ctx.moveTo(x0, y);
+      for (let x = x0, up = true; x < bx + bw + 2 * sp; x += sp, up = !up) ctx.lineTo(x + sp, up ? y - sp * 0.5 : y);
+      ctx.stroke();
+    });
+  };
+  // Honeycomb — pointy-top hexagons; each draws only its top-left, top-right
+  // and right edges, so shared edges are stroked once.
+  const HEX = () => {
+    const r = sp, w = Math.sqrt(3) * r, hstep = 1.5 * r;
+    const j0 = Math.floor(by / hstep) - 1, j1 = Math.ceil((by + bh) / hstep) + 1;
+    const i0 = Math.floor(bx / w) - 1, i1 = Math.ceil((bx + bw) / w) + 1;
+    const V = (x, y, k) => { const a = (-90 + 60 * k) * Math.PI / 180; return [x + r * Math.cos(a), y + r * Math.sin(a)]; };
+    ctx.beginPath();
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = i * w + (j & 1 ? w / 2 : 0), y = j * hstep;
+      const p5 = V(x, y, 5), p0 = V(x, y, 0), p1 = V(x, y, 1), p2 = V(x, y, 2);
+      ctx.moveTo(p5[0], p5[1]); ctx.lineTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]);
+    }
+    ctx.stroke();
+  };
+  // Checker — alternate filled squares.
+  const CHECKER = () => {
+    ctx.fillStyle = color;
+    const i0 = Math.floor(bx / sp), i1 = Math.ceil((bx + bw) / sp), j0 = Math.floor(by / sp), j1 = Math.ceil((by + bh) / sp);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) if (((i + j) & 1) === 0) ctx.fillRect(i * sp, j * sp, sp, sp);
+  };
+
+  switch (hatchType) {
+    case 'horizontal':     H(); break;
+    case 'vertical':       V(); break;
+    case 'cross':          H(); V(); break;
+    case 'diagonal':       D1(); break;
+    case 'diagonal-rev':   D2(); break;
+    case 'diagonal-cross': D1(); D2(); break;
+    case 'dots':           DOTS(); break;
+    case 'solid':          ctx.fillStyle = color; ctx.fillRect(bx, by, bw, bh); break;
+    case 'concrete':       CONCRETE(); break;
+    case 'brick':          BRICK(sp); break;
+    case 'blockwork':      BRICK(sp * 2); break;
+    case 'steel':          STEEL(); break;
+    case 'earth':          EARTH(); break;
+    case 'gravel':         GRAVEL(); break;
+    case 'sand':           SAND(); break;
+    case 'stone':          STONE(); break;
+    case 'grass':          GRASS(); break;
+    case 'timber':         TIMBER(); break;
+    case 'insulation':     INSULATION(); break;
+    case 'wave':           WAVE(); break;
+    case 'zigzag':         ZIGZAG(); break;
+    case 'herringbone':    HERRINGBONE(); break;
+    case 'hex':            HEX(); break;
+    case 'checker':        CHECKER(); break;
+  }
   ctx.restore();
+}
+
+// The hatch menu, in one place so the properties panel (and anything else
+// that ever needs it) lists the same set. Grouped the way people think:
+// plain line hatches, building materials, then decorative patterns.
+const HATCH_OPTIONS = [
+  ['Lines', [['none', 'None'], ['diagonal', 'Diagonal'], ['diagonal-rev', 'Diagonal (reverse)'], ['diagonal-cross', 'Diagonal cross'],
+             ['cross', 'Cross'], ['horizontal', 'Horizontal'], ['vertical', 'Vertical'], ['dots', 'Dots'], ['solid', 'Solid']]],
+  ['Materials', [['concrete', 'Concrete'], ['brick', 'Brick'], ['blockwork', 'Blockwork'], ['steel', 'Steel'], ['timber', 'Timber'],
+                 ['insulation', 'Insulation'], ['earth', 'Earth'], ['gravel', 'Gravel'], ['sand', 'Sand'], ['stone', 'Stone'], ['grass', 'Grass']]],
+  ['Patterns', [['wave', 'Water / wave'], ['zigzag', 'Zigzag'], ['herringbone', 'Herringbone'], ['hex', 'Honeycomb'], ['checker', 'Checker']]]
+];
+function hatchOptionsHtml(current) {
+  const cur = current || 'none';
+  return HATCH_OPTIONS.map(([g, opts]) => `<optgroup label="${g}">` +
+    opts.map(([v, l]) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`).join('') + '</optgroup>').join('');
 }
 
 // ============================================================
@@ -12450,11 +12664,7 @@ function getAnnotationPropertiesHTML(ann) {
       <div class="slider-group"><div class="slider-label"><span>Fill Opacity:</span><span id="prop-fo-val">${ann.fillOpacity||50}%</span></div>
         <input type="range" id="prop-fill-opacity" class="slider" min="0" max="100" value="${ann.fillOpacity||50}"></div>
       <div class="property-row"><div class="property-label">Hatch:</div><select id="prop-hatch" class="select-input">
-        <option value="none" ${(!ann.hatch||ann.hatch==='none')?'selected':''}>None</option>
-        <option value="diagonal" ${ann.hatch==='diagonal'?'selected':''}>Diagonal</option>
-        <option value="cross" ${ann.hatch==='cross'?'selected':''}>Cross</option>
-        <option value="horizontal" ${ann.hatch==='horizontal'?'selected':''}>Horizontal</option>
-        <option value="vertical" ${ann.hatch==='vertical'?'selected':''}>Vertical</option>
+        ${hatchOptionsHtml(ann.hatch)}
       </select></div>`;
     }
 
