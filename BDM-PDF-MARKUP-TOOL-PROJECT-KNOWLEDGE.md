@@ -1557,3 +1557,77 @@ PNG; brick at 30° on a rectangle and herringbone at −20° inside an ellipse b
 correctly. In the app on a blank A4, a rectangle with `hatch: 'concrete'` drew without
 errors, the panel's Hatch select showed the three optgroups (9 / 11 / 5) with concrete
 selected and the Hatch Gap / Angle / Opacity fields present. `node check-syntax.js` clean.
+
+---
+
+## v3.32 — hairline seams across image-heavy pages
+
+Reported as "when I have images, they show up with lines across the page — they seem to
+come and go as I zoom in and out." The reporting document was
+`39BritanniaAveMonthlyReport_August_2026 Final.pdf`; four faint light rules crossed the
+navy cover, and compressing the file baked them in permanently so they then showed in Edge
+too.
+
+### What was actually happening
+
+The cover isn't one graphic. Its page content stream paints **five stacked image strips** —
+`2477×390`, then three of `2477×780`, then `2477×775` — each inside its own rectangular
+clip. That is how InDesign / Canva slice a full-bleed page graphic on export, and it is
+perfectly legal PDF.
+
+Canvas anti-aliases a clip edge that lands mid-pixel. At most zoom levels a strip boundary
+lands at a fractional device pixel, so the strip above covers ~50% of that row and the strip
+below covers ~50% of it, and the white page underneath shows through the difference as a
+light hairline right across the sheet. At scales where the boundary happens to land on a
+whole pixel — notably the image's own native scale, 2477 / 595.32pt ≈ 4.16 — the line
+vanishes. Hence "comes and goes as I zoom".
+
+Edge and Acrobat snap those clips to whole pixels, so they never show it. pdf.js doesn't,
+so Datum did. Compress re-renders each page through the same canvas and JPEG-encodes it,
+which is why a compressed copy carried the lines into every other viewer.
+
+### The fix — `snapRectClips` / `pdfRender`
+
+`snapRectClips(ctx)` installs own-property wrappers on one canvas context for `clip()` and
+the path builders. While `ctx.__snapOn` is set it tracks the pending path's corners; on
+`clip()`, if the path is a plain axis-aligned rectangle at least 1px each way and the CTM
+has no rotation or skew, it replaces the path with the same rectangle **rounded to whole
+device pixels**. Adjacent strips then butt up exactly, with no anti-aliased edge to leak
+through. Everything else — text clips, the curved logo mask, Path2D arguments, rotated
+pages, any path with a curve in it, more than four corners — falls straight through to the
+browser untouched.
+
+`pdfRender(page, params)` wraps `page.render`: it installs the snapping, turns it on, and
+turns it off again when the render settles. It returns the RenderTask, so callers can still
+`.cancel()` it or `await .promise` exactly as before. **All 18 `page.render({…})` call sites
+now go through it** — single page, continuous, side-by-side, thumbnails, compress, flatten,
+print, compare. `__snapOn` going false after the render is what keeps markup baking (which
+shares the temp canvas in compress / flatten) out of scope.
+
+Deliberately not done: snapping `drawImage` destination rects as well. Measured on its own
+it changed nothing — the clip is the entire cause — so it stayed out.
+
+### Verification
+
+Seam strength = how much brighter the worst row is than the navy 4px either side of it, on
+a 0–255 scale, sampled down the left margin of the cover:
+
+| scale | before | after |
+|-------|--------|-------|
+| 0.8   | 120.3  | 1.3   |
+| 1.0   | 118.8  | 0.9   |
+| 1.4   | 94.3   | 0.8   |
+| 2.0   | 69.3   | 0.8   |
+| 3.0   | 109.2  | 0.9   |
+
+Whole-page pixel diff, snapping on vs off, across an 8-page sample of the same report
+(cover, text pages, tables, a photo page, a landscape drawing): **the only pixels that
+change anywhere are the four seam rows on the cover** — 0.33% of that page at 1.4×, rows
+130 / 392 / 654 / 916, and 0.000% on every other page at every scale from 0.8× to 3×. On
+`Datum-Agent-Trial-2-Measure-BOQ.pdf` (vector drawing) the diff is exactly zero pixels at
+1× and 2× and there is no measurable render-time cost.
+
+Compress output re-opened and re-measured: worst seam 1.0–1.3 (was 69–120 baked into the
+JPEG). Five markup types (rectangle, cloud, text, arrow, highlight) baked onto a context
+carrying the wrappers are pixel-identical to a virgin context. Continuous view renders all
+8 pages, thumbnails build, no console errors. `node check-syntax.js` clean.

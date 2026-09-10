@@ -2032,7 +2032,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.31';
+const APP_VERSION = 'v3.32';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -3362,7 +3362,7 @@ async function renderSplitPane() {
   const ac = document.getElementById('split-ann-canvas');
   pc.width = ac.width = Math.floor(viewport.width);
   pc.height = ac.height = Math.floor(viewport.height);
-  const task = page.render({ canvasContext: pc.getContext('2d'), viewport });
+  const task = pdfRender(page, { canvasContext: pc.getContext('2d'), viewport });
   splitRenderTask = task;
   try { await task.promise; } catch (e) { return; } // cancelled by a newer render
   if (seq !== _splitRenderSeq) return;
@@ -3759,6 +3759,127 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
 }
 
 // ============================================================
+// CLIP SNAPPING — kills the hairline seams some PDFs show (v3.32)
+// ============================================================
+// Reports exported from InDesign / Canva often slice one full-page graphic
+// into several stacked image strips, each painted inside its own rectangular
+// clip. Canvas anti-aliases a clip edge that lands mid-pixel, so at the join
+// both strips only half-cover that row and the white page underneath shows
+// through as a light hairline right across the sheet. Edge and Acrobat snap
+// those clips to whole pixels; pdf.js doesn't — which is why the lines showed
+// up here and not there, and why they came and went as you zoomed (at some
+// scales the join happens to land on a whole pixel anyway).
+//
+// So we snap for it. While a PDF page is rendering we intercept clip() and,
+// when the pending path is a plain axis-aligned rectangle, swap it for the
+// same rectangle rounded to whole device pixels. Adjacent strips then butt up
+// exactly and there's no anti-aliased edge left to leak through. Anything that
+// isn't a simple rectangle — text clips, the curved logo mask, rotated pages —
+// falls straight through to the browser untouched, as does every other canvas
+// call. The wrappers only do work while __snapOn is set, so baking markups
+// onto the same context afterwards is unaffected.
+//
+// Measured on 39BritanniaAveMonthlyReport_August_2026 (cover = 5 stacked
+// image strips): the seams read 69-120 levels brighter than the navy around
+// them at every zoom from 0.8x to 3x; with snapping on they read under 1.5,
+// and not one other pixel on any page changes.
+function snapRectClips(ctx) {
+  if (!ctx || ctx.__snapInstalled) return ctx;
+  if (typeof ctx.getTransform !== 'function') return ctx;   // ancient browser — leave it alone
+  ctx.__snapInstalled = true;
+  ctx.__snapOn = false;
+
+  const oClip      = ctx.clip.bind(ctx);
+  const oBeginPath = ctx.beginPath.bind(ctx);
+  const oMoveTo    = ctx.moveTo.bind(ctx);
+  const oLineTo    = ctx.lineTo.bind(ctx);
+  const oRect      = ctx.rect.bind(ctx);
+
+  // Corners of the pending path, in user space. Anything with a curve in it,
+  // or more than a rectangle's worth of points, marks the path complex and we
+  // stop looking at it — a rectangle is 4 points (5 if the first is repeated).
+  const px = new Float64Array(6), py = new Float64Array(6);
+  let n = 0, complex = false;
+
+  ctx.beginPath = function () { n = 0; complex = false; return oBeginPath(); };
+  ctx.moveTo = function (x, y) {
+    if (ctx.__snapOn) { if (n < 6) { px[n] = x; py[n] = y; n++; } else complex = true; }
+    return oMoveTo(x, y);
+  };
+  ctx.lineTo = function (x, y) {
+    if (ctx.__snapOn) { if (n < 6) { px[n] = x; py[n] = y; n++; } else complex = true; }
+    return oLineTo(x, y);
+  };
+  ctx.rect = function (x, y, w, h) {
+    if (ctx.__snapOn) {
+      if (n === 0) { px[0]=x; py[0]=y; px[1]=x+w; py[1]=y; px[2]=x+w; py[2]=y+h; px[3]=x; py[3]=y+h; n = 4; }
+      else complex = true;
+    }
+    return oRect(x, y, w, h);
+  };
+  // Any curve at all means this isn't the rectangle we're looking for.
+  ['bezierCurveTo','quadraticCurveTo','arc','arcTo','ellipse','roundRect'].forEach(name => {
+    if (typeof ctx[name] !== 'function') return;
+    const orig = ctx[name].bind(ctx);
+    ctx[name] = function () { complex = true; return orig.apply(null, arguments); };
+  });
+
+  ctx.clip = function (rule) {
+    // Bail out to the browser unless this is a snappable rectangle: snapping
+    // off, a Path2D argument, a curve in the path, or not four corners.
+    if (!ctx.__snapOn || complex || n < 4 || n > 5 ||
+        (arguments.length > 0 && typeof rule !== 'string')) {
+      return oClip.apply(null, arguments);
+    }
+    const m = ctx.getTransform();
+    if (Math.abs(m.b) > 1e-9 || Math.abs(m.c) > 1e-9) return oClip.apply(null, arguments); // rotated/skewed
+    let X0 = Infinity, X1 = -Infinity, Y0 = Infinity, Y1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const x = m.a * px[i] + m.e, y = m.d * py[i] + m.f;
+      if (x < X0) X0 = x; if (x > X1) X1 = x;
+      if (y < Y0) Y0 = y; if (y > Y1) Y1 = y;
+    }
+    // Every point has to sit on a corner, or it's some other quadrilateral.
+    for (let i = 0; i < n; i++) {
+      const x = m.a * px[i] + m.e, y = m.d * py[i] + m.f;
+      if ((Math.abs(x - X0) > 0.01 && Math.abs(x - X1) > 0.01) ||
+          (Math.abs(y - Y0) > 0.01 && Math.abs(y - Y1) > 0.01)) return oClip.apply(null, arguments);
+    }
+    if (X1 - X0 < 1 || Y1 - Y0 < 1) return oClip.apply(null, arguments);   // hairline clip — leave it
+
+    const rx = Math.round(X0), ry = Math.round(Y0);
+    const rw = Math.round(X1) - rx, rh = Math.round(Y1) - ry;
+    const m0 = ctx.getTransform();
+    oBeginPath();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);       // device space — the rect is already in it
+    oRect(rx, ry, rw, rh);
+    ctx.setTransform(m0.a, m0.b, m0.c, m0.d, m0.e, m0.f);
+    oClip();
+    n = 0; complex = false;
+    return;
+  };
+  return ctx;
+}
+
+// Every pdf.js page render in this app goes through here, so the clip snapping
+// above applies everywhere a page is drawn — screen, thumbnails, compress,
+// flatten, print, compare. Returns the RenderTask so callers can still cancel
+// it or await .promise, exactly as page.render() does.
+function pdfRender(page, params) {
+  const ctx = params && params.canvasContext;
+  try {
+    snapRectClips(ctx);
+    if (ctx) ctx.__snapOn = true;
+  } catch (e) { /* snapping is a nicety — never let it stop a render */ }
+  const task = page.render(params);
+  if (ctx && ctx.__snapInstalled) {
+    const off = () => { ctx.__snapOn = false; };
+    task.promise.then(off, off);
+  }
+  return task;
+}
+
+// ============================================================
 // PAGE RENDERING
 // ============================================================
 async function renderPage(pageNum) {
@@ -3805,7 +3926,7 @@ async function renderPage(pageNum) {
   renderedScale = renderScale;
 
   const pdfCtx = pdfCanvas.getContext('2d');
-  const task = page.render({ canvasContext: pdfCtx, viewport });
+  const task = pdfRender(page, { canvasContext: pdfCtx, viewport });
   currentRenderTask = task;
   try {
     await task.promise;
@@ -7686,7 +7807,7 @@ async function rerenderContinuousInPlace() {
     pdfCanvas.height = viewport.height;
     pdfCanvas.style.cssText = 'display:block;background:white;';
     const pdfCtx = pdfCanvas.getContext('2d');
-    await page.render({ canvasContext: pdfCtx, viewport }).promise;
+    await pdfRender(page, { canvasContext: pdfCtx, viewport }).promise;
     if (currentScale !== renderScale) return;
 
     // Cut-content (erase) annotations get burned into the PDF canvas so they
@@ -7768,7 +7889,7 @@ async function rerenderSideBySideInPlace() {
     pdfCanvas.width = viewport.width;
     pdfCanvas.height = viewport.height;
     pdfCanvas.style.cssText = 'display:block;background:white;';
-    await page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
+    await pdfRender(page, { canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
     if (currentScale !== renderScale) return;
 
     ready.push({ pageDiv, pdfCanvas, viewport });
@@ -13849,7 +13970,7 @@ async function renderContinuousView() {
     pdfCanvas.width = viewport.width; pdfCanvas.height = viewport.height;
     pdfCanvas.style.cssText = 'display:block;background:white;';
     const pdfCtx = pdfCanvas.getContext('2d');
-    await page.render({ canvasContext: pdfCtx, viewport }).promise;
+    await pdfRender(page, { canvasContext: pdfCtx, viewport }).promise;
 
     // Draw annotations for this page
     const annCanvas = document.createElement('canvas');
@@ -13922,7 +14043,7 @@ async function renderSideBySideView() {
       const pdfCanvas = document.createElement('canvas');
       pdfCanvas.width = viewport.width; pdfCanvas.height = viewport.height;
       pdfCanvas.style.cssText = 'display:block;background:white;';
-      await page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
+      await pdfRender(page, { canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
 
       const label = document.createElement('div');
       label.style.cssText = 'text-align:center;font-size:9px;color:var(--text-muted);padding:2px 0;';
@@ -14731,7 +14852,7 @@ async function rerenderThumbCanvases() {
     canvas.height = vp.height;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    await pdfRender(page, { canvasContext: ctx, viewport: vp }).promise;
   }
 }
 
@@ -15767,7 +15888,7 @@ async function executeCompress() {
       // White background so JPEG doesn't introduce black where the PDF has transparency
       tempCtx.fillStyle = 'white';
       tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-      await page.render({ canvasContext: tempCtx, viewport: vp }).promise;
+      await pdfRender(page, { canvasContext: tempCtx, viewport: vp }).promise;
 
       // Bake annotations onto the same page
       const pageAnns = annotations.filter(a => a.page === i);
@@ -15832,7 +15953,7 @@ async function flattenAndDownload() {
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = vp.width; tempCanvas.height = vp.height;
       const tempCtx = tempCanvas.getContext('2d');
-      await page.render({ canvasContext: tempCtx, viewport: vp }).promise;
+      await pdfRender(page, { canvasContext: tempCtx, viewport: vp }).promise;
 
       // Render annotations on top (annotations in page space, use transform to scale)
       const pageAnns = annotations.filter(a => a.page === i);
@@ -16629,7 +16750,7 @@ async function updatePrintPreview() {
       const cctx = c.getContext('2d');
       cctx.fillStyle = 'white';
       cctx.fillRect(0, 0, vp.width, vp.height);
-      await page.render({ canvasContext: cctx, viewport: vp }).promise;
+      await pdfRender(page, { canvasContext: cctx, viewport: vp }).promise;
       if (s.markups) {
         const pageAnns = annotations.filter(a => a.page === pageIdx);
         isBakingAnnotations = true;
@@ -16806,7 +16927,7 @@ async function executePrint() {
     // HTML form layer that Datum doesn't have. pdf.js still honours each
     // annotation's Print flag under intent:'print', so hidden/no-print
     // annotations stay out — same behaviour as Acrobat.
-    await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
+    await pdfRender(page, { canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
 
     if (s.markups) {
       const pageAnns = annotations.filter(a => a.page === pi);
@@ -17208,7 +17329,7 @@ async function executeMarkupReport() {
         ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
         // v3.6 — mode 1 (ENABLE), not 0: keep annotations already in the source
         // file (typewriter text, form values, stamps) in the report thumbnails.
-        await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
+        await pdfRender(page, { canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
         isBakingAnnotations = true;
         try {
           annotations.filter(a => a.page === pg).forEach(a => {
@@ -17583,7 +17704,7 @@ async function _boqBuildSnippets(wanted, snaps, opts, onProgress) {
     ctx.fillStyle = 'white'; ctx.fillRect(0, 0, c.width, c.height);
     // annotationMode 1 (ENABLE) — keep annotations already baked into the source
     // file, exactly as the Markup Report does since v3.6.
-    await page.render({ canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
+    await pdfRender(page, { canvasContext: ctx, viewport: vp, intent: 'print', annotationMode: 1 }).promise;
     // NOTE: `c` is the CLEAN plan — source-PDF annotations only, none of Datum's
     // own markups. Datum markups are baked per snippet below, because which ones
     // belong in a snippet depends on the row it illustrates (opts.show).
@@ -18442,7 +18563,7 @@ async function executeCompare() {
     const vp1 = page1.getViewport({ scale: 1 });
     const c1 = document.createElement('canvas');
     c1.width = vp1.width; c1.height = vp1.height;
-    await page1.render({ canvasContext: c1.getContext('2d'), viewport: vp1 }).promise;
+    await pdfRender(page1, { canvasContext: c1.getContext('2d'), viewport: vp1 }).promise;
 
     // Render comparison page
     const comparePage = Math.min(currentPage + 1, comparePdf.numPages);
@@ -18450,7 +18571,7 @@ async function executeCompare() {
     const vp2 = page2.getViewport({ scale: vp1.width / page2.getViewport({scale:1}).width }); // Match size
     const c2 = document.createElement('canvas');
     c2.width = vp1.width; c2.height = vp1.height;
-    await page2.render({ canvasContext: c2.getContext('2d'), viewport: vp2 }).promise;
+    await pdfRender(page2, { canvasContext: c2.getContext('2d'), viewport: vp2 }).promise;
 
     // v3.1 — COLOUR OVERLAY mode: current doc's ink → RED, revision's → BLUE,
     // agreement → dark. Opens as a new document tab, Bluebeam Overlay-style.
@@ -20319,11 +20440,11 @@ async function _revDiff(oldPage, newPage, threshold) {
   const s = Math.min(1, 2400 / Math.max(vp1.width, vp1.height));
   const v1 = oldPage.getViewport({ scale: s });
   const c1 = document.createElement('canvas'); c1.width = Math.round(v1.width); c1.height = Math.round(v1.height);
-  await oldPage.render({ canvasContext: c1.getContext('2d'), viewport: v1, annotationMode: 1 }).promise;
+  await pdfRender(oldPage, { canvasContext: c1.getContext('2d'), viewport: v1, annotationMode: 1 }).promise;
   const nv = newPage.getViewport({ scale: 1 });
   const v2 = newPage.getViewport({ scale: c1.width / nv.width });
   const c2 = document.createElement('canvas'); c2.width = c1.width; c2.height = c1.height;
-  await newPage.render({ canvasContext: c2.getContext('2d'), viewport: v2, annotationMode: 1 }).promise;
+  await pdfRender(newPage, { canvasContext: c2.getContext('2d'), viewport: v2, annotationMode: 1 }).promise;
   const d1 = c1.getContext('2d').getImageData(0, 0, c1.width, c1.height).data;
   const d2 = c2.getContext('2d').getImageData(0, 0, c2.width, c2.height).data;
   const B = 16, blocksPx = [], W = c1.width, H = c1.height;
@@ -20657,7 +20778,7 @@ async function _vsPageInk(pageIdx, S) {
   const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
   const cx = c.getContext('2d', { willReadFrequently: true });
   cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
-  await page.render({ canvasContext: cx, viewport: vp, annotationMode: 1 }).promise;
+  await pdfRender(page, { canvasContext: cx, viewport: vp, annotationMode: 1 }).promise;
   const d = cx.getImageData(0, 0, c.width, c.height).data;
   const ink = new Uint8Array(c.width * c.height);
   for (let i = 0, j = 0; i < d.length; i += 4, j++) {
