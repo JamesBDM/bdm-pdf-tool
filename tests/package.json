@@ -1,0 +1,14 @@
+{
+  "name": "datum-save-format-tests",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for Datum's save / reopen contract",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "3.11.174",
+    "playwright": "^1.47.0"
+  }
+}

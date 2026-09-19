@@ -2032,7 +2032,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.32';
+const APP_VERSION = 'v3.33';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -16076,7 +16076,7 @@ async function saveProjectAs() {
 }
 
 // Small transient toast so in-place saves get visible feedback.
-function showSaveToast(msg) {
+function showSaveToast(msg, sticky) {
   let toast = document.getElementById('bdm-save-toast');
   if (!toast) {
     toast = document.createElement('div');
@@ -16093,7 +16093,20 @@ function showSaveToast(msg) {
   toast.textContent = msg;
   toast.style.opacity = '1';
   clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2200);
+  // A sticky toast stays up until something clears it — used for save
+  // progress on big drawing sets, which can take a while per page.
+  toast._sticky = !!sticky;
+  if (!sticky) toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2200);
+}
+
+// Clear a sticky progress toast. A normal toast is left alone so the
+// "Saved to …" confirmation still gets its moment on screen.
+function _endSaveProgress() {
+  const toast = document.getElementById('bdm-save-toast');
+  if (!toast || !toast._sticky) return;
+  toast._sticky = false;
+  clearTimeout(toast._timer);
+  toast.style.opacity = '0';
 }
 
 // General-purpose toast — previously called behind typeof guards but never
@@ -16206,43 +16219,7 @@ function _findBDMAttachmentStream(pdfLibDoc, targetName) {
 async function extractBDMAttachment(pdfLibDoc, targetName) {
   const stream = _findBDMAttachmentStream(pdfLibDoc, targetName);
   if (!stream) return null;
-
-  // Grab raw bytes
-  let raw = null;
-  if (stream.contents) raw = stream.contents;
-  else if (typeof stream.getContents === 'function') {
-    try { raw = stream.getContents(); } catch (e) {}
-  }
-  if (!raw) return null;
-
-  // Check Filter (FlateDecode etc.)
-  let filterName = null;
-  try {
-    const { PDFName } = PDFLib;
-    const dict = stream.dict;
-    const filter = dict && typeof dict.lookup === 'function' ? dict.lookup(PDFName.of('Filter')) : null;
-    if (filter) {
-      if (filter.asString) filterName = filter.asString();
-      else if (filter.array) filterName = filter.array.map(x => (x.asString ? x.asString() : String(x))).join(',');
-      else filterName = String(filter);
-    }
-  } catch (e) {}
-
-  if (filterName && filterName.includes('FlateDecode')) {
-    if (typeof DecompressionStream === 'undefined') {
-      console.error('DecompressionStream not available in this browser');
-      return null;
-    }
-    try {
-      const ds = new DecompressionStream('deflate');
-      const respStream = new Response(raw).body.pipeThrough(ds);
-      return new Uint8Array(await new Response(respStream).arrayBuffer());
-    } catch (e) {
-      console.warn('FlateDecode inflate failed:', e);
-      return null;
-    }
-  }
-  return raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+  return await _pdfStreamBytes(stream);
 }
 
 // Read BDM project data from a PDF's Info dict (set by a previous Save)
@@ -16263,9 +16240,20 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
     const json = b64ToUtf8(b64);
     const project = JSON.parse(json);
 
-    // Clean source bytes — preferred path is the Info dict hex string.
+    // Clean source bytes. Three routes, newest first — a file saved by any
+    // build of this tool has to keep opening.
     let cleanBytes = null;
-    const cleanEntry = infoDict.lookup(PDFLib.PDFName.of('BDMCleanSource'));
+
+    // 1. v3.33+: a real binary stream object referenced from the Info dict.
+    const cleanRef = infoDict.lookup(PDFLib.PDFName.of('BDMCleanSourceRef'));
+    if (cleanRef) {
+      try { cleanBytes = await _pdfStreamBytes(cleanRef); }
+      catch (e) { console.warn('clean source stream unreadable:', e); cleanBytes = null; }
+      if (cleanBytes && cleanBytes.length === 0) cleanBytes = null;
+    }
+
+    // 2. Pre-v3.33: hex string in the Info dict.
+    const cleanEntry = cleanBytes ? null : infoDict.lookup(PDFLib.PDFName.of('BDMCleanSource'));
     if (cleanEntry) {
       cleanBytes = hexStringToBytes(cleanEntry);
       if (cleanBytes && cleanBytes.length === 0) cleanBytes = null;
@@ -16283,8 +16271,7 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
       }
     }
 
-    // Legacy fallback: files saved by the previous build used an
-    // embedded-file attachment. Try to pull that out too.
+    // 3. Oldest build of all: an embedded-file attachment.
     if (!cleanBytes) {
       try {
         const legacy = await extractBDMAttachment(probe, 'bdm-clean-source.pdf');
@@ -16313,14 +16300,39 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
 // source — the file stays editable on reopen (via the project JSON) but
 // external viewers will not see the markups. Use "Flatten" to produce
 // a shareable marked-up copy of very large drawings.
-// Raised from 25MB: the clean source is now deflate-compressed before
-// embedding (where the browser supports CompressionStream), so the same
-// hex-encoding overhead buys a much larger original.
-const BDM_MAX_CLEAN_EMBED_BYTES = 60 * 1024 * 1024; // 60 MB
+//
+// History: 25MB, then 60MB. Both ceilings existed because the clean source
+// was hex-encoded into an Info dict string, which costs TWO bytes of saved
+// file for every ONE byte of drawing, and builds the whole thing as a
+// JavaScript string first. v3.33 stores it as a real binary stream object
+// instead (see _embedCleanSource), so the overhead is gone and the ceiling
+// is now about what the browser can hold in memory rather than about the
+// encoding. A full A1 set comfortably fits under this.
+const BDM_MAX_CLEAN_EMBED_BYTES = 200 * 1024 * 1024; // 200 MB
 
-// Compress / decompress the embedded clean source. Returns null when the
-// browser lacks CompressionStream (the save falls back to uncompressed,
-// and old uncompressed files always load fine — flag 'BDMCleanCompressed').
+// Compress / decompress the embedded clean source.
+//
+// Two deflate flavours are in play and the difference matters:
+//   'deflate'      — zlib-wrapped. This is EXACTLY what a PDF /FlateDecode
+//                    filter means, so a stream compressed this way is
+//                    readable by any PDF library, not just this tool.
+//                    Used by every save from v3.33 on.
+//   'deflate-raw'  — headerless. What saves before v3.33 used, because the
+//                    payload was a hex string with a private flag rather
+//                    than a real stream. Kept only for reading those files.
+// Both return null when the browser lacks CompressionStream (the save then
+// embeds uncompressed, which still loads fine everywhere).
+async function _zlibCompress(bytes) {
+  if (typeof CompressionStream === 'undefined') return null;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch (e) { console.warn('zlib compress failed:', e); return null; }
+}
+async function _zlibDecompress(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
 async function _compressBytes(bytes) {
   if (typeof CompressionStream === 'undefined') return null;
   try {
@@ -16333,6 +16345,127 @@ async function _decompressBytes(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+// Pull the bytes out of any PDF stream object, inflating when the stream
+// declares /FlateDecode. Shared by the clean-source reader and the legacy
+// attachment reader so there is one place that understands stream filters.
+async function _pdfStreamBytes(stream) {
+  if (!stream) return null;
+  let raw = null;
+  if (typeof stream.getContents === 'function') { try { raw = stream.getContents(); } catch (e) {} }
+  if (!raw && stream.contents) raw = stream.contents;
+  if (!raw) return null;
+  if (!(raw instanceof Uint8Array)) raw = new Uint8Array(raw);
+
+  let filterName = '';
+  try {
+    const dict = stream.dict;
+    const filter = dict && typeof dict.lookup === 'function' ? dict.lookup(PDFLib.PDFName.of('Filter')) : null;
+    if (filter) {
+      if (filter.asString) filterName = filter.asString();
+      else if (filter.array) filterName = filter.array.map(x => (x.asString ? x.asString() : String(x))).join(',');
+      else filterName = String(filter);
+    }
+  } catch (e) {}
+
+  if (filterName.includes('FlateDecode')) {
+    if (typeof DecompressionStream === 'undefined') {
+      console.error('DecompressionStream not available in this browser');
+      return null;
+    }
+    try { return await _zlibDecompress(raw); }
+    catch (e) { console.warn('FlateDecode inflate failed:', e); return null; }
+  }
+  return raw;
+}
+
+// Stash the untouched original PDF inside the saved file as a real binary
+// stream object, referenced from the Info dict by /BDMCleanSourceRef.
+//
+// This replaces the old hex-string embed. Hex cost two file bytes per
+// drawing byte AND had to be assembled as one enormous JavaScript string,
+// which is what actually capped the tool on big sheets. A stream carries
+// the bytes as-is, compressed with the PDF's own /FlateDecode filter.
+async function _embedCleanSource(outDoc, infoDict, cleanBytes) {
+  const PDFRawStream = PDFLib.PDFRawStream;
+
+  // Fallback for any pdf-lib build that doesn't expose PDFRawStream: keep
+  // the old hex route so a save never simply fails.
+  if (!PDFRawStream || typeof PDFRawStream.of !== 'function') {
+    console.warn('PDFRawStream unavailable — falling back to the legacy hex embed');
+    let toEmbed = cleanBytes, compression = '0';
+    const comp = await _compressBytes(cleanBytes);
+    if (comp && comp.length < cleanBytes.length) { toEmbed = comp; compression = 'deflate-raw'; }
+    infoDict.set(PDFLib.PDFName.of('BDMCleanSource'), PDFLib.PDFHexString.of(bytesToHex(toEmbed)));
+    infoDict.set(PDFLib.PDFName.of('BDMCleanCompressed'), PDFLib.PDFHexString.fromText(compression));
+    return;
+  }
+
+  let payload = cleanBytes, flate = false;
+  const comp = await _zlibCompress(cleanBytes);
+  if (comp && comp.length < cleanBytes.length) { payload = comp; flate = true; }
+
+  // /Length is NOT recomputed by pdf-lib on save — it writes what we set here.
+  const dict = { Type: 'BDMCleanSource', Length: payload.length, BDMRawLength: cleanBytes.length };
+  if (flate) dict.Filter = 'FlateDecode';
+
+  const stream = PDFRawStream.of(outDoc.context.obj(dict), payload);
+  infoDict.set(PDFLib.PDFName.of('BDMCleanSourceRef'), outDoc.context.register(stream));
+}
+
+// PNG bytes straight out of a canvas.
+//
+// The previous route was toDataURL() then atob(), which builds two extra
+// full-size copies of every page overlay as JavaScript strings and blocks
+// the tab while it does — the reason saving a large set felt like a hang.
+// toBlob hands back the encoded bytes directly and yields between pages.
+function _canvasPngBytes(canvas) {
+  return new Promise((resolve, reject) => {
+    if (typeof canvas.toBlob !== 'function') {
+      try {
+        const url = canvas.toDataURL('image/png');
+        resolve(Uint8Array.from(atob(url.split(',')[1]), c => c.charCodeAt(0)));
+      } catch (e) { reject(e); }
+      return;
+    }
+    canvas.toBlob(blob => {
+      if (!blob) { reject(new Error('Could not encode the markup overlay for this page')); return; }
+      blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)), reject);
+    }, 'image/png');
+  });
+}
+
+// Let the browser paint between pages so the progress toast actually moves.
+function _yieldToPaint() {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
+    else setTimeout(resolve, 0);
+  });
+}
+
+// Did this blow up because the browser ran out of room? Big sets are the
+// only place this realistically happens, and the answer changes what we do.
+function _isMemoryError(err) {
+  if (!err) return false;
+  const name = err.name || '';
+  const msg = String(err.message || err);
+  return name === 'RangeError' || name === 'QuotaExceededError' ||
+    /out of memory|allocation (failed|size overflow)|Array buffer allocation failed|Invalid (string|typed array) length|too (large|long)/i.test(msg);
+}
+
+// Make sure every image annotation has finished decoding before bake,
+// otherwise the bake could capture placeholders instead of the real images.
+function _awaitImageAnnotationDecode() {
+  return Promise.all(annotations
+    .filter(a => a.type === 'image' && a.src)
+    .map(a => new Promise((resolve) => {
+      let img = _imageElementCache.get(a.src);
+      if (img && img.complete && img.naturalWidth > 0) return resolve();
+      if (!img) { img = new Image(); _imageElementCache.set(a.src, img); img.src = a.src; }
+      img.addEventListener('load', () => resolve(), { once: true });
+      img.addEventListener('error', () => resolve(), { once: true });
+    })));
+}
+
 // Main save: writes ONE PDF that is both visible in any viewer AND
 // fully editable on reopen in this tool.
 async function saveProject() {
@@ -16340,145 +16473,174 @@ async function saveProject() {
   const saveBtn = document.querySelector('button[onclick="saveProject()"]');
   if (saveBtn) saveBtn.style.opacity = '0.5';
   try {
-    // Make sure every image annotation has finished decoding before bake,
-    // otherwise the bake could capture placeholders instead of the real images.
-    await Promise.all(annotations
-      .filter(a => a.type === 'image' && a.src)
-      .map(a => new Promise((resolve) => {
-        let img = _imageElementCache.get(a.src);
-        if (img && img.complete && img.naturalWidth > 0) return resolve();
-        if (!img) { img = new Image(); _imageElementCache.set(a.src, img); img.src = a.src; }
-        img.addEventListener('load', () => resolve(), { once: true });
-        img.addEventListener('error', () => resolve(), { once: true });
-      })));
+    await _awaitImageAnnotationDecode();
 
     // currentPdfBytes is always the CLEAN source (no baked overlay).
     // We load it fresh here and draw overlays onto a copy so that
     // re-saving in the same session never double-stacks.
     const cleanBytes = currentPdfBytes.slice();
-    const canEmbedClean = cleanBytes.length <= BDM_MAX_CLEAN_EMBED_BYTES;
+    let embedClean = cleanBytes.length <= BDM_MAX_CLEAN_EMBED_BYTES;
 
-    if (!canEmbedClean) {
-      const mb = (cleanBytes.length / 1048576).toFixed(1);
+    if (!embedClean) {
+      const mb = (cleanBytes.length / 1048576).toFixed(0);
       const go = confirm(
-        'This PDF is large (' + mb + ' MB).\n\n' +
+        'This drawing is very large (' + mb + ' MB).\n\n' +
         'Markups will still be saved and fully editable when you reopen the file ' +
-        'in the BDM tool, but they will NOT be visible in external viewers ' +
+        'in Datum, but they will NOT be visible in external viewers ' +
         '(Adobe, Chrome, etc). Use "Flatten" to produce a shareable copy.\n\n' +
         'Continue saving?'
       );
-      if (!go) { if (saveBtn) saveBtn.style.opacity = ''; return; }
+      if (!go) return;
     }
 
-    const outDoc = await PDFLib.PDFDocument.load(cleanBytes, { updateMetadata: false });
-    const pages = outDoc.getPages();
-
-    // Only bake the overlay if we can ALSO embed the clean source.
-    // Otherwise reopen would show baked markups + live markups (double).
-    if (canEmbedClean) {
-      for (let i = 0; i < pages.length; i++) {
-        const pageAnns = annotations.filter(a => a.page === i);
-        if (!pageAnns.length) continue;
-
-        const pdfJsPage = await pdfDoc.getPage(i + 1);
-        const vp = pdfJsPage.getViewport({ scale: 2 });
-
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = vp.width;
-        tempCanvas.height = vp.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        // Transparent background — only draw annotations
-        isBakingAnnotations = true;
-        try {
-          tempCtx.save();
-          tempCtx.setTransform(2, 0, 0, 2, 0, 0);
-          pageAnns.forEach(ann => drawAnnotation(tempCtx, ann, false));
-          tempCtx.restore();
-        } finally { isBakingAnnotations = false; }
-
-        const pngDataUrl = tempCanvas.toDataURL('image/png');
-        const pngBytes = Uint8Array.from(atob(pngDataUrl.split(',')[1]), c => c.charCodeAt(0));
-        const pngImage = await outDoc.embedPng(pngBytes);
-
-        // The overlay was rendered from a pdf.js viewport with page rotation
-        // already applied, but pdf-lib draws into UNROTATED page space.
-        // Compensate for /Rotate so markups land correctly in external viewers.
-        const sz = pages[i].getSize();
-        // CAD-exported sheets (e.g. Revit) can have a MediaBox that does NOT
-        // start at (0,0) — some are centred, spanning negative coords. pdf-lib
-        // positions are absolute page-space, so anchor the overlay to the
-        // mediabox origin or the bake lands off-sheet and "disappears" in
-        // external viewers (v2.8.8 fix).
-        let box = { x: 0, y: 0 };
-        try { const mb = pages[i].getMediaBox(); if (mb) box = { x: mb.x || 0, y: mb.y || 0 }; } catch (e) {}
-        let rot = 0;
-        try { rot = ((pages[i].getRotation().angle % 360) + 360) % 360; } catch (e) { rot = 0; }
-        if (rot === 90) {
-          pages[i].drawImage(pngImage, { x: box.x + sz.width, y: box.y, width: sz.height, height: sz.width, rotate: PDFLib.degrees(90) });
-        } else if (rot === 180) {
-          pages[i].drawImage(pngImage, { x: box.x + sz.width, y: box.y + sz.height, width: sz.width, height: sz.height, rotate: PDFLib.degrees(180) });
-        } else if (rot === 270) {
-          pages[i].drawImage(pngImage, { x: box.x, y: box.y + sz.height, width: sz.height, height: sz.width, rotate: PDFLib.degrees(270) });
-        } else {
-          pages[i].drawImage(pngImage, { x: box.x, y: box.y, width: sz.width, height: sz.height });
-        }
-      }
+    // Big sets are the one place the browser can genuinely run out of room.
+    // If that happens, save the markups rather than losing the work — the
+    // file stays editable here, it just won't show markups elsewhere.
+    let savedBytes;
+    try {
+      savedBytes = await _buildSavedPdf(cleanBytes, embedClean);
+    } catch (err) {
+      if (!embedClean || !_isMemoryError(err)) throw err;
+      console.warn('Save ran out of room with the original embedded — retrying without it:', err);
+      showSaveToast('Not enough memory — saving markups only…', true);
+      embedClean = false;
+      savedBytes = await _buildSavedPdf(cleanBytes, false);
+      setTimeout(() => alert(
+        'This drawing was too large for the browser to hold a second copy of it.\n\n' +
+        'Your markups are saved and fully editable when you reopen the file in Datum, ' +
+        'but they will not be visible in Adobe or Chrome. Use "Flatten" to produce a ' +
+        'shareable copy.'
+      ), 300);
     }
-
-    // Editable project payload
-    const project = {
-      version: 4,
-      filename: currentFilename,
-      annotations: _annotationsForSnapshot(),
-      pageCalibrations: pageCalibrations,
-      defaultCalibration: defaultCalibration,
-      countGroups: countGroups,
-      measurements: measurements,
-      // v3.2: with a standalone workbook open, the PDF carries only its
-      // shapes (which keep their item tags) — the ESTIMATE lives in the
-      // workbook file, so no stale copy can ever ride along in a drawing.
-      takeoffItems: workbookFileHandle ? [] : takeoffItems,
-      takeoffZones: workbookFileHandle ? [] : takeoffZones,
-      takeoffHeadings: workbookFileHandle ? [] : takeoffHeadings,
-      wbUserColumns: workbookFileHandle ? [] : wbUserColsPayload(),
-      workbookManaged: workbookFileHandle ? (workbookFileName || true) : undefined,
-      viewports: viewports,
-      sheetLabels: sheetLabels, sheetLinks: sheetLinks, sheetRegion: sheetRegion, sheetTitleRegion: sheetTitleRegion,
-      toolPresets: toolPresets,
-      savedAt: new Date().toISOString()
-    };
-    const projectJson = JSON.stringify(project);
-    const jsonB64 = utf8ToB64(projectJson);
-
-    // Stash project JSON + (optionally) the clean source bytes inside
-    // the PDF's Info dictionary as custom entries. Same reliable path
-    // the JSON already uses — no attachment walker required.
-    const infoDict = outDoc.getInfoDict();
-    infoDict.set(PDFLib.PDFName.of('BDMMarkupData'), PDFLib.PDFHexString.fromText(jsonB64));
-    infoDict.set(PDFLib.PDFName.of('BDMVersion'), PDFLib.PDFHexString.fromText('4'));
-    infoDict.set(PDFLib.PDFName.of('BDMBakedOverlay'), PDFLib.PDFHexString.fromText(canEmbedClean ? '1' : '0'));
-
-    if (canEmbedClean) {
-      // Deflate the clean source before hex-encoding — typically halves the
-      // saved file size compared to the old raw-hex embed.
-      let toEmbed = cleanBytes, compression = '0';
-      const comp = await _compressBytes(cleanBytes);
-      if (comp && comp.length < cleanBytes.length) { toEmbed = comp; compression = 'deflate-raw'; }
-      infoDict.set(PDFLib.PDFName.of('BDMCleanSource'), PDFLib.PDFHexString.of(bytesToHex(toEmbed)));
-      infoDict.set(PDFLib.PDFName.of('BDMCleanCompressed'), PDFLib.PDFHexString.fromText(compression));
-    }
-
-    // v3.18: sheet cross-references become real PDF links (work in any viewer)
-    try { if (typeof _writeSheetLinksToPdf === 'function') _writeSheetLinksToPdf(outDoc, pages); } catch (e) { console.warn('sheet links not written', e); }
-
-    const savedBytes = await outDoc.save();
     await writeSavedBytes(savedBytes);
   } catch (err) {
     console.error('Save error:', err);
     alert('Error saving PDF: ' + err.message);
   } finally {
+    _endSaveProgress();
     if (saveBtn) saveBtn.style.opacity = '';
   }
+}
+
+// Build the bytes of the saved PDF. Split out of saveProject so a set that
+// is too big to carry its own clean copy can be rebuilt without one instead
+// of failing outright.
+async function _buildSavedPdf(cleanBytes, embedClean) {
+  const outDoc = await PDFLib.PDFDocument.load(cleanBytes, { updateMetadata: false });
+  const pages = outDoc.getPages();
+  // Anything longer than a few pages gets a running count, so a big set
+  // doesn't look like it has hung.
+  const showProgress = pages.length > 3;
+
+  // Only bake the overlay if we can ALSO embed the clean source.
+  // Otherwise reopen would show baked markups + live markups (double).
+  if (embedClean) {
+    for (let i = 0; i < pages.length; i++) {
+      const pageAnns = annotations.filter(a => a.page === i);
+      if (!pageAnns.length) continue;
+
+      if (showProgress) {
+        showSaveToast('Saving — page ' + (i + 1) + ' of ' + pages.length + '…', true);
+        await _yieldToPaint();
+      }
+
+      const pdfJsPage = await pdfDoc.getPage(i + 1);
+      const vp = pdfJsPage.getViewport({ scale: 2 });
+
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = vp.width;
+      tempCanvas.height = vp.height;
+      const tempCtx = tempCanvas.getContext('2d');
+      // Transparent background — only draw annotations
+      isBakingAnnotations = true;
+      try {
+        tempCtx.save();
+        tempCtx.setTransform(2, 0, 0, 2, 0, 0);
+        pageAnns.forEach(ann => drawAnnotation(tempCtx, ann, false));
+        tempCtx.restore();
+      } finally { isBakingAnnotations = false; }
+
+      const pngBytes = await _canvasPngBytes(tempCanvas);
+      // Hand the page-sized canvas back to the browser straight away.
+      // On an A1 sheet that is ~64 MB apiece, and a long set would
+      // otherwise hold every one of them until the save finished.
+      tempCanvas.width = tempCanvas.height = 0;
+      const pngImage = await outDoc.embedPng(pngBytes);
+
+      // The overlay was rendered from a pdf.js viewport with page rotation
+      // already applied, but pdf-lib draws into UNROTATED page space.
+      // Compensate for /Rotate so markups land correctly in external viewers.
+      const sz = pages[i].getSize();
+      // CAD-exported sheets (e.g. Revit) can have a MediaBox that does NOT
+      // start at (0,0) — some are centred, spanning negative coords. pdf-lib
+      // positions are absolute page-space, so anchor the overlay to the
+      // mediabox origin or the bake lands off-sheet and "disappears" in
+      // external viewers (v2.8.8 fix).
+      let box = { x: 0, y: 0 };
+      try { const mb = pages[i].getMediaBox(); if (mb) box = { x: mb.x || 0, y: mb.y || 0 }; } catch (e) {}
+      let rot = 0;
+      try { rot = ((pages[i].getRotation().angle % 360) + 360) % 360; } catch (e) { rot = 0; }
+      if (rot === 90) {
+        pages[i].drawImage(pngImage, { x: box.x + sz.width, y: box.y, width: sz.height, height: sz.width, rotate: PDFLib.degrees(90) });
+      } else if (rot === 180) {
+        pages[i].drawImage(pngImage, { x: box.x + sz.width, y: box.y + sz.height, width: sz.width, height: sz.height, rotate: PDFLib.degrees(180) });
+      } else if (rot === 270) {
+        pages[i].drawImage(pngImage, { x: box.x, y: box.y + sz.height, width: sz.height, height: sz.width, rotate: PDFLib.degrees(270) });
+      } else {
+        pages[i].drawImage(pngImage, { x: box.x, y: box.y, width: sz.width, height: sz.height });
+      }
+    }
+  }
+
+  // Editable project payload
+  const project = {
+    version: 4,
+    filename: currentFilename,
+    annotations: _annotationsForSnapshot(),
+    pageCalibrations: pageCalibrations,
+    defaultCalibration: defaultCalibration,
+    countGroups: countGroups,
+    measurements: measurements,
+    // v3.2: with a standalone workbook open, the PDF carries only its
+    // shapes (which keep their item tags) — the ESTIMATE lives in the
+    // workbook file, so no stale copy can ever ride along in a drawing.
+    takeoffItems: workbookFileHandle ? [] : takeoffItems,
+    takeoffZones: workbookFileHandle ? [] : takeoffZones,
+    takeoffHeadings: workbookFileHandle ? [] : takeoffHeadings,
+    wbUserColumns: workbookFileHandle ? [] : wbUserColsPayload(),
+    workbookManaged: workbookFileHandle ? (workbookFileName || true) : undefined,
+    viewports: viewports,
+    sheetLabels: sheetLabels, sheetLinks: sheetLinks, sheetRegion: sheetRegion, sheetTitleRegion: sheetTitleRegion,
+    toolPresets: toolPresets,
+    savedAt: new Date().toISOString()
+  };
+  const projectJson = JSON.stringify(project);
+  const jsonB64 = utf8ToB64(projectJson);
+
+  // Stash project JSON + (optionally) the clean source bytes inside
+  // the PDF's Info dictionary as custom entries. Same reliable path
+  // the JSON already uses — no attachment walker required.
+  const infoDict = outDoc.getInfoDict();
+  infoDict.set(PDFLib.PDFName.of('BDMMarkupData'), PDFLib.PDFHexString.fromText(jsonB64));
+  infoDict.set(PDFLib.PDFName.of('BDMVersion'), PDFLib.PDFHexString.fromText('4'));
+  infoDict.set(PDFLib.PDFName.of('BDMBakedOverlay'), PDFLib.PDFHexString.fromText(embedClean ? '1' : '0'));
+
+  if (embedClean) {
+    if (showProgress) {
+      showSaveToast('Saving — packing the original drawing…', true);
+      await _yieldToPaint();
+    }
+    await _embedCleanSource(outDoc, infoDict, cleanBytes);
+  }
+
+  // v3.18: sheet cross-references become real PDF links (work in any viewer)
+  try { if (typeof _writeSheetLinksToPdf === 'function') _writeSheetLinksToPdf(outDoc, pages); } catch (e) { console.warn('sheet links not written', e); }
+
+  if (showProgress) {
+    showSaveToast('Saving — writing the file…', true);
+    await _yieldToPaint();
+  }
+  return await outDoc.save();
 }
 
 function loadProject() { document.getElementById('project-input').click(); }

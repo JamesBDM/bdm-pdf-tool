@@ -222,7 +222,7 @@ These are approximate — they shift as code is edited:
 
 1. **No snap to PDF native geometry** — snap only works on BDM annotations, not the underlying architectural drawing lines. Would require parsing PDF path operators (complex).
 
-2. **Clean source size limit** — PDFs over 25MB can't embed the clean source in Info dict. Those files won't show markups in external viewers.
+2. ~~**Clean source size limit**~~ — fixed in v3.33. The clean source is now a binary stream object rather than a hex string, so the ceiling moved 25MB → 60MB → 200MB and a saved file is ~2× the original instead of ~3×. See the v3.33 entry.
 
 3. **Text measurement approximation** — stamp hit-test uses `t.length * 11` as width proxy since we don't have a canvas context at hit-test time. Could be off for very long/short text.
 
@@ -1631,3 +1631,174 @@ Compress output re-opened and re-measured: worst seam 1.0–1.3 (was 69–120 ba
 JPEG). Five markup types (rectangle, cloud, text, arrow, highlight) baked onto a context
 carrying the wrappers are pixel-identical to a virgin context. Continuous view renders all
 8 pages, thumbnails build, no console errors. `node check-syntax.js` clean.
+
+---
+
+## v3.33 (19 Sep 2026) — big drawing sets keep their markups
+
+### The complaint
+
+A full A1 set saved without visible markups. Anyone opening it in Adobe or Chrome saw a
+clean drawing with nothing on it — the measurements were still there and still editable in
+Datum, but the file was useless to send to a builder. Below the size cut-off everything
+worked; above it, Save quietly dropped the bake and showed a confirm box explaining that it
+had. The cut-off started at 25MB, was raised to 60MB in an earlier build, and a real
+architectural set goes straight past both.
+
+### Why the ceiling existed
+
+Nothing about baking markups is size-limited. The ceiling was entirely an artefact of **how
+the clean source was stored**.
+
+A saved Datum PDF carries a second, untouched copy of the original drawing inside it. That
+copy is what makes the format work: the visible markups are flattened onto the pages so any
+viewer shows them, and on reopen Datum throws those flattened pages away, renders the clean
+copy instead, and puts the live editable markups back on top. Without the clean copy you
+would see every markup twice — once baked into the page, once live — which is the critical
+bug this design was built to avoid in the first place.
+
+That copy was stored as a **hex string** in the PDF's Info dictionary:
+
+```javascript
+infoDict.set(PDFName.of('BDMCleanSource'), PDFHexString.of(bytesToHex(toEmbed)));
+```
+
+Hex is two characters per byte. So every byte of drawing cost **two bytes** of saved file,
+on top of the original pages themselves — a saved file ran about 3× the size of the drawing
+it came from. Worse, `bytesToHex` builds the whole thing as a single JavaScript string
+before pdf-lib ever sees it: a 60MB drawing means a 120-million-character string assembled
+one `padStart` at a time, on the main thread, with the tab frozen. The ceiling was not a
+judgement about what PDFs are reasonable. It was the point past which that string stopped
+being survivable.
+
+### The fix — `_embedCleanSource`
+
+Store the clean source the way PDF has always meant binary payloads to be stored: as a
+**stream object**, compressed with the PDF's own `/FlateDecode` filter, referenced from the
+Info dict by an indirect reference under a new key `/BDMCleanSourceRef`.
+
+```javascript
+const dict = { Type: 'BDMCleanSource', Length: payload.length, BDMRawLength: cleanBytes.length };
+if (flate) dict.Filter = 'FlateDecode';
+const stream = PDFRawStream.of(outDoc.context.obj(dict), payload);
+infoDict.set(PDFName.of('BDMCleanSourceRef'), outDoc.context.register(stream));
+```
+
+The bytes go in as bytes. No hex, no giant string, no doubling. `infoDict.lookup()`
+dereferences the indirect reference on the way back out and hands over the `PDFRawStream`,
+so reading is as simple as the hex route ever was.
+
+**Ceiling: 60MB → 200MB. Saved file: ~3× the original → ~2×.**
+
+### Three gotchas worth remembering
+
+**1. pdf-lib does not recompute `/Length`.** It writes whatever you put in the stream dict.
+Set it to the compressed payload length by hand or the file is subtly corrupt — it will
+often still open, because most readers scan for `endstream`, which is exactly what makes
+this the kind of bug that surfaces two months later on somebody else's machine.
+
+**2. `deflate` and `deflate-raw` are not interchangeable, and the old code needed the other
+one.** PDF's `/FlateDecode` means zlib-wrapped deflate, which is `CompressionStream('deflate')`.
+The pre-v3.33 format used `CompressionStream('deflate-raw')` — headerless — and recorded
+that fact in a private `/BDMCleanCompressed` flag, which it could get away with because the
+payload was an opaque hex string that no other tool was ever going to read. A real stream
+declares its own filter, so it has to be honest: `_zlibCompress` / `_zlibDecompress` are the
+new pair, and `_compressBytes` / `_decompressBytes` stay behind **only** to read files
+written before this build.
+
+**3. Nothing else may be stored this way without thought.** The stream is reachable only
+from the Info dict, and pdf-lib writes every object in its context rather than tracing
+reachability, so it survives `save()`. A library that *does* garbage-collect unreachable
+objects would drop it. If that ever bites, move the reference to the catalog.
+
+### Reading: three routes, newest first
+
+`readBDMDataFromPdfBytes` now tries, in order:
+
+1. `/BDMCleanSourceRef` — the v3.33 stream object.
+2. `/BDMCleanSource` — the pre-v3.33 hex string, compressed (`deflate-raw`) or not.
+3. The embedded-file attachment used by the oldest builds of all.
+
+All three are covered by the browser tests below. **Every Datum file ever saved still
+opens.** The reverse is not true and is worth saying out loud: a file saved by v3.33 and
+opened in an older build will not find a hex entry, will fall through to the
+"clean source not recoverable" warning, and will show markups doubled. The team upgrades
+together, as it always has.
+
+The stream-reading logic was factored into `_pdfStreamBytes(stream)` — grab the bytes,
+inflate if the stream says `/FlateDecode`. `extractBDMAttachment` now delegates to it
+instead of carrying its own copy of the same filter handling, which is how the two had
+already drifted once.
+
+### The other half: saving a big set without the tab dying
+
+Removing the ceiling is not much use if the save that follows locks the browser for two
+minutes and then runs out of memory. Three changes, all only really visible on a long set:
+
+- **`_canvasPngBytes` replaces `toDataURL` + `atob`.** The old pair built two extra
+  full-size copies of every page overlay as JavaScript strings. `canvas.toBlob` hands back
+  the encoded bytes directly and, being async, lets the browser breathe between pages.
+  (The `toDataURL` path is kept as a fallback for any browser without `toBlob`.)
+- **Each page's canvas is released the moment its PNG is out** (`tempCanvas.width = tempCanvas.height = 0`).
+  An A1 sheet at the bake scale is ~64MB of canvas backing store apiece; a 50-page set was
+  holding every one of them until the save finished.
+- **A sticky progress toast** — `showSaveToast(msg, sticky)` gained a second argument, and
+  `_endSaveProgress()` clears it in `saveProject`'s `finally` without stealing the moment
+  from the "Saved to …" confirmation that follows. Anything over three pages now counts
+  itself down page by page, then reports packing and writing. `_yieldToPaint()` between
+  pages is what makes the count actually move rather than jumping from 1 to 50 at the end.
+
+### And if it still does not fit
+
+`saveProject` was split: it keeps the orchestration, and the work moved into
+`_buildSavedPdf(cleanBytes, embedClean)`. That split exists for one reason — a drawing so
+large the browser cannot hold a second copy of it now **falls back instead of failing**.
+`_isMemoryError(err)` catches the allocation failure, and the save is rebuilt from scratch
+with `embedClean = false`: no bake, no embedded copy, markups still fully editable on
+reopen, and a plain-English alert saying markups will not show in Adobe and pointing at
+Flatten. Losing external visibility is bad. Losing the takeoff is worse.
+
+### Verification
+
+Real Chromium driving the real file, via Playwright, with pdf.js and pdf-lib served locally
+at the exact CDN versions. Two suites: a save/reopen round trip, and a reopen + backwards
+compatibility run.
+
+Sizes, saving a set whose bulk is deliberately incompressible (the worst case — real
+drawings do better):
+
+| original | saved, v3.33 | saved, old hex route |
+|----------|--------------|----------------------|
+| 12.0 MB  | 24.5 MB (2.04×) | 36.5 MB (3.04×) |
+| 80.0 MB  | 160.3 MB (2.00×) | 240.4 MB (3.00×) |
+| 150.0 MB | 300.5 MB (2.00×) | 450.5 MB (3.00×) |
+
+The 80MB set is the headline: **the old build refused to bake it at all**. It now saves in
+about 10 seconds with markups baked and visible, and reopens with the clean source
+byte-identical to what went in. The 150MB run is there to prove the new 200MB ceiling is a
+real number and not an optimistic one — it passes every check with headroom, on a machine
+with 16GB of RAM.
+
+Checked on every run:
+
+- Reopen recovers the project and the clean original, **byte-for-byte identical**.
+- Every markup survives the round trip.
+- The saved file opens as an ordinary PDF and pdf.js finds a painted image XObject on the
+  page — i.e. the markups really are visible to an outside viewer, not just flagged as baked.
+- Reopening renders the **clean** original, not the baked copy (the no-duplicate-markups
+  contract).
+- Saving again from a reopened file changes its size by 18 bytes (the timestamp). No
+  double-stacking, no growth round over round.
+- Old compressed-hex files, old uncompressed-hex files: both still open with the clean
+  source intact.
+- The no-embed path keeps markups editable, bakes nothing, and embeds nothing.
+- No console errors and no unexpected dialogs on any run.
+
+`node check-syntax.js` clean.
+
+**Harness note for next time:** the tests drive the app by calling its own functions
+(`addAnnotation`, `_buildSavedPdf`, `readBDMDataFromPdfBytes`, `loadPdf`) rather than
+simulating clicks, which makes them fast and stable. One trap cost twenty minutes —
+`let`/`const` at the top level of a classic script are **not** properties of `window`, so
+`page.waitForFunction(() => window.currentPdfBytes)` waits forever. Use the bare identifier
+with a `typeof` guard.
