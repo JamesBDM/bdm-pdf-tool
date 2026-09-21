@@ -1631,3 +1631,124 @@ Compress output re-opened and re-measured: worst seam 1.0–1.3 (was 69–120 ba
 JPEG). Five markup types (rectangle, cloud, text, arrow, highlight) baked onto a context
 carrying the wrappers are pixel-identical to a virgin context. Continuous view renders all
 8 pages, thumbnails build, no console errors. `node check-syntax.js` clean.
+
+---
+
+## v3.33 (21 Sep 2026) — the hotpink bars
+
+James opened a BDM weekly time summary and the three "billed at hourly rate" bars came up
+bright pink in Datum. The same file in Edge showed them as dashed orange. Nothing else on
+the page differed.
+
+### What the PDF actually held
+
+The summary is printed from HTML by headless Chrome, and those bars are a CSS
+`repeating-linear-gradient`. Chrome does not flatten that to a fill or a tiling pattern —
+it emits a **function-based shading**:
+
+```
+11 0 obj <</Type /Pattern /PatternType 2 /Matrix [7.5 0 0 -7.5 156.75 259.16998]
+  /Shading <</ShadingType 1 /ColorSpace /DeviceRGB /Function 10 0 R
+              /Domain [-.1 33.633335 -.110668182 .95599747]>>>>
+```
+
+with a FunctionType 4 (PostScript calculator) function that does the repetition itself:
+
+```postscript
+{pop                                     % drop y — this is a function of x alone
+ dup truncate sub                        % fractional part → one dash cycle
+ ...
+ dup .70000005 le { .8235 .3765 .0392 }  % rgb(210,96,10) = #D2600A
+                  { 1 1 1 } ifelse ... } % white gap
+```
+
+70% orange, 30% white, ~33 cycles across the bar. Exactly what Edge draws.
+
+### Why it was pink
+
+**pdf.js has never implemented ShadingType 1.** `RadialAxialShading` covers types 2 and 3,
+`MeshShading` covers 4–7, and everything else lands on
+`throw new FormatError("Unsupported ShadingType: " + type)`. The worker catches that, warns,
+and emits a Dummy shading. On the main thread:
+
+```js
+class DummyShadingPattern extends BaseShadingPattern { getPattern() { return "hotpink" } }
+```
+
+That is a debug placeholder shipped in the release build, and it is the #FF69B4 James saw.
+Edge uses PDFium, which handles type 1 properly. Every other bar on the page is a plain
+`re f` fill, which is why only those three were affected.
+
+Worth remembering as a general rule: **an inexplicably hotpink area in Datum is almost
+always an unsupported shading, not a colour-space problem.** It is a literal string in
+pdf.js, not a computed colour.
+
+### The fix — convert the shading instead of implementing type 1
+
+Implementing function-based shading inside a minified CDN pdf.js is not on. But nearly
+every ShadingType 1 that Chrome emits is one-dimensional in disguise: the PostScript
+function's first act is to throw one of its two inputs away — `pop` ignores y, `exch pop`
+ignores x. A function of one variable along an axis *is* a ShadingType 2 axial shading,
+which pdf.js does support.
+
+So `datumFixFunctionShadings()` rewrites them before pdf.js sees the bytes:
+
+| | before | after |
+|---|---|---|
+| `/ShadingType` | 1 | 2 |
+| `/Domain` | `[x0 x1 y0 y1]` | `[x0 x1]` |
+| `/Coords` | — | `[x0 0 x1 0]` |
+| `/Extend` | — | `[true true]` |
+| `/Function` | 2-input, body starts `pop` | new 1-input stream, leading `pop` removed |
+
+The leading discard has to go with the conversion: an axial shading pushes one value, so a
+body that still opened with `pop` would underflow the stack. Anything we cannot prove
+separable (a `/Matrix` on the shading, a function that is genuinely 2-D, an array of
+functions, an exotic filter) is left alone and stays pink — no guessing.
+
+Fidelity is not a compromise. pdf.js samples an axial function at **840 points** across the
+domain and inserts colour stops adaptively, so ~25 samples per dash cycle: the dashes come
+back crisp, not averaged into a smear.
+
+### Render-only, with one deliberate exception
+
+`currentPdfBytes` keeps the untouched original — the conversion is applied to a throwaway
+copy handed to `datumGetDocument()`. Open a file and save it straight back and you get
+your bytes, not ours. The work is done with pdf-lib (already loaded) rather than
+hand-rolled xref surgery, and `DecompressionStream` inflates the function stream, so no
+new dependency.
+
+The gate is a **byte-level scan for a literal `/ShadingType 1`**, run on every open. No
+string conversion, no parse — a normal drawing pays microseconds and returns immediately.
+
+The exception: that scan cannot see inside a compressed `/ObjStm`, and **pdf-lib's `save()`
+packs dicts into object streams by default**. So after any page operation the bars went
+pink again — `rebuildPdf()` re-opens pdf-lib's own output, where the gate is blind. The two
+call sites that re-open pdf-lib output (`rebuildPdf`, and the insert-pages path) therefore
+pass `force = true` and skip the gate. Those paths already parse, serialise, re-parse and
+rebuild every thumbnail, so one more pdf-lib parse is lost in the noise — and when there is
+nothing to convert it returns the input bytes without re-saving.
+
+All five `datumGetDocument({data: …})` call sites now route through `datumRenderBytes()`,
+including the document-compare path (a hotpink bar there would have registered as a false
+difference in the pixel diff).
+
+### Verification
+
+Against `BDM_WeeklyTimeSummary_JG_Wk-18Sep2026_4.pdf`, sampling the rendered canvas:
+
+| | hotpink #FF69B4 | any pink | #D2600A orange |
+|---|---|---|---|
+| before | present (3 bars) | — | 0 |
+| after, on open | 0 | 0 | 2338 px |
+| after a page op | 0 | 0 | 2335 px |
+
+Run-length along a bar scanline: 33 dashes of 5px orange / 2–3px gap, duty cycle 0.68
+against the 0.70 the function specifies (the rest is antialiasing), terminating exactly
+where the domain ends — no extended tail. Console reports
+`Datum: rewrote 3 function-based shadings as axial…`, and page 2 (no shadings) is
+untouched. `currentPdfBytes` is 150,740 bytes on open — byte-identical in length to the
+input, confirming the save path never sees the rewrite.
+
+Regression: a normal vector PDF (`Datum-Agent-Trial-2-Measure-BOQ.pdf`) opens in 369 ms
+with the gate returning immediately. `node check-syntax.js` clean.
