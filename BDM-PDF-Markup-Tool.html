@@ -2032,7 +2032,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.33';
+const APP_VERSION = 'v3.34';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -3630,7 +3630,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
 
     currentPdfBytes = incomingBytes.slice();
     try {
-      pdfDoc = await datumGetDocument({data: incomingBytes.slice()}).promise;
+      pdfDoc = await datumGetDocument({data: await datumRenderBytes(incomingBytes.slice())}).promise;
     } catch (parseErr) {
       // If we substituted an embedded clean source and pdf.js rejects it,
       // fall back to the original (baked) file rather than failing to open.
@@ -3638,7 +3638,7 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
         console.warn('BDM: clean source failed to parse (' + parseErr.message + ') — falling back to baked PDF');
         incomingBytes = bakedFallbackBytes;
         currentPdfBytes = incomingBytes.slice();
-        pdfDoc = await datumGetDocument({data: incomingBytes.slice()}).promise;
+        pdfDoc = await datumGetDocument({data: await datumRenderBytes(incomingBytes.slice())}).promise;
         setTimeout(() => alert(
           'The clean copy embedded in this file could not be read, so the document ' +
           'was opened from its visible (baked) copy instead. Existing markups are part ' +
@@ -10270,6 +10270,191 @@ function datumGetDocument(params) {
   return task;
 }
 
+// ============================================================
+// Function-based shading repair (v3.33)
+// ------------------------------------------------------------
+// pdf.js has never implemented ShadingType 1 (function-based shading). Its
+// worker throws "Unsupported ShadingType: 1", swallows the error and hands
+// the main thread a placeholder pattern whose paint colour is, literally,
+//    class DummyShadingPattern { getPattern() { return "hotpink" } }
+// Chrome's print-to-PDF emits ShadingType 1 for every repeating or dashed
+// CSS gradient, so those fills arrive here as bright pink while Edge
+// (PDFium) draws them correctly. Found on a BDM weekly time summary whose
+// dashed orange hourly-rate bars all came up pink.
+//
+// Nearly all of them are one-dimensional in disguise: the PostScript
+// function's first act is to throw one of its two inputs away — `pop`
+// ignores y, `exch pop` ignores x — which makes the shading exactly
+// equivalent to a ShadingType 2 axial shading along the surviving axis.
+// Axial pdf.js DOES support, and it samples the function at 840 points
+// across the domain, so even a 30-dash repeat survives crisply.
+//
+// So: convert those shadings to axial before pdf.js sees the bytes. Anything
+// we cannot prove separable is left alone (it stays pink, exactly as now).
+//
+// RENDER ONLY — currentPdfBytes keeps the untouched original, so saving,
+// page operations and the embedded clean source are all unaffected.
+// ============================================================
+
+// Cheap gate: does the raw file contain a literal "/ShadingType 1"? This runs
+// on every open, so it stays at the byte level — no string conversion, no
+// parse. It cannot see inside a compressed /ObjStm, which is why the bytes
+// pdf-lib hands back after a page operation are repaired with force=true
+// instead — pdf-lib's save() packs those dicts into an object stream.
+function datumHasFunctionShading(u8) {
+  const NEEDLE = [0x53,0x68,0x61,0x64,0x69,0x6e,0x67,0x54,0x79,0x70,0x65]; // "ShadingType"
+  let i = 0;
+  while ((i = u8.indexOf(0x2f, i)) !== -1) {          // '/'
+    i++;
+    let k = 0;
+    while (k < NEEDLE.length && u8[i + k] === NEEDLE[k]) k++;
+    if (k !== NEEDLE.length) continue;
+    let j = i + k;
+    while (j < u8.length && (u8[j] === 0x20 || u8[j] === 0x0a || u8[j] === 0x0d || u8[j] === 0x09)) j++;
+    // a bare "1" — not the leading digit of 10, 12 or 1.5
+    if (u8[j] === 0x31 && !(u8[j + 1] >= 0x30 && u8[j + 1] <= 0x39) && u8[j + 1] !== 0x2e) return true;
+  }
+  return false;
+}
+
+// Inflate with the browser's own decompressor — same approach as the ObjStm
+// unpacker in the decryptor above, and it keeps this file dependency-free.
+async function datumInflate(u8) {
+  if (typeof DecompressionStream === 'undefined') return null;
+  for (const fmt of ['deflate', 'deflate-raw']) {
+    try {
+      const rs = new Blob([u8]).stream().pipeThrough(new DecompressionStream(fmt));
+      return new Uint8Array(await new Response(rs).arrayBuffer());
+    } catch (e) { /* try the next wrapping */ }
+  }
+  return null;
+}
+
+// A FunctionType 4 body that opens by discarding one of its two inputs is a
+// 1-D function wearing a 2-D coat. Returns the axis that survives, plus the
+// body with that opening discard removed — an axial shading passes only one
+// value, so the discard has to go with it.
+function datumSeparableAxis(body) {
+  const t = body.replace(/%[^\r\n]*/g, ' ').replace(/^\s+/, '');
+  let m = /^pop(?![A-Za-z0-9._])/.exec(t);
+  if (m) return { axis: 'x', rest: t.slice(m[0].length) };
+  m = /^exch\s+pop(?![A-Za-z0-9._])/.exec(t);
+  if (m) return { axis: 'y', rest: t.slice(m[0].length) };
+  return null;
+}
+
+async function datumFixFunctionShadings(u8) {
+  if (typeof PDFLib === 'undefined') return u8;
+  const L = PDFLib;
+  const N = (s) => L.PDFName.of(s);
+  const num = (v) => L.PDFNumber.of(v);
+
+  const doc = await L.PDFDocument.load(u8, { throwOnInvalidObject: false, updateMetadata: false });
+  const ctx = doc.context;
+
+  // Collect every ShadingType 1 dict. Only DIRECT children get walked — every
+  // indirect object is visited by the outer loop anyway, so chasing refs would
+  // re-tread the whole document (murder on a tagged PDF's struct tree) for
+  // nothing.
+  const targets = [];
+  const seen = new Set();
+  const walk = (o) => {
+    if (!o || seen.has(o)) return;
+    seen.add(o);
+    if (o instanceof L.PDFArray) { for (let i = 0; i < o.size(); i++) walk(o.get(i)); return; }
+    if (!(o instanceof L.PDFDict)) return;
+    const st = o.get(N('ShadingType'));
+    if (st instanceof L.PDFNumber && st.asNumber() === 1) targets.push(o);
+    o.entries().forEach(([, v]) => walk(v));
+  };
+  for (const [, obj] of ctx.enumerateIndirectObjects()) {
+    walk(obj instanceof L.PDFStream ? obj.dict : obj);
+  }
+  if (!targets.length) return u8;
+
+  let fixed = 0;
+  for (const sh of targets) {
+    // A shading-space /Matrix would put the domain somewhere other than the
+    // axis we are about to draw along. Rare, and not worth guessing at.
+    if (sh.get(N('Matrix'))) continue;
+
+    const dom = sh.get(N('Domain'));
+    if (!(dom instanceof L.PDFArray) || dom.size() !== 4) continue;
+    let D;
+    try { D = [0, 1, 2, 3].map((i) => dom.get(i).asNumber()); } catch (e) { continue; }
+
+    const fref = sh.get(N('Function'));
+    if (!(fref instanceof L.PDFRef)) continue;              // arrays of functions: skip
+    const fn = ctx.lookup(fref);
+    if (!(fn instanceof L.PDFStream)) continue;
+    const ft = fn.dict.get(N('FunctionType'));
+    if (!(ft instanceof L.PDFNumber) || ft.asNumber() !== 4) continue;
+    if (fn.dict.get(N('DecodeParms'))) continue;            // predictor on a function stream: skip
+
+    let raw = fn.contents;
+    const filt = fn.dict.get(N('Filter'));
+    const fname = filt ? filt.toString() : '';
+    if (/FlateDecode/.test(fname)) {
+      raw = await datumInflate(raw);
+      if (!raw) continue;
+    } else if (fname.replace(/[\[\]\s]/g, '')) {
+      continue;                                             // some other filter
+    }
+
+    let src = '';
+    for (let i = 0; i < raw.length; i++) src += String.fromCharCode(raw[i]);
+    const a = src.indexOf('{'), b = src.lastIndexOf('}');
+    if (a < 0 || b <= a) continue;
+    const sep = datumSeparableAxis(src.slice(a + 1, b));
+    if (!sep) continue;
+
+    // Domain for the surviving axis, and the segment it runs along.
+    const dd = sep.axis === 'x' ? [D[0], D[1]] : [D[2], D[3]];
+    if (!isFinite(dd[0]) || !isFinite(dd[1]) || dd[0] >= dd[1]) continue;
+    const coords = sep.axis === 'x' ? [dd[0], 0, dd[1], 0] : [0, dd[0], 0, dd[1]];
+
+    // New single-input function. Stored uncompressed — it is a couple of
+    // hundred bytes and this copy never reaches disk.
+    const fnStream = ctx.stream('{' + sep.rest + '}', {});
+    fnStream.dict.set(N('FunctionType'), num(4));
+    const fnDom = ctx.obj([]); fnDom.push(num(dd[0])); fnDom.push(num(dd[1]));
+    fnStream.dict.set(N('Domain'), fnDom);
+    const rng = fn.dict.get(N('Range'));
+    if (rng) fnStream.dict.set(N('Range'), rng);
+
+    const shDom = ctx.obj([]); shDom.push(num(dd[0])); shDom.push(num(dd[1]));
+    const shCoords = ctx.obj([]); coords.forEach((v) => shCoords.push(num(v)));
+    const shExtend = ctx.obj([]); shExtend.push(L.PDFBool.True); shExtend.push(L.PDFBool.True);
+
+    sh.set(N('ShadingType'), num(2));
+    sh.set(N('Domain'), shDom);
+    sh.set(N('Coords'), shCoords);
+    sh.set(N('Extend'), shExtend);
+    sh.set(N('Function'), ctx.register(fnStream));
+    fixed++;
+  }
+
+  if (!fixed) return u8;
+  console.info('Datum: rewrote ' + fixed + ' function-based shading' +
+               (fixed === 1 ? '' : 's') + ' as axial so pdf.js can draw ' +
+               (fixed === 1 ? 'it' : 'them') + ' (was painting hotpink)');
+  return new Uint8Array(await doc.save({ useObjectStreams: false }));
+}
+
+// The bytes pdf.js should RENDER. Never the bytes we save — every failure
+// path here returns the input untouched, so the worst case is the pink fills
+// we had before.
+async function datumRenderBytes(u8, force) {
+  try {
+    if (!(u8 instanceof Uint8Array) || u8.length > 100 * 1024 * 1024) return u8;
+    if (!force && !datumHasFunctionShading(u8)) return u8;
+    return await datumFixFunctionShadings(u8);
+  } catch (e) {
+    console.warn('Datum: function-shading repair skipped —', e && e.message);
+    return u8;
+  }
+}
+
 // ---- Layers ----
 let hiddenLayers = new Set();
 // v3.3: per-takeoff-item shape visibility — hide one trade's measurement
@@ -15041,7 +15226,9 @@ document.addEventListener('contextmenu', (e) => {
 async function rebuildPdf(pdfLibDoc) {
   // Save the modified pdf-lib doc back into our state
   currentPdfBytes = new Uint8Array(await pdfLibDoc.save()).slice();
-  pdfDoc = await datumGetDocument({data: currentPdfBytes.slice()}).promise;
+  // force=true: these bytes came out of pdf-lib, which buries shading dicts
+  // in an object stream where the byte-level gate cannot find them.
+  pdfDoc = await datumGetDocument({data: await datumRenderBytes(currentPdfBytes.slice(), true)}).promise;
   if (currentPage >= pdfDoc.numPages) currentPage = pdfDoc.numPages - 1;
   if (currentPage < 0) currentPage = 0;
   renderPage(currentPage);
@@ -16244,7 +16431,7 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
     // build of this tool has to keep opening.
     let cleanBytes = null;
 
-    // 1. v3.33+: a real binary stream object referenced from the Info dict.
+    // 1. v3.34+: a real binary stream object referenced from the Info dict.
     const cleanRef = infoDict.lookup(PDFLib.PDFName.of('BDMCleanSourceRef'));
     if (cleanRef) {
       try { cleanBytes = await _pdfStreamBytes(cleanRef); }
@@ -16252,7 +16439,7 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
       if (cleanBytes && cleanBytes.length === 0) cleanBytes = null;
     }
 
-    // 2. Pre-v3.33: hex string in the Info dict.
+    // 2. Pre-v3.34: hex string in the Info dict.
     const cleanEntry = cleanBytes ? null : infoDict.lookup(PDFLib.PDFName.of('BDMCleanSource'));
     if (cleanEntry) {
       cleanBytes = hexStringToBytes(cleanEntry);
@@ -16304,7 +16491,7 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
 // History: 25MB, then 60MB. Both ceilings existed because the clean source
 // was hex-encoded into an Info dict string, which costs TWO bytes of saved
 // file for every ONE byte of drawing, and builds the whole thing as a
-// JavaScript string first. v3.33 stores it as a real binary stream object
+// JavaScript string first. v3.34 stores it as a real binary stream object
 // instead (see _embedCleanSource), so the overhead is gone and the ceiling
 // is now about what the browser can hold in memory rather than about the
 // encoding. A full A1 set comfortably fits under this.
@@ -16316,8 +16503,8 @@ const BDM_MAX_CLEAN_EMBED_BYTES = 200 * 1024 * 1024; // 200 MB
 //   'deflate'      — zlib-wrapped. This is EXACTLY what a PDF /FlateDecode
 //                    filter means, so a stream compressed this way is
 //                    readable by any PDF library, not just this tool.
-//                    Used by every save from v3.33 on.
-//   'deflate-raw'  — headerless. What saves before v3.33 used, because the
+//                    Used by every save from v3.34 on.
+//   'deflate-raw'  — headerless. What saves before v3.34 used, because the
 //                    payload was a hex string with a private flag rather
 //                    than a real stream. Kept only for reading those files.
 // Both return null when the browser lacks CompressionStream (the save then
@@ -18659,7 +18846,8 @@ async function insertPdfFilesAtIndex(files, insertAtIdx) {
     // Keep current page following the user's view if it was at/after the insert point
     if (currentPage >= startIdx) currentPage += totalInserted;
     currentPdfBytes = new Uint8Array(await base.save()).slice();
-    pdfDoc = await datumGetDocument({data: currentPdfBytes.slice()}).promise;
+    // force=true — see rebuildPdf: pdf-lib output hides shadings in an ObjStm.
+    pdfDoc = await datumGetDocument({data: await datumRenderBytes(currentPdfBytes.slice(), true)}).promise;
     renderPage(currentPage);
     generateThumbnails();
     updatePageIndicator();
@@ -18717,7 +18905,7 @@ async function executeCompare() {
   try {
     let buf = new Uint8Array(await compareFile.arrayBuffer()).slice();
     try { buf = await datumMaybeDecrypt(buf); } catch (e) { if (e && e.datumCancelled) return; }
-    const comparePdf = await datumGetDocument({data: buf}).promise;
+    const comparePdf = await datumGetDocument({data: await datumRenderBytes(buf)}).promise;
     const threshold = parseInt(document.getElementById('compare-threshold')?.value || 30);
 
     // Render current page

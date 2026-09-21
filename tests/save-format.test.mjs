@@ -28,7 +28,7 @@ export async function roundTrip(port, pdfFile) {
       out.buildMs = Math.round(performance.now() - t0);
       out.savedBytes = saved.length;
 
-      // What the pre-v3.33 hex route would have cost for the same clean source
+      // What the pre-v3.34 hex route would have cost for the same clean source
       const oldComp = await _compressBytes(clean);
       const oldPayload = (oldComp && oldComp.length < clean.length ? oldComp.length : clean.length);
       out.legacyBytes = saved.length + oldPayload; // hex is 2 bytes/byte vs the stream's 1
@@ -74,7 +74,7 @@ export async function roundTrip(port, pdfFile) {
       ['no page errors', errors.length === 0],
     ], {
       'original': mb(r.originalBytes) + ' over ' + r.pageCount + ' pages',
-      'saved (v3.33 stream)': mb(r.savedBytes) + '  = ' + (r.savedBytes / r.originalBytes).toFixed(2) + '× original',
+      'saved (v3.34 stream)': mb(r.savedBytes) + '  = ' + (r.savedBytes / r.originalBytes).toFixed(2) + '× original',
       'saved (old hex route)': mb(r.legacyBytes) + '  = ' + (r.legacyBytes / r.originalBytes).toFixed(2) + '× original',
       'build time': r.buildMs + ' ms',
     });

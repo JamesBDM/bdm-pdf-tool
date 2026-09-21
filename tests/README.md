@@ -42,7 +42,7 @@ CHROMIUM_PATH=/path/to/chrome npm test
 - Every markup survives.
 - The saved file opens as an ordinary PDF and the markups really are painted into the
   page, which is what an outside viewer shows.
-- The saved file is smaller than the pre-v3.33 hex route would have made it, and the
+- The saved file is smaller than the pre-v3.34 hex route would have made it, and the
   run prints both sizes so the gap is visible.
 - The degraded path (too big to carry a clean copy) keeps markups editable and bakes
   nothing, so reopening can never show them twice.
