@@ -1569,7 +1569,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
       Snap
     </button>
-    <button class="topbar-btn" id="btn-snap-lines" onclick="toggleContentSnap()" title="Snap to the drawing's lines (walls, gridlines) while measuring — on/off">
+    <button class="topbar-btn" id="btn-snap-lines" onclick="toggleContentSnap()" title="Snap to the drawing's own lines (walls, gridlines) while measuring — exact endpoints, crossings and midpoints on a vector drawing, nearest ink on a scan. On/off">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17L9 11L13 15L21 7"/><circle cx="9" cy="11" r="2.5"/></svg>
       Snap Lines
     </button>
@@ -2032,7 +2032,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.34';
+const APP_VERSION = 'v3.35';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -3954,6 +3954,9 @@ async function renderPage(pageNum) {
 
   redrawAnnotations();
   updateThumbnailHighlight();
+  // Read this sheet's geometry while the user is still getting their bearings,
+  // so the first measurement snaps exactly instead of falling back to pixels.
+  if (typeof vecWarmGeometry === 'function') vecWarmGeometry(pageNum);
 }
 
 // ============================================================
@@ -4016,9 +4019,9 @@ function snapPagePoint(pagePt) {
   lastSnapHit = null;
   if (!snapEnabled && !snapContentEnabled) return pagePt;
   if (!snapEnabled) {
-    // Markup snap off but drawing-line snap on — go straight to raster snap
-    const c0 = snapPageToContent(pagePt);
-    if (c0) { lastSnapHit = { x: c0.x, y: c0.y, type: c0.corner ? 'corner' : 'content' }; return { x: c0.x, y: c0.y }; }
+    // Markup snap off but drawing snap on — go straight to the drawing
+    const c0 = _snapDrawing(pagePt);
+    if (c0) { lastSnapHit = c0; return { x: c0.x, y: c0.y }; }
     return pagePt;
   }
   const tolPage = 8 / currentScale; // 8 screen px
@@ -4059,8 +4062,8 @@ function snapPagePoint(pagePt) {
   }
   if (best) { lastSnapHit = { x: best.x, y: best.y, type: best.type }; return { x: best.x, y: best.y }; }
   // No markup point nearby — try the drawing's own lines (walls, gridlines)
-  const c = snapPageToContent(pagePt);
-  if (c) { lastSnapHit = { x: c.x, y: c.y, type: c.corner ? 'corner' : 'content' }; return { x: c.x, y: c.y }; }
+  const c = _snapDrawing(pagePt);
+  if (c) { lastSnapHit = c; return { x: c.x, y: c.y }; }
   return pagePt;
 }
 
@@ -4168,7 +4171,37 @@ function redrawAnnotations() {
     ctx.setTransform(currentScale, 0, 0, currentScale, 0, 0);
     ctx.strokeStyle = '#00E5A0'; ctx.lineWidth = 2 / currentScale;
     const r = 6 / currentScale;
-    if (lastSnapHit.type === 'mid') {
+    const sx = lastSnapHit.x, sy = lastSnapHit.y;
+    // Vector snaps get CAD's marker vocabulary — square for an endpoint,
+    // triangle for a midpoint, cross for a crossing — plus a word, because
+    // "which of the three lines under my cursor did it pick" is the whole
+    // question when you are measuring a wall junction.
+    const VEC_MARKS = { vend: 'Endpoint', vint: 'Intersection', vmid: 'Midpoint', vline: 'On line' };
+    if (VEC_MARKS[lastSnapHit.type]) {
+      const t = lastSnapHit.type;
+      ctx.beginPath();
+      if (t === 'vend') {
+        ctx.rect(sx - r * 0.85, sy - r * 0.85, r * 1.7, r * 1.7);
+      } else if (t === 'vmid') {
+        ctx.moveTo(sx, sy - r); ctx.lineTo(sx + r, sy + r * 0.8); ctx.lineTo(sx - r, sy + r * 0.8); ctx.closePath();
+      } else if (t === 'vint') {
+        ctx.moveTo(sx - r, sy - r); ctx.lineTo(sx + r, sy + r);
+        ctx.moveTo(sx + r, sy - r); ctx.lineTo(sx - r, sy + r);
+      } else {
+        ctx.arc(sx, sy, r * 0.8, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+      const fs = 11 / currentScale;
+      ctx.font = fs + 'px "Segoe UI", sans-serif';
+      ctx.textBaseline = 'bottom';
+      const label = VEC_MARKS[t];
+      const tw = ctx.measureText(label).width;
+      const lx = sx + r * 1.6, ly = sy - r * 1.2;
+      ctx.fillStyle = 'rgba(12,16,24,0.78)';
+      ctx.fillRect(lx - fs * 0.25, ly - fs * 1.15, tw + fs * 0.5, fs * 1.35);
+      ctx.fillStyle = '#00E5A0';
+      ctx.fillText(label, lx, ly);
+    } else if (lastSnapHit.type === 'mid') {
       ctx.beginPath();
       ctx.moveTo(lastSnapHit.x - r, lastSnapHit.y);
       ctx.lineTo(lastSnapHit.x, lastSnapHit.y - r);
@@ -4225,6 +4258,7 @@ function toggleContentSnap() {
   const btn = document.getElementById('btn-snap-lines');
   if (btn) btn.style.color = snapContentEnabled ? 'var(--accent)' : '';
   showToast('Snap to drawing lines: ' + (snapContentEnabled ? 'ON' : 'OFF'));
+  if (snapContentEnabled && typeof vecWarmGeometry === 'function') vecWarmGeometry();
 }
 
 // ============================================================
@@ -4357,6 +4391,414 @@ function snapPageToContent(pagePt) {
     if (n0.d2 > r * r) return null;
     return { x: (px0 + n0.xx) / factor, y: (py0 + n0.yy) / factor, corner: false };
   } catch (e) { /* tainted canvas or transient state — skip silently */ }
+  return null;
+}
+
+// ============================================================
+// SNAP TO DRAWING GEOMETRY (vector)
+//
+// The raster snap above reads the RENDERED pixels and walks outward to the
+// nearest dark one. That works on anything, including a scan, but it can only
+// ever be as accurate as the pixels on screen: zoomed out, one pixel is a
+// stride of real building, and a "corner" is whatever the ring classifier
+// guessed from a 9-pixel neighbourhood.
+//
+// This reads the drawing's OWN geometry instead — the line and curve
+// operators the PDF is actually built from — and snaps to exact coordinates:
+// a wall's true endpoint, the true crossing of two gridlines, the true
+// midpoint of a beam. The answer does not change with zoom, because it never
+// looks at a pixel.
+//
+// Raster snap stays, and stays necessary: a scanned or photographed drawing
+// has no geometry to read, so _snapDrawing falls back to it. The two are
+// complementary, not rivals.
+// ============================================================
+
+// Hard ceiling on what we index for one page. A dense A1 sheet runs to tens
+// of thousands of segments; the cap is there so a pathological file (a map,
+// a point cloud exported to PDF) degrades to raster snap instead of eating
+// the tab.
+const VEC_MAX_SEGMENTS = 300000;
+// Bézier flattening. Architectural linework is overwhelmingly straight, so
+// curves only need to be good enough to snap along; their true endpoints are
+// kept exactly either way.
+const VEC_CURVE_STEPS = 8;
+// Magnet strength per candidate kind, as a multiple of the base snap radius.
+// An endpoint outranks a crossing, which outranks a midpoint, which outranks
+// a bare point on a line — otherwise the flank of a wall, always nearest,
+// would win every time and you could never hit its corner. Same reasoning as
+// the raster classifier's corner magnet, but with exact geometry behind it.
+const VEC_MAGNET = { end: 1.8, int: 1.5, mid: 1.2, line: 1.0 };
+const VEC_RANK = { end: 0, int: 1, mid: 2, line: 3 };
+
+// Pages to keep indexed. A dense A1 sheet costs a few MB of typed arrays;
+// holding every page of a 200-sheet set would not be reasonable. The oldest
+// entries are dropped first, and the page being viewed is always kept.
+const VEC_CACHE_PAGES = 8;
+
+// Indexing a busy sheet is hundreds of thousands of segments of arithmetic.
+// Running straight through blocks the tab long enough to be felt, so the loops
+// below hand control back whenever they have held it for more than half a
+// frame. The budget is checked on a counter rather than every iteration,
+// because asking the clock 150,000 times is itself the cost we are avoiding.
+//
+// The yield goes through a MessageChannel, not setTimeout(0). Timers are
+// clamped — measured at 3.75 ms a go in Chromium, against 0.01 ms for a
+// channel message. At the couple of hundred yields a dense sheet needs, that
+// is the difference between pacing being free and pacing costing most of a
+// second in pure waiting.
+const _vecYield = (() => {
+  if (typeof MessageChannel !== 'function') return () => new Promise(r => setTimeout(r, 0));
+  const ch = new MessageChannel();
+  let resolve = null;
+  ch.port1.onmessage = () => { const r = resolve; resolve = null; if (r) r(); };
+  return () => new Promise(r => { resolve = r; ch.port2.postMessage(0); });
+})();
+
+function _vecPacer(budgetMs) {
+  const now = () => (typeof performance !== 'undefined') ? performance.now() : Date.now();
+  let t = now();
+  return async () => {
+    if (now() - t < (budgetMs || 8)) return;
+    await _vecYield();
+    t = now();
+  };
+}
+
+// 2D affine helpers, canvas convention: a point maps x' = a·x + c·y + e,
+// y' = b·x + d·y + f, and compose(m1, m2) applies m2 first.
+function _vecCompose(m1, m2) {
+  return [
+    m1[0] * m2[0] + m1[2] * m2[1],
+    m1[1] * m2[0] + m1[3] * m2[1],
+    m1[0] * m2[2] + m1[2] * m2[3],
+    m1[1] * m2[2] + m1[3] * m2[3],
+    m1[0] * m2[4] + m1[2] * m2[5] + m1[4],
+    m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
+  ];
+}
+
+// Walk a page's operator list and collect every painted straight segment, in
+// page space (the same units annotations use, so no conversion downstream).
+//
+// Text never appears here — pdf.js emits glyphs through showText, not as
+// path operators — so the index is drawing geometry only, which is exactly
+// what you want to measure against.
+async function _vecExtractSegments(page, viewport) {
+  const OPS = pdfjsLib.OPS;
+  const opList = await page.getOperatorList();
+  const fns = opList.fnArray, args = opList.argsArray;
+
+  // A path that is only ever used to clip is invisible. Snapping to the edge
+  // of an invisible box is baffling, so those are skipped.
+  const PAINTED = new Set([OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill,
+    OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke]);
+  const isPainted = (from) => {
+    for (let j = from, seen = 0; j < fns.length && seen < 24; j++, seen++) {
+      const fn = fns[j];
+      if (PAINTED.has(fn)) return true;
+      if (fn === OPS.endPath) return false;          // clip-only path
+      if (fn === OPS.constructPath) return false;    // next path started; this one was never painted
+      // clip / eoClip may precede a real paint op ("W S"), so keep looking
+    }
+    return false;
+  };
+
+  const out = [];
+  let ctm = viewport.transform.slice();
+  const stack = [];
+  let truncated = false;
+
+  const push = (x1, y1, x2, y2) => {
+    if (out.length >= VEC_MAX_SEGMENTS * 4) { truncated = true; return; }
+    // Drop zero-length segments: they carry no direction and would show up as
+    // duplicate endpoints.
+    if (Math.abs(x1 - x2) < 1e-9 && Math.abs(y1 - y2) < 1e-9) return;
+    out.push(x1, y1, x2, y2);
+  };
+
+  const pace = _vecPacer(6);
+  for (let i = 0; i < fns.length && !truncated; i++) {
+    if ((i & 127) === 0) await pace();
+    const fn = fns[i], a = args[i];
+    if (fn === OPS.save) { stack.push(ctm.slice()); continue; }
+    if (fn === OPS.restore) { if (stack.length) ctm = stack.pop(); continue; }
+    if (fn === OPS.transform) { ctm = _vecCompose(ctm, a); continue; }
+    if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm.slice()); if (a && a[0]) ctm = _vecCompose(ctm, a[0]); continue; }
+    if (fn === OPS.paintFormXObjectEnd) { if (stack.length) ctm = stack.pop(); continue; }
+    if (fn !== OPS.constructPath) continue;
+    if (!isPainted(i + 1)) continue;
+
+    const sub = a[0], co = a[1];
+    const m = ctm;
+    const tx = (x, y) => m[0] * x + m[2] * y + m[4];
+    const ty = (x, y) => m[1] * x + m[3] * y + m[5];
+
+    let k = 0;                       // cursor into the coord array
+    let cx = 0, cy = 0;              // current point, PDF user space
+    let sx = 0, sy = 0;              // subpath start, for closePath
+    let have = false;
+
+    for (let s = 0; s < sub.length; s++) {
+      const op = sub[s];
+      if (op === OPS.moveTo) {
+        if (k + 2 > co.length) break;
+        cx = co[k++]; cy = co[k++]; sx = cx; sy = cy; have = true;
+      } else if (op === OPS.lineTo) {
+        if (k + 2 > co.length) break;
+        const nx = co[k++], ny = co[k++];
+        if (have) push(tx(cx, cy), ty(cx, cy), tx(nx, ny), ty(nx, ny));
+        cx = nx; cy = ny; have = true;
+      } else if (op === OPS.curveTo || op === OPS.curveTo2 || op === OPS.curveTo3) {
+        // curveTo: two control points then the end. curveTo2 ("v") reuses the
+        // current point as the first control; curveTo3 ("y") reuses the end
+        // point as the second.
+        const need = (op === OPS.curveTo) ? 6 : 4;
+        if (k + need > co.length) break;
+        let c1x, c1y, c2x, c2y, ex, ey;
+        if (op === OPS.curveTo) {
+          c1x = co[k++]; c1y = co[k++]; c2x = co[k++]; c2y = co[k++]; ex = co[k++]; ey = co[k++];
+        } else if (op === OPS.curveTo2) {
+          c1x = cx; c1y = cy; c2x = co[k++]; c2y = co[k++]; ex = co[k++]; ey = co[k++];
+        } else {
+          c1x = co[k++]; c1y = co[k++]; ex = co[k++]; ey = co[k++]; c2x = ex; c2y = ey;
+        }
+        if (have) {
+          let px = cx, py = cy;
+          for (let t = 1; t <= VEC_CURVE_STEPS; t++) {
+            const u = t / VEC_CURVE_STEPS, v = 1 - u;
+            const qx = v*v*v*cx + 3*v*v*u*c1x + 3*v*u*u*c2x + u*u*u*ex;
+            const qy = v*v*v*cy + 3*v*v*u*c1y + 3*v*u*u*c2y + u*u*u*ey;
+            push(tx(px, py), ty(px, py), tx(qx, qy), ty(qx, qy));
+            px = qx; py = qy;
+          }
+        }
+        cx = ex; cy = ey; have = true;
+      } else if (op === OPS.closePath) {
+        if (have) push(tx(cx, cy), ty(cx, cy), tx(sx, sy), ty(sx, sy));
+        cx = sx; cy = sy;
+      } else if (op === OPS.rectangle) {
+        if (k + 4 > co.length) break;
+        const x = co[k++], y = co[k++], w = co[k++], h = co[k++];
+        const c = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+        for (let e = 0; e < 4; e++) {
+          const p = c[e], q = c[(e + 1) % 4];
+          push(tx(p[0], p[1]), ty(p[0], p[1]), tx(q[0], q[1]), ty(q[0], q[1]));
+        }
+        cx = x; cy = y; sx = x; sy = y; have = true;
+      }
+    }
+  }
+  return { segs: new Float32Array(out), count: out.length / 4, truncated };
+}
+
+// Uniform grid over the page so a snap query looks at a handful of segments
+// instead of all of them. Stored as CSR (counts -> offsets -> items) rather
+// than an array of arrays: one allocation, and no per-cell object for a grid
+// that can run to tens of thousands of cells.
+async function _vecBuildGrid(segs, count, viewport) {
+  const W = Math.max(1, viewport.width), H = Math.max(1, viewport.height);
+  // Aim for a handful of segments per cell, and never finer than 8 page units
+  // (a grid finer than the snap radius buys nothing but memory).
+  const cell = Math.max(8, Math.sqrt((W * H) / Math.max(1, count)) * 2);
+  const cols = Math.max(1, Math.ceil(W / cell)), rows = Math.max(1, Math.ceil(H / cell));
+  const nCells = cols * rows;
+
+  // Walk each segment across the cells it actually crosses by sampling at
+  // half-cell steps. A long gridline lands in every cell along its length,
+  // which is what makes it findable; using its bounding box instead would put
+  // a diagonal into thousands of cells it never touches.
+  const visit = (i, fn) => {
+    const x1 = segs[i*4], y1 = segs[i*4+1], x2 = segs[i*4+2], y2 = segs[i*4+3];
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const steps = Math.min(4096, Math.max(1, Math.ceil(len / (cell / 2))));
+    let last = -1;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const gx = Math.min(cols - 1, Math.max(0, Math.floor((x1 + (x2 - x1) * t) / cell)));
+      const gy = Math.min(rows - 1, Math.max(0, Math.floor((y1 + (y2 - y1) * t) / cell)));
+      const c = gy * cols + gx;
+      if (c !== last) { fn(c); last = c; }
+    }
+  };
+
+  const pace = _vecPacer(6);
+  const counts = new Int32Array(nCells + 1);
+  for (let i = 0; i < count; i++) {
+    if ((i & 255) === 0) await pace();
+    visit(i, c => counts[c + 1]++);
+  }
+  for (let c = 0; c < nCells; c++) counts[c + 1] += counts[c];
+  const items = new Int32Array(counts[nCells]);
+  const fill = counts.slice();
+  for (let i = 0; i < count; i++) {
+    if ((i & 255) === 0) await pace();
+    visit(i, c => { items[fill[c]++] = i; });
+  }
+
+  return { cell, cols, rows, offsets: counts, items };
+}
+
+// Geometry for a page, built once and cached on the pdf.js document object.
+// Hanging it there rather than in a module-level map means it is discarded
+// automatically whenever the document is replaced — opening a file, inserting
+// or deleting a page — with no invalidation hook to forget to call.
+function _vecGeometry(pageIdx) {
+  if (!pdfDoc) return null;
+  const cache = pdfDoc.__datumVecCache || (pdfDoc.__datumVecCache = new Map());
+  const hit = cache.get(pageIdx);
+  if (hit) return hit.ready ? hit : null;   // present but still building
+
+  const entry = { ready: false };
+  cache.set(pageIdx, entry);
+  (async () => {
+    try {
+      const page = await pdfDoc.getPage(pageIdx + 1);
+      const viewport = page.getViewport({ scale: 1 });
+      const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+      const { segs, count, truncated } = await _vecExtractSegments(page, viewport);
+      if (!count) { entry.empty = true; entry.ready = true; return; }
+      entry.segs = segs;
+      entry.count = count;
+      entry.truncated = truncated;
+      entry.grid = await _vecBuildGrid(segs, count, viewport);
+      entry.ready = true;
+      // Keep the index bounded: drop the oldest pages, never this one.
+      if (cache.size > VEC_CACHE_PAGES) {
+        for (const k of cache.keys()) {
+          if (cache.size <= VEC_CACHE_PAGES) break;
+          if (k !== pageIdx) cache.delete(k);
+        }
+      }
+      console.log('Datum: indexed ' + count + ' drawing segments on page ' + (pageIdx + 1) +
+        ' in ' + Math.round(((typeof performance !== 'undefined') ? performance.now() : 0) - t0) + ' ms' +
+        (truncated ? ' (truncated at the segment cap)' : ''));
+      // The pointer may already be sitting where a snap should now be sharper.
+      if (typeof redrawAnnotations === 'function') redrawAnnotations();
+    } catch (e) {
+      console.warn('Datum: could not read drawing geometry for page ' + (pageIdx + 1), e);
+      entry.empty = true; entry.ready = true;
+    }
+  })();
+  return null;
+}
+
+// Kick off the index for a page before it is needed, so the first measurement
+// on a freshly opened sheet is already exact.
+function vecWarmGeometry(pageIdx) {
+  if (!snapContentEnabled || !pdfDoc) return;
+  const idx = (pageIdx === undefined) ? currentPage : pageIdx;
+  if (idx < 0) return;
+  const run = () => { try { _vecGeometry(idx); } catch (e) {} };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });
+  else setTimeout(run, 300);
+}
+
+// Distance from a point to a segment, plus the closest point on it.
+function _vecClosestOnSeg(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return { x: x1, y: y1, t: 0 };
+  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  return { x: x1 + dx * t, y: y1 + dy * t, t };
+}
+
+// Where two segments cross, or null. Only true crossings count — two lines
+// that would meet if extended are not an intersection you can measure to.
+function _vecSegIntersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
+  const rx = ax2 - ax1, ry = ay2 - ay1;
+  const sx = bx2 - bx1, sy = by2 - by1;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-9) return null;           // parallel or degenerate
+  const t = ((bx1 - ax1) * sy - (by1 - ay1) * sx) / den;
+  const u = ((bx1 - ax1) * ry - (by1 - ay1) * rx) / den;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: ax1 + rx * t, y: ay1 + ry * t };
+}
+
+// The snap itself. Returns {x, y, kind} or null.
+function snapPageToVector(pagePt) {
+  if (!snapContentEnabled || !pdfDoc) return null;
+  const geo = _vecGeometry(currentPage);
+  if (!geo || geo.empty || !geo.count) return null;
+
+  const base = 8 / currentScale;                    // ~8 screen px, as elsewhere
+  const reach = base * VEC_MAGNET.end;              // widest magnet decides the search
+  const g = geo.grid, segs = geo.segs;
+
+  const gx0 = Math.max(0, Math.floor((pagePt.x - reach) / g.cell));
+  const gx1 = Math.min(g.cols - 1, Math.floor((pagePt.x + reach) / g.cell));
+  const gy0 = Math.max(0, Math.floor((pagePt.y - reach) / g.cell));
+  const gy1 = Math.min(g.rows - 1, Math.floor((pagePt.y + reach) / g.cell));
+  if (gx1 < gx0 || gy1 < gy0) return null;
+
+  // Gather the nearby segments once, de-duplicated (a segment sits in every
+  // cell it crosses, so the same index comes back repeatedly).
+  const near = [];
+  const seen = new Set();
+  for (let gy = gy0; gy <= gy1; gy++) {
+    for (let gx = gx0; gx <= gx1; gx++) {
+      const c = gy * g.cols + gx;
+      for (let p = g.offsets[c]; p < g.offsets[c + 1]; p++) {
+        const si = g.items[p];
+        if (seen.has(si)) continue;
+        seen.add(si);
+        near.push(si);
+        if (near.length >= 600) break;              // dense hatching — plenty to snap to
+      }
+      if (near.length >= 600) break;
+    }
+    if (near.length >= 600) break;
+  }
+  if (!near.length) return null;
+
+  let best = null;
+  const offer = (x, y, kind) => {
+    const d = Math.hypot(x - pagePt.x, y - pagePt.y);
+    if (d > base * VEC_MAGNET[kind]) return;
+    if (!best || VEC_RANK[kind] < VEC_RANK[best.kind] ||
+        (VEC_RANK[kind] === VEC_RANK[best.kind] && d < best.d)) {
+      best = { x, y, kind, d };
+    }
+  };
+
+  for (const si of near) {
+    const x1 = segs[si*4], y1 = segs[si*4+1], x2 = segs[si*4+2], y2 = segs[si*4+3];
+    offer(x1, y1, 'end');
+    offer(x2, y2, 'end');
+    offer((x1 + x2) / 2, (y1 + y2) / 2, 'mid');
+    const c = _vecClosestOnSeg(pagePt.x, pagePt.y, x1, y1, x2, y2);
+    offer(c.x, c.y, 'line');
+  }
+
+  // Crossings are computed on the fly among the nearby segments only. Doing it
+  // up front would be quadratic over the whole sheet for points the pointer
+  // will almost never visit.
+  if (near.length <= 120) {
+    for (let i = 0; i < near.length; i++) {
+      const a = near[i];
+      const ax1 = segs[a*4], ay1 = segs[a*4+1], ax2 = segs[a*4+2], ay2 = segs[a*4+3];
+      for (let j = i + 1; j < near.length; j++) {
+        const b = near[j];
+        const p = _vecSegIntersect(ax1, ay1, ax2, ay2,
+          segs[b*4], segs[b*4+1], segs[b*4+2], segs[b*4+3]);
+        if (p) offer(p.x, p.y, 'int');
+      }
+    }
+  }
+
+  return best ? { x: best.x, y: best.y, kind: best.kind } : null;
+}
+
+// One entry point for "snap to the drawing". Exact geometry when the sheet
+// has any and it is indexed; the raster reader otherwise, which is what keeps
+// scans and not-yet-indexed pages working.
+function _snapDrawing(pagePt) {
+  const v = snapPageToVector(pagePt);
+  if (v) return { x: v.x, y: v.y, type: 'v' + v.kind };
+  const c = snapPageToContent(pagePt);
+  if (c) return { x: c.x, y: c.y, type: c.corner ? 'corner' : 'content' };
   return null;
 }
 

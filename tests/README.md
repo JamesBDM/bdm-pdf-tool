@@ -1,9 +1,15 @@
-# Datum save-format tests
+# Datum tests
 
-These check the one thing in Datum that quietly ruins a job if it breaks: a saved PDF
-has to show its markups in Adobe or Chrome **and** reopen in Datum with every markup
-live, editable, and sitting on a clean background rather than doubled up on top of a
-baked-in copy of itself.
+These cover the two things in Datum that quietly ruin a job if they break: the save
+format, and snapping.
+
+**The save format.** A saved PDF has to show its markups in Adobe or Chrome **and**
+reopen in Datum with every markup live, editable, and sitting on a clean background
+rather than doubled up on top of a baked-in copy of itself.
+
+**Snapping to the drawing.** A measurement that lands a pixel off the wall is wrong,
+and wrong quietly. The snap tests assert exact coordinates against fixtures whose
+geometry is known to the decimal.
 
 They drive the real `BDM-PDF-Markup-Tool.html` in a real Chromium.
 
@@ -55,6 +61,19 @@ the user goes through.
   double-stacks and nothing grows round over round.
 - Files written by older builds still open: both the compressed and uncompressed
   hex formats, with their clean source intact.
+
+**Snap to drawing geometry** — the fixtures are hand-written PDF content streams, so
+the tests assert against coordinates known exactly.
+
+- A crossing snaps to the exact intersection, a line end to the exact endpoint, a span
+  to its exact midpoint, mid-span to the exact perpendicular foot.
+- The same point at 0.5x, 1x, 2x and 4x zoom gives the **same** answer. This is the
+  whole point of reading geometry instead of pixels.
+- Text is not snappable, and neither is an invisible clip path.
+- Scaled, nested and form-XObject transforms all place geometry where it is drawn
+  rather than where its local coordinates say, on a flat page and a rotated one.
+- On a sheet of 150,000 segments: indexed in about two seconds, and a snap query costs
+  0.12 ms against a 16 ms frame.
 
 ## How it works, and the traps
 

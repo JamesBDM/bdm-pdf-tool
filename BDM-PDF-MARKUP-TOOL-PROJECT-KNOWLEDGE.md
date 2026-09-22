@@ -220,7 +220,7 @@ These are approximate — they shift as code is edited:
 
 ## Tech Debt & Known Limitations
 
-1. **No snap to PDF native geometry** — snap only works on BDM annotations, not the underlying architectural drawing lines. Would require parsing PDF path operators (complex).
+1. ~~**No snap to PDF native geometry**~~ — fixed in v3.35. Snap now reads the PDF's own path operators and lands on exact endpoints, crossings and midpoints of the drawing itself. Raster snap remains as the fallback for scans. See the v3.35 entry.
 
 2. ~~**Clean source size limit**~~ — fixed in v3.34. The clean source is now a binary stream object rather than a hex string, so the ceiling moved 25MB → 60MB → 200MB and a saved file is ~2× the original instead of ~3×. See the v3.34 entry.
 
@@ -1923,3 +1923,158 @@ simulating clicks, which makes them fast and stable. One trap cost twenty minute
 `let`/`const` at the top level of a classic script are **not** properties of `window`, so
 `page.waitForFunction(() => window.currentPdfBytes)` waits forever. Use the bare identifier
 with a `typeof` guard.
+
+---
+
+## v3.35 (22 Sep 2026) — snap to the drawing's own geometry
+
+### The gap
+
+Tech debt item 1, open since the first build: *"No snap to PDF native geometry —
+snap only works on BDM annotations, not the underlying architectural drawing lines.
+Would require parsing PDF path operators (complex)."*
+
+That had been half-closed since v3.11 by the **raster** snap, which reads the rendered
+pixels and walks outward to the nearest dark one, with a 16-point ring classifier to
+prefer corners and junctions over the flank of a line. It works on anything, a scan
+included, and it is genuinely clever. It is also, unavoidably, as accurate as the
+pixels on screen and no more:
+
+- Zoomed out on an A1 sheet, one canvas pixel is a stride of real building. The snap
+  lands on a pixel centre, and the measurement carries that error.
+- The same click at two zoom levels gives two different answers.
+- A "corner" is whatever the ring classifier inferred from a nine-pixel neighbourhood,
+  not a corner the drawing actually contains.
+- There is no such thing as a true intersection. Where two gridlines cross, the
+  classifier finds a junction-shaped blob and snaps to the darkest pixel in it.
+- Anything dark is a candidate — dimension text, hatching, the title block.
+
+### What v3.35 does instead
+
+Read the geometry the PDF is actually built from. `page.getOperatorList()` hands back
+the page's drawing operators; walking them with a transform stack yields every painted
+straight segment in page space, and from those come four kinds of exact snap:
+
+| marker | snap | magnet |
+|--------|------|--------|
+| square | **Endpoint** — a wall's true end | 1.8× |
+| cross | **Intersection** — the true crossing of two lines | 1.5× |
+| triangle | **Midpoint** — the true middle of a span | 1.2× |
+| circle | **On line** — the true perpendicular foot | 1.0× |
+
+The magnets are graded for the same reason the raster classifier has a corner magnet:
+the flank of a wall is always nearer than its corner, so without a bias you could never
+hit the corner. Now the bias sits on top of exact geometry rather than guessed geometry.
+
+Each marker is labelled on screen. "Which of the three lines under my cursor did it
+pick" is the whole question when you are measuring a wall junction, and a shape alone
+does not answer it.
+
+**The answer no longer moves with zoom.** The test probes the same crossing at 0.5×, 1×,
+2× and 4× and gets `400.000, 300.000` every time.
+
+### Raster snap stays, and is still load-bearing
+
+A scanned or photographed drawing has no geometry to read. `_snapDrawing` tries vector
+first and falls through to the raster reader, so scans behave exactly as before, and so
+does a page whose index has not finished building. The two are complementary; this is
+not a replacement.
+
+### Reading the operators
+
+`_vecExtractSegments` walks `fnArray` / `argsArray` keeping a CTM stack:
+
+- `save` / `restore` push and pop; `transform` composes.
+- `paintFormXObjectBegin` pushes **and** composes its own matrix (pdf.js's canvas does
+  `save()` then `transform(matrix)` there, so this has to match or everything inside a
+  form XObject lands in the wrong place). `paintFormXObjectEnd` pops.
+- Path sub-ops: `moveTo`, `lineTo`, `closePath`, `rectangle`, and the three curve forms.
+  `curveTo2` ("v") reuses the current point as its first control; `curveTo3` ("y")
+  reuses the end point as its second. Getting those two wrong bends curves subtly and
+  is invisible until someone measures one.
+- Béziers flatten to 8 segments. Architectural linework is overwhelmingly straight, and
+  a curve's true ends survive exactly either way.
+
+Two things are deliberately excluded, and both are tested:
+
+- **Text.** pdf.js emits glyphs through `showText`, never as path operators, so text is
+  excluded for free — a measurement can never land on the side of a letter.
+- **Clip-only paths.** A path followed by `clip`+`endPath` and never filled or stroked
+  is invisible. Snapping to the edge of an invisible box is baffling, so `isPainted`
+  looks ahead for a real paint op and skips the path if it only ever clips.
+
+**The base transform is `viewport.transform` at scale 1**, which is the same space
+annotations live in — so extracted coordinates need no conversion downstream, and page
+`/Rotate` is handled by the viewport rather than by hand. Verified on a 90° page.
+
+### Making it fast enough to run on every mouse move
+
+A uniform grid over the page, stored as CSR (counts → offsets → items) rather than an
+array of arrays: one allocation instead of tens of thousands of per-cell objects. Each
+segment is walked into every cell it *crosses*, by sampling at half-cell steps —
+bounding boxes would put a long diagonal into thousands of cells it never touches, and
+long gridlines are exactly what you most want to find.
+
+Intersections are computed **on the fly** between the handful of segments near the
+cursor, never precomputed. Precomputing is quadratic over the sheet, for points the
+pointer will almost never visit.
+
+Measured on a synthetic A1 sheet of 150,000 segments — far denser than a real drawing:
+
+| | |
+|---|---|
+| segments indexed | 149,999 |
+| index memory | 8.4 MB |
+| one snap query | **0.12 ms** (a frame is 16 ms) |
+| whole-page index | ~2 s, about half of it pdf.js parsing in its worker |
+
+The index is built lazily per page, warmed from `renderPage` on an idle callback so the
+first measurement on a freshly opened sheet is already exact, and cached **on the pdf.js
+document object** (`pdfDoc.__datumVecCache`). That last choice matters: the cache dies
+with the document automatically, so opening a file, inserting a page or deleting one
+cannot leave a stale index behind — there is no invalidation hook to forget to call.
+Bounded to 8 pages, oldest dropped first, current page always kept.
+
+### Gotcha: yielding with setTimeout costs more than the work
+
+The extraction and grid loops hand control back whenever they have held it for more
+than 6 ms, so a busy sheet never freezes the tab. The obvious yield —
+`await new Promise(r => setTimeout(r, 0))` — **measured 3.75 ms per call** in Chromium,
+against **0.01 ms** for a `MessageChannel` round trip. Timers are clamped; channel
+messages are not. At the couple of hundred yields a dense sheet needs, that is the
+difference between pacing being free and pacing costing most of a second in pure
+waiting. `_vecYield` uses a MessageChannel, with a setTimeout fallback.
+
+Worth knowing for any future chunked work in this file, and worth knowing that
+**`requestAnimationFrame` deltas are not a usable jank metric in headless Chromium** —
+frames come at ~15 fps there even while the main thread sits idle waiting on the pdf.js
+worker, so a "worst frame" number measures the harness, not the code.
+
+### Verification
+
+12 geometry checks, 6 transform checks run twice (flat page and 90°-rotated), and 4
+performance checks, all in real Chromium against the real file. The fixtures are
+hand-written PDF content streams rather than pdf-lib drawing calls: the thing under test
+is how the app reads path operators, so the fixture is literally those operators, and a
+clip-only path (which no drawing helper will emit) is expressible.
+
+Asserted to 0.01–0.02 page units — this is meant to be exact, not close:
+
+- A crossing snaps to the exact intersection; a line end to the exact endpoint; a span
+  to its exact midpoint; mid-span to the exact perpendicular foot.
+- A rectangle's corner is an endpoint.
+- Text is not snappable. An invisible clip path is not snappable.
+- A scaled-and-translated line, a doubly-nested transform, and geometry inside a form
+  XObject all land where they are drawn, not where their local coordinates say.
+- A curve keeps its exact end point.
+- The same point at four zoom levels gives the same answer.
+- The result reaches the tools through `snapPagePoint`, and the existing toggle still
+  turns the whole thing off.
+
+**Fixture trap, for next time:** pdf-lib's `pushOperators` does not reliably append to a
+page already drawn on by the high-level helpers — the first attempt at the clip-only
+path produced a file whose content stream was 8 bytes, with every earlier drawing call
+silently gone. The Node probe that "proved" extraction worked had been run against a
+different fixture. Hand-writing the content stream removed the whole class of problem.
+
+`node check-syntax.js` clean. All 49 checks in `tests/` pass.
