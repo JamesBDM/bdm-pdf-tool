@@ -1518,6 +1518,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();setTool('measure')">Measure Length <span class="k">M</span></div>
       <div class="ami" onclick="amClose();setTool('polyline')">Polyline Measure <span class="k">L</span></div>
       <div class="ami" onclick="amClose();setTool('area')">Measure Area <span class="k">A</span></div>
+      <div class="ami" onclick="amClose();setTool('measurebox')">Box Measure (length × width) <span class="k">U</span></div>
       <div class="ami" onclick="amClose();setTool('magicarea')">Room Fill <span class="k">F</span></div>
       <div class="ami" onclick="amClose();setTool('dimension')">Dimension Line <span class="k">I</span></div>
       <div class="ami" onclick="amClose();setTool('count')">Count <span class="k">C</span></div>
@@ -1649,6 +1650,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
           <button class="tool-btn" data-tool="measure" onclick="setTool('measure')" title="Measure Length (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 20L20 2"/><path d="M6.5 15.5l2-2m2.5-2.5l2-2m2.5-2.5l2-2"/></svg><span class="shortcut">M</span></button>
           <button class="tool-btn" data-tool="polyline" onclick="setTool('polyline')" title="Polyline Measure (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 8 9 14 13 20 5"/></svg><span class="shortcut">L</span></button>
           <button class="tool-btn" data-tool="area" onclick="setTool('area')" title="Measure Area (A)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1" stroke-dasharray="4 2"/></svg><span class="shortcut">A</span></button>
+          <button class="tool-btn" data-tool="measurebox" onclick="setTool('measurebox')" title="Box Measure — drag a box to measure its length and width (U)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="7" width="14" height="12" rx="1"/><path d="M5 3h14M5 1.5v3M19 1.5v3" stroke-width="1.5"/><path d="M22 7v12M20.5 7h3M20.5 19h3" stroke-width="1.5"/></svg><span class="shortcut">U</span></button>
           <button class="tool-btn" data-tool="magicarea" onclick="setTool('magicarea')" title="Room Fill — click inside a room to measure its area automatically (F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V4a1 1 0 011-1h3M17 3h3a1 1 0 011 1v3M21 17v3a1 1 0 01-1 1h-3M7 21H4a1 1 0 01-1-1v-3"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg><span class="shortcut">F</span></button>
           <button class="tool-btn" data-tool="dimension" onclick="setTool('dimension')" title="Dimension Line (I)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="8" x2="3" y2="16"/><line x1="21" y1="8" x2="21" y2="16"/></svg><span class="shortcut">I</span></button>
           <button class="tool-btn" data-tool="count" onclick="setTool('count')" title="Count (C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><circle cx="8" cy="16" r="3"/><circle cx="16" cy="16" r="3"/></svg><span class="shortcut">C</span></button>
@@ -2032,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.33';
+const APP_VERSION = 'v3.34';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -2228,7 +2230,7 @@ function _gestureTouches() {
 // onCanvasMouseUp is what normally commits a drag to history; a gesture never
 // reaches it, so without this the markup would be left moved AND unrecorded --
 // Undo could not get it back.
-const _SNAP_KEYS = ['points', 'anchor', 'knees', 'textPos', 'labelOffset', 'rotation'];
+const _SNAP_KEYS = ['points', 'anchor', 'knees', 'textPos', 'labelOffset', 'rotation', 'dimOffset'];
 function _snapshotDragTarget() {
   const a = dragAnnotation || resizeAnnotation || labelDragAnnotation || rotateAnnotation;
   if (!a) { _dragSnap = null; return; }
@@ -2769,7 +2771,7 @@ let calAllPages = false;
 // Tool names
 const toolNames = {
   select:'Select', pan:'Pan', calibrate:'Calibrate', measure:'Measure Length',
-  polyline:'Polyline Measure', polyshape:'Polyline Shape', area:'Measure Area', dimension:'Dimension Line',
+  polyline:'Polyline Measure', polyshape:'Polyline Shape', area:'Measure Area', measurebox:'Box Measure', dimension:'Dimension Line',
   count:'Count', line:'Line', arrow:'Arrow', rectangle:'Rectangle', ellipse:'Ellipse',
   polygon:'Polygon', cloud:'Revision Cloud', text:'Text', callout:'Callout',
   stamp:'Stamp', pen:'Pen', highlight:'Highlight', cutcontent:'Cut Content', eraser:'Delete',
@@ -3974,7 +3976,7 @@ let snapContentEnabled = true;
 try { snapContentEnabled = localStorage.getItem('bdm-snap-content') !== '0'; } catch (e) {}
 let lastSnapHit = null; // for drawing a snap indicator
 // Tools that show a snap indicator while hovering (before the first click)
-const SNAP_HOVER_TOOLS = ['measure','polyline','polyshape','area','dimension','calibrate','line','arrow','polygon'];
+const SNAP_HOVER_TOOLS = ['measure','polyline','polyshape','area','measurebox','dimension','calibrate','line','arrow','polygon'];
 
 // Select-mode hover cursor: resize arrows over handles, move cursor over bodies.
 function updateSelectHoverCursor(screenPt) {
@@ -4001,6 +4003,8 @@ function updateSelectHoverCursor(screenPt) {
         } else if (['stamp','legend','table'].includes(sel.type)) {
           // 4 corner handles: 0=TL 1=TR 2=BL 3=BR — proportional resize
           cursor = ['nwse-resize','nesw-resize','nesw-resize','nwse-resize'][hi] || 'move';
+        } else if (['measure','dimension'].includes(sel.type) && hi === 2) {
+          cursor = 'move'; // v3.34 offset handle
         } else cursor = 'crosshair';
       }
     }
@@ -4836,7 +4840,17 @@ function drawAnnotation(ctx, ann, isSelected) {
     ctx.globalAlpha = 1; ctx.fillStyle = '#E5432E';
     const hs = 5 / currentScale; // handle size stays usable at any zoom
     const pts = getAnnotationHandlePoints(ann);
-    pts.forEach(p => { if(p) ctx.fillRect(p.x - hs, p.y - hs, hs*2, hs*2); });
+    const hasOffHandle = ['measure','dimension'].includes(ann.type) && pts.length === 3;
+    pts.forEach((p, i) => {
+      if (!p) return;
+      if (hasOffHandle && i === 2) {
+        // v3.34 offset handle — a diamond, so it reads differently from the ends
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - hs * 1.4); ctx.lineTo(p.x + hs * 1.4, p.y);
+        ctx.lineTo(p.x, p.y + hs * 1.4); ctx.lineTo(p.x - hs * 1.4, p.y);
+        ctx.closePath(); ctx.fill();
+      } else ctx.fillRect(p.x - hs, p.y - hs, hs*2, hs*2);
+    });
     // Draw bounding box for resizable shapes
     if (BOX2_TYPES.includes(ann.type) && ann.points && ann.points.length === 2) {
       ctx.strokeStyle = '#E5432E'; ctx.lineWidth = 1 / currentScale; ctx.setLineDash([4/currentScale, 4/currentScale]);
@@ -5006,16 +5020,52 @@ function getCentroid(points) {
 }
 
 // Individual drawing functions
+// v3.34 — dimension-line offset (the Bluebeam "leader"). A measure or
+// dimension line can be pulled off the points it measures: ann.dimOffset is
+// the signed perpendicular distance (page units) from the measured points to
+// where the line is drawn. The measured length is ALWAYS p1→p2 — the offset
+// only moves the ink. Returns the drawn endpoints and the unit normal.
+function dimOffsetGeom(ann) {
+  const [p1, p2] = ann.points;
+  const dx = p2.x - p1.x, dy = p2.y - p1.y, len = Math.hypot(dx, dy) || 1;
+  const n = { x: -dy / len, y: dx / len };
+  const off = +ann.dimOffset || 0;
+  return {
+    n, off,
+    a: { x: p1.x + n.x * off, y: p1.y + n.y * off },
+    b: { x: p2.x + n.x * off, y: p2.y + n.y * off }
+  };
+}
+// Thin extension lines from each measured point out to (just past) the
+// offset dimension line. Small gap at the measured end, like a drafted dim.
+function drawDimExtensions(ctx, ann, g) {
+  const [p1, p2] = ann.points;
+  const s = g.off < 0 ? -1 : 1;
+  const gap = Math.min(2, Math.abs(g.off) / 4), over = 4;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.lineWidth = Math.max(0.5, (ann.thickness || 1) * 0.6);
+  [p1, p2].forEach(p => {
+    ctx.beginPath();
+    ctx.moveTo(p.x + g.n.x * gap * s, p.y + g.n.y * gap * s);
+    ctx.lineTo(p.x + g.n.x * (g.off + over * s), p.y + g.n.y * (g.off + over * s));
+    ctx.stroke();
+  });
+  ctx.restore();
+}
+
 function drawMeasureLine(ctx, ann) {
   const [p1, p2] = ann.points;
+  const g = dimOffsetGeom(ann);
+  if (g.off) drawDimExtensions(ctx, ann, g);
   if (ann.isDeduction) ctx.setLineDash([6, 4]);
-  ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(g.a.x, g.a.y); ctx.lineTo(g.b.x, g.b.y); ctx.stroke();
   if (ann.isDeduction) ctx.setLineDash([]);
   const dist = Math.hypot(p2.x-p1.x, p2.y-p1.y);
   let label = getCalibratedLabel(dist, ann.page, { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 });
   if (ann.isDeduction) label = '−' + label;
   ann.label = label;
-  const basePos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
+  const basePos = { x:(g.a.x+g.b.x)/2, y:(g.a.y+g.b.y)/2 };
   // Short-measure auto-offset — if the label is wider than the line itself,
   // shift it perpendicular to the line so it doesn't sit on top of the measure.
   // Only kicks in when the user hasn't manually dragged the label.
@@ -5097,6 +5147,42 @@ function drawAreaMeasure(ctx, ann) {
   } else {
     ann._perimRect = null;
   }
+  if (ann.isBox) drawBoxSideLabels(ctx, ann, cen);
+}
+
+// v3.34 — Box Measure. An area measurement (so takeoff, tallies and export
+// treat it exactly like any other area) that is kept rectangular and labels
+// its two side lengths just outside the edges they measure.
+//   side 0 = Length = edge points[0]→points[1] (horizontal as drawn)
+//   side 1 = Width  = edge points[1]→points[2] (vertical as drawn)
+function boxSideLengths(ann) {
+  const p = ann.points;
+  return [Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y), Math.hypot(p[2].x - p[1].x, p[2].y - p[1].y)];
+}
+function drawBoxSideLabels(ctx, ann, cen) {
+  const p = ann.points;
+  if (!p || p.length !== 4) return;
+  const [lenPx, widPx] = boxSideLengths(ann);
+  ann.boxLenLabel = getCalibratedLabel(lenPx, ann.page, cen);
+  ann.boxWidLabel = getCalibratedLabel(widPx, ann.page, cen);
+  if (ann.hideBoxSides) return;
+  // Style only — no recordKey, so these pills never steal the area pill's drag.
+  const style = { labelFontSize: ann.labelFontSize, labelBg: ann.labelBg, labelColor: ann.labelColor };
+  const fs = ann.labelFontSize || 8;
+  ctx.save();
+  ctx.font = `${fs}px Arial`;
+  [[p[0], p[1], ann.boxLenLabel], [p[1], p[2], ann.boxWidLabel]].forEach(([a, b, text]) => {
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+    if (!(len > 0)) return;
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    let nx = -dy / len, ny = dx / len;
+    if ((m.x - cen.x) * nx + (m.y - cen.y) * ny < 0) { nx = -nx; ny = -ny; } // point outward
+    const w = ctx.measureText(text).width + 8, h = fs + 5;
+    const d = Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3;
+    const c = { x: m.x + nx * d, y: m.y + ny * d };
+    drawLabel(ctx, text, { x: c.x, y: c.y + h / 2 + 2 }, { ann: style });
+  });
+  ctx.restore();
 }
 
 function drawRect(ctx, ann) {
@@ -5588,14 +5674,20 @@ function drawDimensionAnn(ctx, ann) {
   const [p1, p2] = ann.points;
   const extLen = 20;
   ctx.strokeStyle = ann.color || '#E5432E'; ctx.lineWidth = ann.thickness || 1;
-  ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+  const g = dimOffsetGeom(ann);
   const dx = p2.x-p1.x, dy = p2.y-p1.y, len = Math.hypot(dx, dy) || 1;
-  const px = -dy/len*extLen, py = dx/len*extLen;
-  ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p1.x+px, p1.y+py); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(p2.x, p2.y); ctx.lineTo(p2.x+px, p2.y+py); ctx.stroke();
+  if (g.off) {
+    // v3.34: pulled off the measured points — extension lines run out to it.
+    drawDimExtensions(ctx, ann, g);
+  } else {
+    const px = -dy/len*extLen, py = dx/len*extLen;
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p1.x+px, p1.y+py); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p2.x, p2.y); ctx.lineTo(p2.x+px, p2.y+py); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(g.a.x, g.a.y); ctx.lineTo(g.b.x, g.b.y); ctx.stroke();
   // Arrows at ends
   const al=8, a=Math.atan2(dy,dx);
-  [p1,p2].forEach((p,i) => {
+  [g.a,g.b].forEach((p,i) => {
     const dir = i===0?1:-1;
     ctx.beginPath(); ctx.moveTo(p.x, p.y);
     ctx.lineTo(p.x+dir*al*Math.cos(a-Math.PI/6), p.y+dir*al*Math.sin(a-Math.PI/6));
@@ -5605,7 +5697,7 @@ function drawDimensionAnn(ctx, ann) {
   const dist = Math.hypot(dx, dy);
   const label = getCalibratedLabel(dist, ann.page, { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 });
   ann.label = label;
-  const dimPos = { x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2 };
+  const dimPos = { x:(g.a.x+g.b.x)/2, y:(g.a.y+g.b.y)/2 };
   drawLabel(ctx, labelPillText(ann, label), offsetPos(dimPos, ann), { ann, recordKey: '_labelRect' });
 }
 
@@ -6611,8 +6703,14 @@ function getAnnotationHandlePoints(ann) {
       {x:minX, y:maxY}, {x:midX, y:maxY}, {x:maxX, y:maxY}    // bot-left, bot-mid, bot-right
     ];
   }
-  // For line/arrow/measure/dimension — return endpoints
-  if (['line','arrow','measure','dimension'].includes(ann.type) && ann.points.length === 2) {
+  // v3.34: measure/dimension get a third handle mid-way along the drawn
+  // line — drag it to pull the dimension line off (or back onto) the points.
+  if (['measure','dimension'].includes(ann.type) && ann.points.length === 2) {
+    const g = dimOffsetGeom(ann);
+    return [ann.points[0], ann.points[1], { x: (g.a.x + g.b.x) / 2, y: (g.a.y + g.b.y) / 2 }];
+  }
+  // For line/arrow — return endpoints
+  if (['line','arrow'].includes(ann.type) && ann.points.length === 2) {
     return [...ann.points];
   }
   // For multi-point shapes, return all vertices
@@ -6800,9 +6898,36 @@ function applyResize(ann, handleIdx, newPagePt) {
   }
 
   // Line/arrow/measure/dimension — 2 endpoint handles
+  // (+ measure/dimension offset handle, index 2 — v3.34)
   if (['line','arrow','measure','dimension'].includes(ann.type) && ann.points && ann.points.length === 2) {
     if (handleIdx === 0) { ann.points[0] = { x: newPagePt.x, y: newPagePt.y }; }
     else if (handleIdx === 1) { ann.points[1] = { x: newPagePt.x, y: newPagePt.y }; }
+    else if (handleIdx === 2 && ['measure','dimension'].includes(ann.type)) {
+      const g = dimOffsetGeom(ann), p1 = ann.points[0];
+      let off = (newPagePt.x - p1.x) * g.n.x + (newPagePt.y - p1.y) * g.n.y;
+      if (Math.abs(off) < 3 / currentScale) off = 0; // magnet back onto the points
+      ann.dimOffset = off;
+    }
+    return;
+  }
+  // v3.34 Box Measure — dragging a corner keeps the box rectangular: the
+  // opposite corner stays put and the two neighbours follow along the box's
+  // own axes (so a rotated box stays rotated).
+  if (ann.type === 'area' && ann.isBox && ann.points.length === 4 && handleIdx >= 0 && handleIdx < 4) {
+    const P = ann.points, k = (handleIdx + 2) % 4, pk = P[k];
+    const unit = (a, b, fb) => { const l = Math.hypot(b.x - a.x, b.y - a.y); return l > 1e-6 ? { x: (b.x - a.x) / l, y: (b.y - a.y) / l } : fb; };
+    const u = unit(P[0], P[1], { x: 1, y: 0 });
+    const v = unit(P[0], P[3], { x: -u.y, y: u.x });
+    const d = { x: newPagePt.x - pk.x, y: newPagePt.y - pk.y };
+    const du = d.x * u.x + d.y * u.y, dv = d.x * v.x + d.y * v.y;
+    const j1 = (k + 1) % 4, j3 = (k + 3) % 4;
+    const w1 = { x: P[j1].x - pk.x, y: P[j1].y - pk.y };
+    const j1AlongU = Math.abs(w1.x * u.x + w1.y * u.y) >= Math.abs(w1.x * v.x + w1.y * v.y);
+    const alongU = { x: pk.x + u.x * du, y: pk.y + u.y * du };
+    const alongV = { x: pk.x + v.x * dv, y: pk.y + v.y * dv };
+    P[handleIdx] = { x: pk.x + u.x * du + v.x * dv, y: pk.y + u.y * du + v.y * dv };
+    P[j1] = j1AlongU ? alongU : alongV;
+    P[j3] = j1AlongU ? alongV : alongU;
     return;
   }
 
@@ -6824,7 +6949,7 @@ function drawInProgress(ctx) {
     currentTool === 'rectangle' || currentTool === 'ellipse' ||
     currentTool === 'line' || currentTool === 'arrow' ||
     currentTool === 'measure' || currentTool === 'calibrate' ||
-    currentTool === 'dimension' || currentTool === 'highlight' ||
+    currentTool === 'dimension' || currentTool === 'highlight' || currentTool === 'measurebox' ||
     currentTool === 'cutcontent' || currentTool === 'snipregion' ||
     currentTool === 'viewport' || currentTool === 'visualsearch' || currentTool === 'sheetregion'
   )) {
@@ -6838,6 +6963,16 @@ function drawInProgress(ctx) {
 
     if (currentTool === 'rectangle' || currentTool === 'highlight' || currentTool === 'cutcontent' || currentTool === 'snipregion' || currentTool === 'viewport' || currentTool === 'visualsearch' || currentTool === 'sheetregion') {
       ctx.strokeRect(Math.min(start.x,move.x), Math.min(start.y,move.y), Math.abs(move.x-start.x), Math.abs(move.y-start.y));
+    } else if (currentTool === 'measurebox') {
+      // v3.34 — live box with its length / width read-outs as you drag
+      ctx.strokeRect(Math.min(start.x,move.x), Math.min(start.y,move.y), Math.abs(move.x-start.x), Math.abs(move.y-start.y));
+      if (Math.abs(move.x-start.x) > 1 || Math.abs(move.y-start.y) > 1) {
+        ctx.setLineDash([]);
+        drawBoxSideLabels(ctx, {
+          page: currentPage,
+          points: [{ x: start.x, y: start.y }, { x: move.x, y: start.y }, { x: move.x, y: move.y }, { x: start.x, y: move.y }]
+        }, { x: (start.x + move.x) / 2, y: (start.y + move.y) / 2 });
+      }
     } else if (currentTool === 'ellipse') {
       const cx = Math.min(start.x,move.x) + Math.abs(move.x-start.x)/2;
       const cy = Math.min(start.y,move.y) + Math.abs(move.y-start.y)/2;
@@ -7072,6 +7207,18 @@ function onCanvasMouseDown(e) {
   if (currentTool === 'pan' || e.button === 1) {
     panStart = { x: e.clientX, y: e.clientY };
     document.getElementById('canvas-area').classList.add('active'); return;
+  }
+
+  // v3.34 Box Measure, click-click style: the first click (no drag) left
+  // twoClickStart set in mouseup, so this click is the opposite corner.
+  if (currentTool === 'measurebox' && twoClickStart) {
+    const sp = toPage(twoClickStart);
+    let ep = toPage(snapScreenPoint(screenPt));
+    if (e.shiftKey) ep = applyShiftBoxLock(sp, ep);
+    twoClickStart = null; isDrawing = false; startPoint = null; currentMovePoint = null;
+    const minD = 5 / currentScale;
+    if (Math.abs(ep.x - sp.x) > minD && Math.abs(ep.y - sp.y) > minD) addBoxMeasurement(sp, ep);
+    redrawAnnotations(); return;
   }
 
   // Click-click tools: line, arrow, dimension, measure, calibrate
@@ -7440,6 +7587,16 @@ function onCanvasMouseUp(e) {
     case 'highlight':
       if (sp && (Math.abs(ep.x-sp.x)>minD || Math.abs(ep.y-sp.y)>minD))
         { addAnnotation('highlight', [sp, ep]); didDraw = true; } polylinePoints = []; break;
+    // v3.34 Box Measure — drag a box, or click one corner then the other.
+    // Stays armed afterwards, like Measure Length, so you can keep measuring.
+    case 'measurebox':
+      if (sp && Math.abs(ep.x-sp.x)>minD && Math.abs(ep.y-sp.y)>minD) addBoxMeasurement(sp, ep);
+      else if (sp) {
+        // No drag — treat as the first corner of a click-click box.
+        twoClickStart = startPoint; isDrawing = true; currentMovePoint = startPoint;
+        redrawAnnotations(); return;
+      }
+      break;
     // v3.22 presentation markups — one shared drag-a-box branch.
     case 'chip': case 'kpi': case 'banner': case 'quote': case 'divider':
     case 'chevron': case 'timeline': case 'bracket': case 'chart': case 'progress':
@@ -8049,6 +8206,7 @@ function onKeyDown(e) {
   else if (key === 'm') setTool('measure');
   else if (key === 'l') setTool('polyline');
   else if (key === 'a') setTool('area');
+  else if (key === 'u') setTool('measurebox');
   else if (key === 'c') setTool('count');
   else if (key === 'n') setTool('line');
   else if (key === 'w') setTool('arrow');
@@ -8145,7 +8303,7 @@ function applyShiftBoxLock(start, end) {
 }
 
 // Tool categorisation for shift-lock decisions.
-const SHIFT_BOX_TOOLS  = ['rectangle','ellipse','highlight','cutcontent','snipregion','visualsearch','sheetregion',
+const SHIFT_BOX_TOOLS  = ['rectangle','measurebox','ellipse','highlight','cutcontent','snipregion','visualsearch','sheetregion',
   'chip','kpi','banner','quote','divider','chevron','timeline','bracket','chart','progress'];
 // v3.22 — the presentation markups, drawn by dragging a box. Each gets a
 // starter payload so the thing you drop on the page already looks finished
@@ -8250,6 +8408,29 @@ function addDimension(points) {
   annotations.push(ann);
   takeoffTagAnnotation(ann);
   measurements.push({ id: ann.id, page: currentPage, type: 'length', label: '', value: label });
+  saveToHistory();
+  refreshMeasurementsPanel();
+}
+
+// v3.34 — Box Measure. Two opposite corners → a rectangular AREA measurement
+// flagged isBox, so it feeds the takeoff/tallies as an area while showing its
+// length and width on the sides (drawBoxSideLabels).
+function addBoxMeasurement(p1, p2) {
+  const corners = [
+    { x: p1.x, y: p1.y }, { x: p2.x, y: p1.y },
+    { x: p2.x, y: p2.y }, { x: p1.x, y: p2.y }
+  ];
+  const ann = {
+    id: generateId(), type: 'area', isBox: true, page: currentPage, points: corners,
+    label: '', perimLabel: '', measLabel: '',
+    color: toolProperties.color, fillColor: toolProperties.fillColor,
+    fillOpacity: toolProperties.fillOpacity, thickness: toolProperties.thickness,
+    opacity: toolProperties.opacity, hatch: 'none'
+  };
+  annotations.push(ann);
+  takeoffTagAnnotation(ann);
+  const aLabel = getCalibratedArea(getPolygonArea(corners), currentPage, getCentroid(corners));
+  measurements.push({ id: ann.id, page: currentPage, type: 'area', label: '', value: aLabel });
   saveToHistory();
   refreshMeasurementsPanel();
 }
@@ -8931,7 +9112,13 @@ function hitTest(x, y, ann, tol) {
       const w = ann._legendW || 140, h = ann._legendH || 60;
       return x >= p.x - tol && x <= p.x + w + tol && y >= p.y - tol && y <= p.y + h + tol;
     }
-    case 'measure': case 'line': case 'arrow': case 'dimension':
+    case 'measure': case 'dimension': {
+      if (ptNearLine(x,y, ann.points[0], ann.points[1], tol)) return true;
+      const g = dimOffsetGeom(ann); // v3.34 — the pulled-off line is grabbable too
+      return !!g.off && (ptNearLine(x,y, g.a, g.b, tol) ||
+        ptNearLine(x,y, ann.points[0], g.a, tol) || ptNearLine(x,y, ann.points[1], g.b, tol));
+    }
+    case 'line': case 'arrow':
       return ptNearLine(x,y, ann.points[0], ann.points[1], tol);
     case 'rectangle': case 'highlight': case 'cutcontent': case 'image': case 'symbol':
     case 'chip': case 'kpi': case 'banner': case 'quote': case 'divider':
@@ -9139,7 +9326,7 @@ function openPropertiesPanel(forceOpen) {
   if (selectedAnnotationId) {
     const ann = annotations.find(a => a.id === selectedAnnotationId);
     if (ann) {
-      panelTitle.textContent = (ann.type.charAt(0).toUpperCase()+ann.type.slice(1)) + ' Properties';
+      panelTitle.textContent = (ann.isBox ? 'Box Measure' : ann.type.charAt(0).toUpperCase()+ann.type.slice(1)) + ' Properties';
       content.innerHTML = getAnnotationPropertiesHTML(ann);
       maybeOpen();
       attachAnnotationListeners(ann); return;
@@ -10131,7 +10318,7 @@ function _buildWindowMenu() {
     '<div class="am-sep"></div><div class="ami" onclick="amClose();toggleSplitView()">Split View</div>';
 }
 function showShortcutsHelp() {
-  const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['I / C','Dimension / Count'],
+  const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['U','Box Measure (length × width)'],['I / C','Dimension / Count'],
     ['N / W / Y','Line / Arrow / Polyline shape'],['R / O / Q / D','Rect / Ellipse / Polygon / Cloud'],['T / B / S / J','Text / Callout / Stamp / Tick'],
     ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup — or whole pages, in the thumbnail strip'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
     ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['H','Crosshair guides'],['Alt+←','Back after following a sheet link'],['Return / Ctrl+Return','While typing: new line / finish the text'],['Esc / right-click','Cancel draft']];
@@ -12706,7 +12893,7 @@ function getFilePropertiesHTML() {
 
 function getAnnotationPropertiesHTML(ann) {
   let html = `<div class="properties-section"><div class="properties-section-title">General</div><div class="properties-section-content">
-    <div class="property-row"><div class="property-label">Type:</div><div class="property-value">${ann.type.charAt(0).toUpperCase()+ann.type.slice(1)}</div></div>
+    <div class="property-row"><div class="property-label">Type:</div><div class="property-value">${ann.isBox ? 'Box Measure' : ann.type.charAt(0).toUpperCase()+ann.type.slice(1)}</div></div>
     <div class="property-row"><div class="property-label">Subject:</div><input type="text" id="prop-subject" class="property-input" value="${ann.subject||''}" placeholder="e.g. Beam check"></div>
     <div class="property-row"><div class="property-label" title="A name for this markup. Shows on the drawing and in the Measurements list / reports.">Label:</div><input type="text" id="prop-measlabel" class="property-input" value="${ann.measLabel||''}" placeholder="e.g. Carpet Type A"></div>
   </div></div>`;
@@ -13226,6 +13413,17 @@ function getAnnotationPropertiesHTML(ann) {
           onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
           onchange="setMeasurementSize('${mId}', this.value)"></div>`;
     html += `<div class="properties-section"><div class="properties-section-title">Measurement</div><div class="properties-section-content">`;
+    // v3.34 Box Measure — the two sides are typed individually.
+    if (ann.type === 'area' && ann.isBox && ann.points && ann.points.length === 4 && ann.boxLenLabel) {
+      const sideRow = (side, rowLabel, value, hint) => mEditable
+        ? `<div class="property-row"><div class="property-label" title="${hint}">${rowLabel}:</div>
+            <input type="text" class="property-input" value="${_escPM(value)}" style="color:var(--accent);font-weight:600"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+              onchange="setBoxSideSize('${mId}', ${side}, this.value)"></div>`
+        : `<div class="property-row"><div class="property-label">${rowLabel}:</div><div class="property-value" style="color:var(--accent);font-weight:600">${value}</div></div>`;
+      html += sideRow(0, 'Length', ann.boxLenLabel, 'The first side you drew (horizontal as drawn). Type a length — the box stretches away from its start corner. Accepts 135, 135mm or 1.35m.');
+      html += sideRow(1, 'Width', ann.boxWidLabel, 'The second side (vertical as drawn). Type a length — the box stretches away from its start corner. Accepts 135, 135mm or 1.35m.');
+    }
     if (ann.label) {
       const rowLabel = ann.type === 'area' ? (isVol ? 'Volume' : 'Area') : 'Length';
       if (mEditable && !isVol) {
@@ -13242,7 +13440,19 @@ function getAnnotationPropertiesHTML(ann) {
       }
     }
     if (ann.perimLabel) html += `<div class="property-row"><div class="property-label">Perimeter:</div><div class="property-value" style="color:var(--accent)">${ann.perimLabel}</div></div>`;
-    if (mEditable) html += `<div style="font-size:10px;color:var(--text-muted);padding:2px 2px 0">Type a size and press Enter — the markup resizes on the drawing${ann.type === 'area' ? ' about its centre' : ' from its start point'}.</div>`;
+    if (ann.type === 'area' && ann.isBox) {
+      html += `<div class="property-row"><label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <input type="checkbox" class="checkbox-input" ${ann.hideBoxSides ? '' : 'checked'} onchange="setBoxSidesShown('${mId}', this.checked)">
+        Show length &amp; width on the sides</label></div>`;
+    }
+    // v3.34 — dimension-line offset (drag the ◆ handle, or reset it here)
+    if (['measure','dimension'].includes(ann.type)) {
+      html += `<div class="property-row" style="justify-content:space-between;align-items:center">
+        <div style="font-size:10px;color:var(--text-muted)">Drag the ◆ handle to move the line off the points.</div>
+        ${ann.dimOffset ? `<button style="padding:3px 8px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;font-size:11px;cursor:pointer;white-space:nowrap" onclick="resetDimOffset('${mId}')">Reset offset</button>` : ''}
+      </div>`;
+    }
+    if (mEditable) html += `<div style="font-size:10px;color:var(--text-muted);padding:2px 2px 0">Type a size and press Enter — the markup resizes on the drawing${ann.type === 'area' ? (ann.isBox ? ' (Area: about its centre; Length / Width: from its start corner)' : ' about its centre') : ' from its start point'}.</div>`;
     html += `</div></div>`;
   }
 
@@ -13821,7 +14031,7 @@ function getToolPropertiesHTML(tool) {
         <input type="number" id="tool-arrowsize" class="property-input" min="20" max="600" step="10" value="${aPct}"></div>`;
     }
 
-    if (['rectangle','ellipse','polygon','area'].includes(tool)) {
+    if (['rectangle','ellipse','polygon','area','measurebox'].includes(tool)) {
       html += `<div class="property-row"><div class="property-label">Fill:</div><div style="flex:1;display:flex;gap:6px;align-items:center">
         <input type="checkbox" id="tool-fill-on" class="checkbox-input" ${toolProperties.fillColor&&toolProperties.fillColor!=='none'?'checked':''}>
         <input type="color" id="tool-fill-color" class="color-picker" value="${toolProperties.fillColor||'#E5432E'}">
@@ -19108,6 +19318,74 @@ function setMeasurementSize(annId, raw) {
   showToast(now && now !== before ? 'Resized to ' + now : 'Size unchanged');
 }
 
+// v3.34 — Box Measure: type one side. side 0 = Length (points 0→1), side 1 =
+// Width (points 1→2). The start corner and the other side stay put; the box
+// stretches along that side's own direction, so a rotated box stays rotated.
+function setBoxSideSize(annId, side, raw) {
+  const ann = annotations.find(a => a.id === annId);
+  if (!ann || !ann.isBox || !ann.points || ann.points.length !== 4) return;
+  if (!_calFor(ann.page, _measCalPoint(ann))) {
+    showToast('Calibrate this page first — then you can type exact sizes');
+    openPropertiesPanel();
+    return;
+  }
+  const cur = String((side ? ann.boxWidLabel : ann.boxLenLabel) || '');
+  const defUnit = /[0-9.]m\b|[0-9.]m$/.test(cur) && cur.indexOf('mm') === -1 ? 'm' : 'mm';
+  const want = parseMeasurementInput(raw, false, defUnit);
+  if (!(want > 0)) {
+    showToast('Enter a length like 135, 135mm or 1.35m');
+    openPropertiesPanel();
+    return;
+  }
+  const before = side ? ann.boxWidLabel : ann.boxLenLabel;
+  // Same iterative solve as setMeasurementSize — the calibration point (the
+  // centroid) moves as the box grows, which matters across a viewport edge.
+  for (let i = 0; i < 4; i++) {
+    const P = ann.points;
+    const cal = _calFor(ann.page, _measCalPoint(ann));
+    if (!cal || !(cal.pixelsPerMm > 0)) break;
+    const [a, b] = side ? [P[1], P[2]] : [P[0], P[1]];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (!(len > 0)) { showToast('That side has no length — redraw the box'); break; }
+    const target = want * cal.pixelsPerMm;
+    if (Math.abs(target - len) < 1e-9) break;
+    const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
+    if (side) {
+      P[2] = { x: P[1].x + ux * target, y: P[1].y + uy * target };
+      P[3] = { x: P[0].x + ux * target, y: P[0].y + uy * target };
+    } else {
+      P[1] = { x: P[0].x + ux * target, y: P[0].y + uy * target };
+      P[2] = { x: P[3].x + ux * target, y: P[3].y + uy * target };
+    }
+  }
+  saveToHistory();
+  redrawAnnotations();
+  rebuildMeasurements();
+  openPropertiesPanel();
+  refreshMeasurementsPanel();
+  if (typeof refreshTakeoffPanel === 'function') refreshTakeoffPanel();
+  const now = side ? ann.boxWidLabel : ann.boxLenLabel;
+  showToast(now && now !== before ? (side ? 'Width ' : 'Length ') + 'set to ' + now : 'Size unchanged');
+}
+
+function setBoxSidesShown(annId, shown) {
+  const ann = annotations.find(a => a.id === annId);
+  if (!ann) return;
+  ann.hideBoxSides = !shown;
+  saveToHistory();
+  redrawAnnotations();
+}
+
+// v3.34 — put a pulled-off measure / dimension line back on its points.
+function resetDimOffset(annId) {
+  const ann = annotations.find(a => a.id === annId);
+  if (!ann) return;
+  delete ann.dimOffset;
+  saveToHistory();
+  redrawAnnotations();
+  openPropertiesPanel();
+}
+
 function exportMeasurementsCSV() {
   rebuildMeasurements();
   let csv = 'No,Page,Type,Label,Value\n';
@@ -20327,7 +20605,7 @@ const THEME_CATS = [
   { key: 'highlight', label: 'Highlighter',                      tools: ['highlight'] },
   { key: 'pen',       label: 'Pen (freehand)',                   tools: ['pen'] },
   { key: 'measure',   label: 'Lengths & dimensions',             tools: ['measure','polyline','dimension'] },
-  { key: 'area',      label: 'Areas & room fill',                tools: ['area','magicarea'] }
+  { key: 'area',      label: 'Areas & room fill',                tools: ['area','measurebox','magicarea'] }
 ];
 const THEME_ANN_CAT = {
   cloud: 'cloud', rectangle: 'shape', ellipse: 'shape', polygon: 'shape', polyshape: 'shape', line: 'shape',

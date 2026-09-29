@@ -1752,3 +1752,52 @@ input, confirming the save path never sees the rewrite.
 
 Regression: a normal vector PDF (`Datum-Agent-Trial-2-Measure-BOQ.pdf`) opens in 369 ms
 with the gate returning immediately. `node check-syntax.js` clean.
+
+## v3.34 (29 Sep 2026) — Box Measure, and dimension lines that pull off the points
+
+James asked for two Bluebeam habits: a box measure that shows length AND width, with
+both sides typeable like the Measure Length box; and the ability to drag a measure's
+line away from what it measures, so it can sit closer or further from the object.
+
+### Box Measure (tool `measurebox`, shortcut **U**, Measure group next to Area)
+
+- **It is an `area` annotation with `isBox: true`, not a new type.** That was deliberate:
+  takeoff (area/volume items), the Measurements tally, CSV export, BOQ, deductions, hatch,
+  rotation and hit-testing all key off `type === 'area'`, so a box gets every one of them
+  for free. Four points, always rectangular: `points[0]→[1]` is **Length** (horizontal as
+  drawn), `points[1]→[2]` is **Width**.
+- Draw by dragging, or click one corner then the other (the first no-drag click leaves
+  `twoClickStart` set; the next mousedown finishes it). Shift = square. Stays armed after
+  each box, like Measure Length.
+- `drawBoxSideLabels()` puts a pill just outside each measured edge (pushed out along the
+  edge's outward normal by half the pill's footprint, so it works rotated too). The area
+  pill stays in the middle. Side pills share the Label colour/size settings but are never
+  draggable (no `recordKey`) and have their own "Show length & width on the sides" toggle
+  (`hideBoxSides`), separate from Hide label.
+- `boxLenLabel` / `boxWidLabel` are recomputed on every draw, like `label`.
+- Properties → Measurement has **Length** and **Width** inputs (`setBoxSideSize`). Same
+  parsing rule as v3.23: a bare number is read in the unit the label already shows, so
+  typing `3000` over "2.27m" means 3000 m — type `3000mm` or `3`. The start corner and
+  the other side stay put; the box stretches along that side's own direction. The Area
+  input still works and scales about the centre.
+- Corner drags keep it rectangular (`applyResize` special case): the opposite corner is
+  pinned and the neighbours move along the box's own axes, so a rotated box stays a
+  rotated rectangle. Plain `area` polygons are unaffected.
+
+### Measure / Dimension offset (`dimOffset`)
+
+- Signed perpendicular distance in page units from the measured points to where the line
+  is drawn, along the normal `(-dy, dx)/len` of p1→p2. **The measured value is always
+  p1→p2** — the offset only moves ink, so takeoff and labels are untouched.
+- When selected, measure and dimension show a third handle, a **◆ diamond**, at the middle
+  of the drawn line (`getAnnotationHandlePoints` index 2). Drag it to either side; within
+  3 screen px of zero it snaps back onto the points. Properties → Measurement has
+  **Reset offset**.
+- With an offset, thin extension lines run from each point (small gap) to 4 units past
+  the line (`drawDimExtensions`); the dimension's arrows move with the line. At zero the
+  dimension keeps its original look (20-unit extension ticks) so older drawings are
+  unchanged.
+- Hit-testing also accepts the offset line and the extension lines. `dimOffset` is in
+  `_SNAP_KEYS` so a pinch arriving mid-drag rolls it back cleanly.
+- Note: the middle of a selected measure line is now the offset handle, so to MOVE the
+  whole line grab it anywhere other than the diamond.
