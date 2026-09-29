@@ -2034,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.35';
+const APP_VERSION = 'v3.36';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -19706,6 +19706,24 @@ function _symWave(x1, x2, y, n, amp) {
   }
   return d;
 }
+// Zig-zag between two rails — lattice on a crane jib.
+function _symZig(x1, x2, ya, yb, n) {
+  const step = (x2 - x1) / n;
+  let d = `M${_sr(x1)} ${_sr(ya)}`;
+  for (let i = 1; i <= n; i++) d += ` L${_sr(x1 + step * i)} ${_sr(i % 2 ? yb : ya)}`;
+  return d;
+}
+// Portable site building (office, crib, amenities) — a 2.5:1 box with a
+// door swing at one end and the room name. Spread into a definition; pair
+// it with b:[0,27,100,46].
+function _symHut(label, s) {
+  return {
+    p: [{d:'M1 28 H99 V72 H1 Z', lw:3},
+        {d:'M8 72 V60', lw:1.8},
+        {d:'M8 60 A12 12 0 0 1 20 72', lw:1, dash:1}],
+    t: [{t:label, x:58, y:50, s}]
+  };
+}
 const SYMBOL_LIBRARY = [
   { id:'general', name:'General / Drafting', items:[
     { id:'g-north', name:'North Arrow', w:44, p:[
@@ -20378,6 +20396,215 @@ const SYMBOL_LIBRARY = [
       {d:'M50 20 H84 V44 H50', lw:4},
       {d:'M44 92 H56', lw:4}] },
   ]},
+
+  // v3.36 — Construction Management Plan set. Site plans for a CMP are
+  // drawn at 1:200–1:500, so these are sized to read on a site plan rather
+  // than from real millimetres like the furniture; drag to suit the scale.
+  { id:'cmp-plant', name:'Construction — Plant & Lifting', items:[
+    { id:'cm-crane-tower', name:'Tower Crane (with Slew Radius)', w:90, p:[
+      {d:_symCircle(50, 50, 47), lw:1.6, dash:1},
+      {d:'M56 47 H96 M56 53 H96 M20 47 H44 M20 53 H44', lw:1.6},
+      {d:_symZig(56, 96, 47, 53, 10), lw:0.9},
+      {d:'M12 43 H22 V57 H12 Z M78 45 H84 V55 H78 Z', f:1},
+      {d:'M44 44 H56 V56 H44 Z', lw:3},
+      {d:'M44 44 L56 56 M56 44 L44 56', lw:1.4}] },
+    { id:'cm-crane-mobile', name:'Mobile Crane (with Radius)', w:80, p:[
+      {d:_symCircle(50, 50, 47), lw:1.6, dash:1},
+      {d:'M38 20 H62 V80 H38 Z', lw:3},
+      {d:'M38 30 H62', lw:1.6},
+      {d:'M38 34 H26 M62 34 H74 M38 68 H26 M62 68 H74', lw:2},
+      {d:'M20 31 H26 V37 H20 Z M74 31 H80 V37 H74 Z M20 65 H26 V71 H20 Z M74 65 H80 V71 H74 Z', f:1},
+      {d:_symCircle(50, 58, 9), lw:2.2},
+      {d:'M51.9 59.7 L83.9 23.7 M48.1 56.3 L80.1 20.3 M80.1 20.3 L83.9 23.7', lw:2}] },
+    { id:'cm-pump-boom', name:'Concrete Pump — Boom', w:70, b:[1,17,94,66], p:[
+      {d:'M8 34 H80 V66 H8 Z M80 36 H94 V64 H80 Z', lw:3},
+      {d:'M90 38 V62', lw:1.4},
+      {d:'M2 42 H8 V58 H2 Z', lw:2},
+      {d:'M22 34 L10 22 M22 66 L10 78 M66 34 L78 22 M66 66 L78 78', lw:2},
+      {d:'M6 18 H14 V26 H6 Z M6 74 H14 V82 H6 Z M74 18 H82 V26 H74 Z M74 74 H82 V82 H74 Z', f:1},
+      {d:_symCircle(24, 50, 7), lw:2.2},
+      {d:'M31 46 H76 V54 H31', lw:1.8}] },
+    { id:'cm-pump-line', name:'Concrete Pump — Line / Trailer', w:40, b:[0,25,100,50], p:[
+      {d:'M20 32 H70 V68 H20 Z', lw:3},
+      {d:'M20 38 L5 50 L20 62', lw:2.4},
+      {d:'M40 26 H52 V32 H40 Z M40 68 H52 V74 H40 Z', f:1},
+      {d:'M70 50 H98', lw:2.4, dash:1}], t:[{t:'LP', x:45, y:50, s:16}] },
+    { id:'cm-agitator', name:'Concrete Agitator Truck', w:60, b:[0,32,100,36], p:[
+      {d:'M4 34 H96 V66 H4 Z', lw:3},
+      {d:'M80 34 V66', lw:2},
+      {d:'M92 36 V64', lw:1.4},
+      {d:_symEllipse(42, 50, 32, 13), lw:2.4},
+      {d:'M20 40 Q26 50 20 60 M32 38 Q38 50 32 62 M44 37 Q50 50 44 63 M56 38 Q62 50 56 62', lw:1.1},
+      {d:'M10 50 H1', lw:2.5}] },
+    { id:'cm-excavator', name:'Excavator', w:50, p:[
+      {d:'M16 22 H30 V94 H16 Z M70 22 H84 V94 H70 Z', lw:2.4},
+      {d:_symLines(16, 30, 30, 30, 8, 0, 8) + ' ' + _symLines(70, 30, 84, 30, 8, 0, 8), lw:0.9},
+      {d:_symRRect(26, 36, 48, 44, 5), lw:3},
+      {d:'M30 40 H46 V58 H30 Z', lw:1.6},
+      {d:'M56 36 V12 M64 36 V12', lw:2.4},
+      {d:_symRRect(50, 2, 20, 10, 2), lw:2.4}] },
+    { id:'cm-truck', name:'Truck — Delivery / Semi', w:70, b:[0,32,100,36], p:[
+      {d:'M2 34 H80 V66 H2 Z', lw:3},
+      {d:'M82 36 H98 V64 H82 Z', lw:3},
+      {d:'M94 38 V62', lw:1.4}], t:[{t:'TRUCK', x:41, y:50, s:13}] },
+    { id:'cm-ewp', name:'EWP / Scissor Lift', w:30, b:[0,20,100,60], p:[
+      {d:'M10 22 H90 V78 H10 Z', lw:3},
+      {d:'M17 29 H83 V71 H17 Z', lw:1.2, dash:1}], t:[{t:'EWP', x:50, y:50, s:17}] },
+    { id:'cm-telehandler', name:'Telehandler / Forklift', w:44, b:[0,25,100,50], p:[
+      {d:_symRRect(20, 30, 58, 40, 4), lw:3},
+      {d:'M26 34 H42 V52 H26 Z', lw:1.6},
+      {d:'M80 32 V68', lw:3},
+      {d:'M80 38 H98 M80 62 H98', lw:3}], t:[{t:'TH', x:60, y:52, s:15}] },
+    { id:'cm-hoist', name:'Materials / Personnel Hoist', w:44, b:[4,18,92,64], p:[
+      {d:'M6 34 H28 V66 H6 Z', lw:2.4},
+      {d:'M6 34 L28 66 M28 34 L6 66', lw:1.2},
+      {d:'M30 20 H94 V80 H30 Z', lw:3},
+      {d:'M94 30 V70', lw:5}], t:[{t:'HOIST', x:62, y:50, s:13}] },
+    { id:'cm-gen', name:'Generator', w:36, b:[0,25,100,50], p:[
+      {d:'M8 28 H92 V72 H8 Z', lw:3}], t:[{t:'GEN', x:50, y:50, s:20}] },
+    { id:'cm-lighttower', name:'Lighting Tower', w:30, p:[
+      {d:'M40 40 H60 V60 H40 Z', lw:3},
+      {d:_symSpokes(50, 50, 18, 42, 8, Math.PI / 8), lw:2.4}] },
+    { id:'cm-tpb', name:'Temporary Power Board', w:30, b:[0,22,100,56], p:[
+      {d:'M12 26 H88 V74 H12 Z', lw:3.5}], t:[{t:'TPB', x:50, y:50, s:20}] },
+    { id:'cm-water', name:'Temporary Water / Standpipe', w:26, p:[
+      {d:_symCircle(50, 50, 24), lw:3.5}], t:[{t:'TW', x:50, y:50, s:19}] },
+    { id:'cm-cctv', name:'CCTV Camera', w:28, p:[
+      {d:_symCircle(50, 50, 26), lw:3.5}], t:[{t:'CCTV', x:50, y:50, s:13}] },
+  ]},
+
+  { id:'cmp-site', name:'Construction — Site Establishment', items:[
+    { id:'cm-office', name:'Site Office (Portable)', w:60, b:[0,27,100,46], ..._symHut('OFFICE', 14) },
+    { id:'cm-crib', name:'Lunch / Crib Room', w:60, b:[0,27,100,46], ..._symHut('CRIB', 15) },
+    { id:'cm-amenities', name:'Amenities / Toilet Block', w:60, b:[0,27,100,46], ..._symHut('AMENITIES', 10.5) },
+    { id:'cm-change', name:'Change / Drying Room', w:60, b:[0,27,100,46], ..._symHut('CHANGE', 13) },
+    { id:'cm-portaloo', name:'Portable Toilet', w:25, p:[
+      {d:'M20 20 H80 V80 H20 Z', lw:3},
+      {d:'M20 70 H80', lw:1.4}], t:[{t:'PT', x:50, y:46, s:22}] },
+    { id:'cm-container', name:'Shipping Container — 20ft', w:60, b:[0,30,100,40], p:[
+      {d:'M1 31 H99 V69 H1 Z', lw:3},
+      {d:_symLines(10, 31, 10, 69, 9, 9.5, 0), lw:0.8},
+      {d:'M94 31 V69', lw:2.4}] },
+    { id:'cm-container40', name:'Shipping Container — 40ft', w:90, b:[0,40,100,20], p:[
+      {d:'M1 41 H99 V59 H1 Z', lw:2.4},
+      {d:_symLines(6, 41, 6, 59, 19, 4.6, 0), lw:0.6},
+      {d:'M96 41 V59', lw:2}] },
+    { id:'cm-firstaid', name:'First Aid', w:28, p:[
+      {d:'M8 8 H92 V92 H8 Z', lw:3.5},
+      {d:'M42 22 H58 V42 H78 V58 H58 V78 H42 V58 H22 V42 H42 Z', f:1}] },
+    { id:'cm-muster', name:'Emergency Assembly Point', w:36, p:[
+      {d:'M6 6 H94 V94 H6 Z', lw:3.5},
+      {d:'M14 14 L32 32 M32 32 L32 22 M32 32 L22 32 M86 14 L68 32 M68 32 L68 22 M68 32 L78 32' +
+         ' M86 86 L68 68 M68 68 L68 78 M68 68 L78 68 M14 86 L32 68 M32 68 L32 78 M32 68 L22 68', lw:2.6}],
+      t:[{t:'AP', x:50, y:50, s:17}] },
+    { id:'cm-signin', name:'Site Sign-in / Induction', w:34, b:[0,25,100,50], p:[
+      {d:'M6 28 H94 V72 H6 Z', lw:3}], t:[{t:'SIGN IN', x:50, y:50, s:13}] },
+    { id:'cm-entry', name:'Site Entry Sign', w:40, b:[0,28,100,44], p:[
+      {d:'M4 30 H96 V70 H4 Z', lw:3}], t:[{t:'SITE ENTRY', x:50, y:50, s:11.5}] },
+    { id:'cm-spill', name:'Spill Kit', w:28, p:[
+      {d:'M14 14 H86 V86 H14 Z', lw:3.5}], t:[{t:'SPILL', x:50, y:41, s:15},{t:'KIT', x:50, y:60, s:15}] },
+    { id:'cm-smoking', name:'Designated Smoking Area', w:36, p:[
+      {d:_symCircle(50, 50, 45), lw:2, dash:1}], t:[{t:'SMOKING', x:50, y:50, s:12}] },
+    { id:'cm-laydown', name:'Material Laydown Area', w:70, b:[0,20,100,60], p:[
+      {d:'M2 22 H98 V78 H2 Z', lw:2.2, dash:1},
+      {d:'M2 34 L14 22 M2 46 L26 22 M86 78 L98 66 M74 78 L98 54', lw:1.2}], t:[{t:'LAYDOWN', x:50, y:50, s:13}] },
+    { id:'cm-loading', name:'Loading / Set-down Zone', w:70, b:[0,20,100,60], p:[
+      {d:'M2 22 H98 V78 H2 Z', lw:3},
+      {d:'M8 28 H92 V72 H8 Z', lw:1.2, dash:1}], t:[{t:'LOADING ZONE', x:50, y:50, s:9}] },
+    { id:'cm-exclusion', name:'Exclusion / Lift Zone', w:60, p:[
+      {d:_symCircle(50, 50, 46), lw:2.6, dash:1},
+      {d:_symCircle(50, 50, 40), lw:1}], t:[{t:'EXCLUSION', x:50, y:44, s:11.5},{t:'ZONE', x:50, y:58, s:11.5}] },
+    { id:'cm-hoarding', name:'Site Hoarding', w:90, b:[0,40,100,20], p:[
+      {d:'M0 45 H100 M0 55 H100', lw:2},
+      {d:_symLines(0, 55, 10, 45, 10, 10, 0), lw:1}] },
+    { id:'cm-tempfence', name:'Temporary Fence', w:90, b:[0,42,100,16], p:[
+      {d:'M0 50 H100', lw:2},
+      {d:[12.5, 37.5, 62.5, 87.5].map(x => `M${x - 4} 45 L${x + 4} 55 M${x + 4} 45 L${x - 4} 55`).join(' '), lw:1.8}] },
+    { id:'cm-gate-slide', name:'Site Gate — Sliding', w:60, b:[0,30,100,40], p:[
+      {d:'M1 46 H7 V54 H1 Z M93 46 H99 V54 H93 Z', f:1},
+      {d:'M7 50 H93', lw:4},
+      {d:'M30 38 H70 M70 38 L62 33 M70 38 L62 43', lw:2}], t:[{t:'GATE', x:50, y:62, s:11}] },
+    { id:'cm-scaffold', name:'Scaffold', w:80, b:[0,35,100,30], p:[
+      {d:'M1 38 H99 V62 H1 Z', lw:2.4},
+      {d:'M20 38 V62 M40 38 V62 M60 38 V62 M80 38 V62', lw:1.4},
+      {d:_symLines(1, 62, 20, 38, 5, 19.6, 0), lw:1}] },
+    { id:'cm-gantry', name:'Overhead Protection / Gantry', w:80, b:[0,30,100,40], p:[
+      {d:'M1 32 H99 V68 H1 Z', lw:3},
+      {d:'M1 32 L99 68 M1 68 L99 32', lw:1.2}] },
+    { id:'cm-shaker', name:'Shaker Grid / Wheel Wash', w:50, b:[0,25,100,50], p:[
+      {d:'M1 28 H99 V72 H1 Z', lw:3},
+      {d:_symLines(8, 28, 8, 72, 12, 7.6, 0), lw:1.2}] },
+    { id:'cm-washout', name:'Concrete Washout', w:44, b:[0,20,100,60], p:[
+      {d:'M2 22 H98 V78 H2 Z', lw:1.6, dash:1},
+      {d:'M12 32 H88 V68 H12 Z', lw:3}], t:[{t:'WASHOUT', x:50, y:50, s:10.5}] },
+    { id:'cm-skip', name:'Skip Bin', w:34, b:[0,25,100,50], p:[
+      {d:'M4 28 H96 V72 H4 Z', lw:3},
+      {d:'M16 36 H84 V64 H16 Z', lw:1.4},
+      {d:'M4 28 L16 36 M96 28 L84 36 M96 72 L84 64 M4 72 L16 64', lw:1.2}], t:[{t:'SKIP', x:50, y:50, s:12}] },
+    { id:'cm-hookbin', name:'Hook-lift Bin', w:56, b:[0,32,100,36], p:[
+      {d:'M2 34 H92 V66 H2 Z', lw:3},
+      {d:'M10 40 H84 V60 H10 Z', lw:1.4},
+      {d:'M92 44 H98 V56 H92', lw:2}], t:[{t:'BIN', x:47, y:50, s:12}] },
+    { id:'cm-stockpile', name:'Stockpile', w:50, p:[
+      {d:_symBlob(50, 50, 42, 18, 0.07, 1), lw:2.4},
+      {d:_symBlob(50, 50, 24, 12, 0.08, 3), lw:1.2}], t:[{t:'SP', x:50, y:50, s:16}] },
+    { id:'cm-siltfence', name:'Sediment / Silt Fence', w:90, b:[0,42,100,16], p:[
+      {d:'M0 50 H100', lw:2},
+      {d:[10, 30, 50, 70, 90].map(x => `M${x - 4} 50 L${x} 57 L${x + 4} 50 Z`).join(' '), f:1}] },
+    { id:'cm-pitprotect', name:'Pit Inlet Protection', w:34, p:[
+      {d:'M8 8 H92 V92 H8 Z', lw:2, dash:1},
+      {d:'M26 26 H74 V74 H26 Z', lw:3},
+      {d:'M26 26 L74 74 M74 26 L26 74', lw:1.4}] },
+    { id:'cm-tpz', name:'Tree Protection Zone', w:70, p:[
+      {d:_symCircle(50, 50, 46), lw:2.2, dash:1},
+      {d:_symBlob(50, 44, 20, 12, 0.08, 2), lw:1.8},
+      {d:_symSpokes(50, 44, 4, 14, 5, 0.3), lw:1}], t:[{t:'TPZ', x:50, y:78, s:12}] },
+    { id:'cm-monitor', name:'Noise / Dust / Vibration Monitor', w:26, p:[
+      {d:'M50 6 L94 50 L50 94 L6 50 Z', lw:3.5}], t:[{t:'MON', x:50, y:50, s:15}] },
+  ]},
+
+  { id:'cmp-traffic', name:'Construction — Traffic Control', items:[
+    { id:'tc-route-veh', name:'Vehicle Route Arrow', w:70, b:[0,35,100,30], p:[
+      {d:'M3 50 H80', lw:5},
+      {d:'M78 38 L98 50 L78 62 Z', f:1}] },
+    { id:'tc-route-ped', name:'Pedestrian Route Arrow', w:70, b:[0,35,100,30], p:[
+      {d:'M3 50 H90', lw:3, dash:1},
+      {d:'M84 40 L96 50 L84 60', lw:3}] },
+    { id:'tc-controller', name:'Traffic Controller', w:26, p:[
+      {d:_symCircle(50, 50, 26), lw:3.5},
+      {d:'M50 24 A26 26 0 0 1 50 76', f:1}], t:[{t:'TC', x:37.5, y:50, s:13}] },
+    { id:'tc-spotter', name:'Spotter', w:26, p:[
+      {d:_symCircle(50, 50, 26), lw:3.5}], t:[{t:'SPOT', x:50, y:50, s:13}] },
+    { id:'tc-cone', name:'Traffic Cone', w:25, p:[
+      {d:'M22 22 H78 V78 H22 Z', lw:2.4},
+      {d:_symCircle(50, 50, 22), lw:2.4},
+      {d:_symCircle(50, 50, 8), f:1}] },
+    { id:'tc-barrier', name:'Water-filled Barrier', w:90, b:[0,40,100,20], p:[
+      {d:_symRRect(0.5, 43, 24, 14, 3) + ' ' + _symRRect(25.5, 43, 24, 14, 3) + ' ' +
+         _symRRect(50.5, 43, 24, 14, 3) + ' ' + _symRRect(75.5, 43, 24, 14, 3), lw:2.2}] },
+    { id:'tc-barricade', name:'Barricade', w:50, b:[0,38,100,24], p:[
+      {d:'M1 42 H99 V58 H1 Z', lw:2.4},
+      {d:_symLines(6, 58, 16, 42, 8, 11.5, 0), lw:2.4}] },
+    { id:'tc-sign-rw', name:'Sign — Road Work Ahead', w:30, p:[
+      {d:'M50 4 L96 50 L50 96 L4 50 Z', lw:4},
+      {d:'M50 12 L88 50 L50 88 L12 50 Z', lw:1.2}], t:[{t:'ROAD', x:50, y:43, s:13},{t:'WORK', x:50, y:59, s:13}] },
+    { id:'tc-stopslow', name:'Sign — Stop / Slow Bat', w:26, p:[
+      {d:'M32.4 7.5 H67.6 L92.5 32.4 V67.6 L67.6 92.5 H32.4 L7.5 67.6 V32.4 Z', lw:4}], t:[{t:'STOP', x:50, y:50, s:20}] },
+    { id:'tc-speed', name:'Sign — Speed Limit', w:26, p:[
+      {d:_symCircle(50, 50, 42), lw:8}], t:[{t:'40', x:50, y:51, s:36}] },
+    { id:'tc-footpath', name:'Sign — Footpath Closed', w:36, b:[0,25,100,50], p:[
+      {d:'M4 28 H96 V72 H4 Z', lw:3}], t:[{t:'FOOTPATH', x:50, y:42, s:12},{t:'CLOSED', x:50, y:59, s:12}] },
+    { id:'tc-arrowboard', name:'Arrow Board', w:40, b:[0,25,100,50], p:[
+      {d:'M6 28 H94 V72 H6 Z', lw:3},
+      {d:'M18 50 H70', lw:4},
+      {d:'M66 38 L84 50 L66 62 Z', f:1}] },
+    { id:'tc-vms', name:'VMS Board', w:40, b:[0,25,100,50], p:[
+      {d:'M6 28 H94 V72 H6 Z', lw:3},
+      {d:'M12 34 H88 V66 H12 Z', lw:1.2}], t:[{t:'VMS', x:50, y:50, s:17}] },
+    { id:'tc-lights', name:'Portable Traffic Lights', w:25, b:[28,3,44,94], p:[
+      {d:_symRRect(32, 6, 36, 88, 4), lw:3},
+      {d:_symCircle(50, 24, 9) + ' ' + _symCircle(50, 50, 9) + ' ' + _symCircle(50, 76, 9), lw:2}] },
+  ]},
 ];
 
 // Search aliases — the everyday word, not the drawing-office one. Applied
@@ -20425,12 +20652,39 @@ const SYMBOL_KEYWORDS = {
   'l-retwall':'landscape retaining external batter', 'l-clothesline':'laundry external washing line',
   'l-tank':'water rainwater external plumbing', 'l-letterbox':'mailbox external',
   'l-car':'vehicle carport garage parking driveway',
+  'cm-crane-tower':'lifting slew jib radius tc', 'cm-crane-mobile':'lifting franna slew radius outriggers',
+  'cm-pump-boom':'concrete placing pour outriggers', 'cm-pump-line':'concrete placing pour trailer',
+  'cm-agitator':'concrete truck mixer pour', 'cm-excavator':'earthworks digger plant machine',
+  'cm-truck':'delivery vehicle semi trailer', 'cm-ewp':'elevated work platform boom lift',
+  'cm-telehandler':'forklift manitou plant', 'cm-hoist':'lift alimak materials personnel',
+  'cm-gen':'power generator', 'cm-lighttower':'flood light lighting', 'cm-tpb':'power board electrical',
+  'cm-water':'standpipe tap hydrant', 'cm-cctv':'camera security surveillance',
+  'cm-office':'site shed demountable portable donga', 'cm-crib':'lunch room shed demountable donga',
+  'cm-amenities':'toilets shed demountable donga', 'cm-change':'drying room shed demountable donga',
+  'cm-portaloo':'toilet portaloo', 'cm-container':'storage sea container shed',
+  'cm-container40':'storage sea container shed', 'cm-firstaid':'medical safety',
+  'cm-muster':'emergency evacuation assembly muster safety', 'cm-signin':'induction entry safety',
+  'cm-entry':'access gate signage', 'cm-spill':'environmental safety',
+  'cm-laydown':'storage materials area', 'cm-loading':'delivery set down unloading work zone',
+  'cm-exclusion':'no go crane lift safety', 'cm-hoarding':'boundary fence perimeter',
+  'cm-tempfence':'boundary perimeter fencing security', 'cm-gate-slide':'access entry',
+  'cm-scaffold':'scaffolding', 'cm-gantry':'overhead protection class b hoarding',
+  'cm-shaker':'rumble grid wheel wash erosion sediment', 'cm-washout':'concrete environmental',
+  'cm-skip':'waste rubbish bin', 'cm-hookbin':'waste rubbish skip', 'cm-stockpile':'spoil fill soil',
+  'cm-siltfence':'erosion sediment control esc', 'cm-pitprotect':'erosion sediment stormwater esc',
+  'cm-tpz':'tree protection fencing arborist', 'cm-monitor':'noise dust vibration environmental',
+  'tc-route-veh':'traffic direction truck access', 'tc-route-ped':'pedestrian footpath walkway detour',
+  'tc-controller':'traffic management tgs', 'tc-spotter':'traffic management', 'tc-cone':'traffic',
+  'tc-barrier':'traffic water filled', 'tc-barricade':'traffic', 'tc-sign-rw':'traffic signage tgs',
+  'tc-stopslow':'traffic signage bat', 'tc-speed':'traffic signage', 'tc-footpath':'pedestrian signage detour',
+  'tc-arrowboard':'traffic', 'tc-vms':'traffic variable message sign', 'tc-lights':'traffic signals',
 };
 
 // Flat id → definition map for fast lookup at draw time.
 const SYMBOL_DEFS = {};
 SYMBOL_LIBRARY.forEach(cat => cat.items.forEach(s => {
   if (SYMBOL_KEYWORDS[s.id]) s.k = SYMBOL_KEYWORDS[s.id];
+  if (cat.id.startsWith('cmp-')) s.k = ((s.k || '') + ' cmp site construction management plan').trim();
   SYMBOL_DEFS[s.id] = s;
 }));
 

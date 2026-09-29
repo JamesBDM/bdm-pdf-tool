@@ -1971,3 +1971,23 @@ line away from what it measures, so it can sit closer or further from the object
   `_SNAP_KEYS` so a pinch arriving mid-drag rolls it back cleanly.
 - Note: the middle of a selected measure line is now the offset handle, so to MOVE the
   whole line grab it anywhere other than the diamond.
+
+---
+
+## v3.36 (29 Sep 2026) — Construction Management Plan symbols: 160 → 219
+
+James: *"in the symbols, add a construction set — concrete pumps, crane, hoists, bins, temp offices, traffic control etc. Everything needed for a construction management plan."*
+
+**59 new symbols in three categories**, appended after Civil / Siteworks so every existing id and category is untouched:
+
+- **Construction — Plant & Lifting (15):** tower crane with dashed slew radius and lattice jib, mobile crane with outriggers and radius, boom pump (outriggers + pads), line pump, agitator, excavator, delivery truck, EWP, telehandler, materials/personnel hoist, generator, lighting tower, temp power board, temp water standpipe, CCTV.
+- **Construction — Site Establishment (30):** site office / crib / amenities / change room (portable buildings), portaloo, 20ft and 40ft containers, first aid, emergency assembly point, sign-in, site entry, spill kit, smoking area, laydown, loading zone, exclusion/lift zone, hoarding, temp fence, sliding gate, scaffold, overhead protection gantry, shaker grid, concrete washout, skip bin, hook-lift bin, stockpile, silt fence, pit inlet protection, tree protection zone, noise/dust/vibration monitor.
+- **Construction — Traffic Control (14):** vehicle and pedestrian route arrows, traffic controller, spotter, cone, water-filled barrier, barricade, Road Work / Stop-Slow / speed / Footpath Closed signs, arrow board, VMS, portable traffic lights.
+
+**Sizing differs from the furniture on purpose.** A CMP site plan is 1:200–1:500, so these are sized to be legible on a site plan (signs ~26, buildings 60, cranes at the 90 cap with the radius inside the box) rather than from real millimetres at 1:100. Every one still carries a `b` where it isn't square so it lands the right shape — a site office places at 60 × 27.6.
+
+**Two new path builders:** `_symZig` (lattice between two rails — crane jib) and `_symHut(label, s)`, which returns `{p, t}` for a portable building with a door swing and is spread into the four hut definitions (`..._symHut('OFFICE', 14)`) with `b:[0,27,100,46]`.
+
+**Search:** keyword aliases for all 59 (donga, demountable, franna, alimak, tgs, esc, spoil…), and anything in a `cmp-*` category also matches *cmp*, *site*, *construction* and *management plan*.
+
+**Verified** in the preview: contact sheet of all 59 rendered through the real `drawSymbolAnn` and read back (fixed a TC label sitting on the filled half, LOADING ZONE touching its inner border, and a line-pump drawbar that read as an arrow); zero draw errors; panel builds 219 tiles; "crane" → both cranes + lift zone, "donga" → the four huts, "cmp" → all 59; placement via `addSymbolAnn` gives `cm-office` 60 × 27.6; `node check-syntax.js` clean.
