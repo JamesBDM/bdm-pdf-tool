@@ -27,6 +27,15 @@
 !doc-icon-192.png
 !doc-icon-512.png
 
+# --- the save-format test suite ---
+# Sources only. Everything the run generates — node_modules/, the app copy,
+# the vendored libraries and the test drawings — lives in tests/.work/ and
+# tests/node_modules/ and stays ignored by the catch-all above.
+!tests/
+!tests/*.mjs
+!tests/*.md
+!tests/package.json
+
 # --- docs that were already public in the repo ---
 !BDM-PDF-MARKUP-TOOL-PROJECT-KNOWLEDGE.md
 !DEPLOY-AS-APP.md
