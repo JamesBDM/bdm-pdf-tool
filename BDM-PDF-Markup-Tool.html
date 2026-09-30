@@ -2034,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.36';
+const APP_VERSION = 'v3.37';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -12985,6 +12985,7 @@ function getAnnotationPropertiesHTML(ann) {
       </div>
       <div style="font-size:11px;color:var(--text-secondary);margin-top:6px">Drag corners to resize, use the rotate handle to turn, and change the colour below (e.g. red for demolition).</div>
     </div></div>`;
+    if (def && def.pump) html += getPumpPropsHTML(ann, def);
   }
 
   if (ann.type === 'table') {
@@ -20607,6 +20608,132 @@ const SYMBOL_LIBRARY = [
   ]},
 ];
 
+// v3.37 — Concrete boom pumps at TRUE SIZE. Unlike every other symbol these
+// are drawn from real dimensions (metres, off the manufacturers' data sheets
+// for Classic Concrete Pumping's fleet) and carry def.real = the size in mm of
+// their b-box, so on a calibrated page addSymbolAnn places them at the
+// drawing's scale — the outrigger footprint is exactly what it will occupy on
+// site. Truck drawn cab to the RIGHT (+x), outriggers at full spread.
+//   r  horizontal reach        fs/rs  front/rear outrigger spread (pad centres)
+//   sl front↔rear feet (along the truck)   L × W  truck in travel position
+//   ff front bumper → front feet (null = estimated)
+// A null field that the sheet doesn't give is estimated in _symPump and the
+// estimate is flagged in the Properties panel, never silently presented as data.
+const CONCRETE_PUMPS = [
+  { id:'cp-schwing-17', make:'Schwing', model:'S17 (BPL500)', r:13, reachV:17, fs:3.6, rs:2.5, sl:4.6, L:8.0, W:2.5, ff:null,
+    note:'Footprint ESTIMATED — no published outrigger figures; sized like a 2-axle 20m pump. Confirm with the operator.' },
+  { id:'cp-putz-20', make:'Putzmeister', model:'BSF 20-4.09 H', r:16.1, reachV:19.5, fs:4.5, rs:2.6, sl:4.6, L:8.79, W:2.5, ff:null,
+    note:'Spreads from the BSF 20-4.11 H sheet (same boom family). Front-to-rear feet estimated.',
+    ds:'https://www.putzmeister.ru/upload/iblock/a52/8212-tehnicheskaya_informaciya_bsf20-4.pdf' },
+  { id:'cp-junjin-20', make:'Junjin', model:'JXZZ20-4.09HP', r:16.4, reachV:20, fs:3.6, rs:2.55, sl:4.6, L:8.447, W:2.5, ff:null,
+    ds:'https://www.flowcrete.com.au/_files/ugd/fc5711_af20fb69bfff4119800d44de8cfcc154.pdf' },
+  { id:'cp-hangil-21', make:'Hangil', model:'21ZX-4', r:17.2, reachV:20.5, fs:4.45, rs:2.325, sl:5.36, L:8.5, W:2.5, ff:1.2,
+    note:'Sheet is the Everdigm ECP21ZX. Its labelled spreads (4.45 / 2.325 m) don’t match its own drawing, and truck length is estimated. Verify.',
+    ds:'https://ovg.xwi.mybluehost.me/wp-content/uploads/2018/10/21ZX-1.pdf' },
+  { id:'cp-putz-24', make:'Putzmeister', model:'BSF 24-4.11 H', r:19.7, reachV:23.6, fs:4.5, rs:2.6, sl:6.0, L:10.0, W:2.5, ff:null,
+    note:'Spreads from the data sheet (rear jacks don’t extend). Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.putzmeister.com/documents/20127/7957949/M24-4+Ergonic3+Data+Sheet+EN.pdf/0762b254-35fe-5109-31f5-4678c6b1989c?t=1666020088256' },
+  { id:'cp-sany-25', make:'Sany', model:'SY25 Z4-150', r:21, reachV:24.6, fs:5.6, rs:2.5, sl:6.3, L:9.9, W:2.5, ff:null,
+    note:'Footprint ESTIMATED from the equivalent Junjin JXZZ25 — the Sany AUS/NZ sheet is no longer online. Confirm with the operator.' },
+  { id:'cp-junjin-25', make:'Junjin', model:'JXZZ25-4.11HP', r:21, reachV:24.6, fs:5.6, rs:2.5, sl:6.3, L:9.855, W:2.5, ff:null,
+    ds:'https://e192980b-5804-4086-a879-71a5b071ad85.filesusr.com/ugd/fc5711_981111b50ec0454ba953d6b293724b2a.pdf' },
+  { id:'cp-putz-28', make:'Putzmeister', model:'BSF 28-4', r:23.4, reachV:27.7, fs:5.2, rs:2.6, sl:6.3, L:9.99, W:2.5, ff:null,
+    note:'Spreads from the data sheet (rear jacks don’t extend). Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.putzmeister.com/documents/20127/7957963/M28-4+Ergonic3+Data+Sheet+EN.pdf/21137234-9e33-ba74-401f-d41abb34b22f?t=1643275597004' },
+  { id:'cp-junjin-30', make:'Junjin', model:'JXZ30-4.16HP', r:25.7, reachV:29.5, fs:5.85, rs:5.42, sl:7.1, L:10.5, W:2.5, ff:null,
+    note:'Footprint ESTIMATED from the Sany SY30 — the Junjin sheet’s outrigger plan has no dimensions. Confirm with the operator.',
+    ds:'https://e192980b-5804-4086-a879-71a5b071ad85.filesusr.com/ugd/fc5711_2b9409e81a7f44af8438900875c2abbd.pdf' },
+  { id:'cp-sany-30', make:'Sany', model:'SY30 Z4-150', r:26.5, reachV:30.1, fs:5.85, rs:5.42, sl:7.075, L:10.7, W:2.5, ff:1.4,
+    ds:'https://www.sanyconcretemachinery.com/documents/20127/29994961/SY30_Z4-150_AUS_NZ_SY0060-2_EN.pdf/4d2b5970-b9a2-8dda-0fbb-9437de9148af?t=1727187936671' },
+  { id:'cp-zoomlion-32', make:'Zoomlion', model:'32X-4', r:28.2, reachV:32, fs:5.92, rs:5.28, sl:7.355, L:10.94, W:2.5, ff:1.6,
+    ds:'https://www.zoomlion.com.br/wp-content/uploads/2023/04/32X-4Z-PT_-1-v2.pdf' },
+  { id:'cp-putz-33', make:'Putzmeister', model:'BSF 33-4', r:27.8, reachV:32.1, fs:5.5, rs:7.0, sl:7.5, L:11.5, W:2.5, ff:null,
+    note:'Spreads from the data sheet. Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.cancrete.ca/wp-content/uploads/2022/06/33Z-Data-Sheet.pdf' },
+  { id:'cp-putz-36', make:'Putzmeister', model:'BSF 36-4', r:31.4, reachV:35.6, fs:5.5, rs:7.0, sl:7.5, L:11.5, W:2.5, ff:null,
+    note:'Spreads from the data sheet. Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.putzmeister.com/documents/20127/71252/M36-4+Data+Sheet+EN.pdf/2a810d14-d606-9a22-9793-e66143a8c5c1?t=1643726755179' },
+  { id:'cp-junjin-38', make:'Junjin', model:'JXZZ38-5.16HP', r:33.5, reachV:37.5, fs:8.0, rs:7.1, sl:7.7, L:10.603, W:2.5, ff:null,
+    ds:'https://e192980b-5804-4086-a879-71a5b071ad85.filesusr.com/ugd/fc5711_dc7d8b4420fb4eab9a16913c9d917a73.pdf' },
+  { id:'cp-sany-39', make:'Sany', model:'SY39 RZ5-165', r:33.4, reachV:38.1, fs:6.1, rs:7.4, sl:8.0, L:11.2, W:2.5, ff:null,
+    note:'Spreads from the data sheet. Front-to-rear feet estimated — the support plan is schematic.' },
+  { id:'cp-putz-42', make:'Putzmeister', model:'M42-5', r:36.3, reachV:42, fs:7.5, rs:8.3, sl:8.5, L:11.35, W:2.5, ff:null,
+    note:'Spreads from the data sheet. Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.putzmeister.com/documents/20127/71542/M42-5+Data+Sheet+EN.pdf/7c53e83e-3eba-f4cc-d13e-eccbc4d73742?t=1584107025233' },
+  { id:'cp-sany-45', make:'Sany', model:'SY45 RZ5-165', r:39.2, reachV:44.1, fs:7.9, rs:8.9, sl:8.8, L:11.92, W:2.5, ff:null,
+    note:'Spreads from the data sheet. Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.sanyconcretemachinery.com/documents/20127/30965087/SY45_RZ5-165+AUS_NZ+Data+Sheet+EN.pdf/0061328a-220e-bf13-f53f-f89d9b91895b?t=1741248458934' },
+  { id:'cp-putz-47', make:'Putzmeister', model:'BSF 47-5', r:41.1, reachV:46.1, fs:8.4, rs:9.3, sl:9.5, L:11.85, W:2.5, ff:null,
+    note:'Spreads from the data sheet. Front-to-rear feet estimated — the support plan is schematic.',
+    ds:'https://www.putzmeister.com/documents/20127/71647/M47-5+Data+Sheet+EN.pdf/7fd24f2f-44f4-60b1-0871-4415df909154?t=1584107541032' },
+  { id:'cp-junjin-47', make:'Junjin', model:'JXRZ47-5', r:41.2, reachV:46.2, fs:8.72, rs:9.5, sl:8.76, L:11.87, W:2.5, ff:null,
+    ds:'https://www.flowcrete.com.au/_files/ugd/b173b5_3541eccb3a704e649601aeda3ee9067f.pdf' },
+  { id:'cp-everdigm-48', make:'Everdigm', model:'48CX-5', r:42.1, reachV:47.1, fs:8.79, rs:9.2, sl:9.3, L:13.469, W:2.5, ff:null },
+  { id:'cp-junjin-50', make:'Junjin', model:'JXRZ50-5.18HP', r:44.4, reachV:49.3, fs:8.7, rs:10.2, sl:9.621, L:12.75, W:2.5, ff:null,
+    ds:'https://www.flowcrete.com.au/_files/ugd/b173b5_4b57295eae1848c3b95c3fe073b876ee.pdf' },
+  { id:'cp-everdigm-50', make:'Everdigm', model:'50CX-5', r:45.2, reachV:49.5, fs:8.8, rs:10.9, sl:10.1, L:13.62, W:2.5, ff:null,
+    ds:'https://cdn.komachine.com/media/product-catalog/everdigm_16517_lvpfnu.pdf' },
+  { id:'cp-everdigm-56', make:'Everdigm', model:'56RZ-5', r:51.2, reachV:55.5, fs:9.3, rs:12.1, sl:10.5, L:14.174, W:2.5, ff:null,
+    note:'Figures from the Everdigm 56CX-5 sheet, whose reach matches this unit.' },
+  { id:'cp-junjin-57', make:'Junjin', model:'JXRZ57-5.18HP', r:51.2, reachV:56.2, fs:9.3, rs:12.5, sl:10.766, L:14.212, W:2.5, ff:null,
+    ds:'https://www.flowcrete.com.au/_files/ugd/b173b5_b4f6a5fccef54144b84bf439adea5494.pdf' },
+  { id:'cp-putz-58', make:'Putzmeister', model:'58CX-5', r:53.1, reachV:57.3, fs:11.61, rs:10.99, sl:11.0, L:14.5, W:2.5, ff:null,
+    note:'Spreads from Putzmeister’s 58 m brochure (no M58-5 sheet published). Truck length and front-to-rear feet estimated.' },
+];
+
+// Build a symbol definition from one CONCRETE_PUMPS row.
+function _symPump(s) {
+  const L = s.L, W = s.W || 2.5;
+  const fs = s.fs, rs = s.rs, sl = s.sl;
+  // Feet along the truck: x = 0 at the rear bumper, x = L at the front.
+  const ffEst = s.ff == null;
+  const frontX = L - (ffEst ? Math.max(1.6, (L - sl) * 0.45) : s.ff);
+  const rearX = frontX - sl;
+  const pad = 0.7;                       // outrigger pad, ~700 square
+  const hop = 0.6;                       // hopper hanging off the rear
+  const minX = Math.min(-hop, rearX - pad / 2), maxX = Math.max(L, frontX + pad / 2);
+  const half = Math.max(W / 2, fs / 2 + pad / 2, rs / 2 + pad / 2);
+  const spanX = maxX - minX, spanY = half * 2;
+  const u = 96 / Math.max(spanX, spanY);            // units per metre
+  const ox = 50 - (minX + spanX / 2) * u, oy = 50;  // centre the artwork in 0–100
+  const X = m => _sr(ox + m * u), Y = m => _sr(oy + m * u);
+  const rect = (x1, y1, x2, y2) => `M${X(x1)} ${Y(y1)} H${X(x2)} V${Y(y2)} H${X(x1)} Z`;
+  const cabX = L - 2.3, turretX = L - 3.2;
+  const lw = m => _sr(m * u);                       // pen width given in metres
+  const p = [
+    { d: rect(0, -W / 2, L, W / 2), lw: lw(0.09) },
+    { d: rect(-hop, -0.75, 0, 0.75), lw: lw(0.07) },
+    { d: `M${X(cabX)} ${Y(-W / 2)} V${Y(W / 2)} M${X(L - 0.35)} ${Y(-W / 2 + 0.2)} V${Y(W / 2 - 0.2)}`, lw: lw(0.06) },
+    // folded boom lying back along the truck
+    { d: rect(0.5, -0.28, turretX - 0.8, 0.28), lw: lw(0.05) },
+    { d: _symCircle(ox + turretX * u, oy, 0.8 * u), lw: lw(0.08) },
+    // outrigger legs — front ones splay forward, rear ones back (the X
+    // shape). A pair that barely clears the chassis (rear jacks on the small
+    // pumps don't extend) is drawn as a straight jack instead.
+    { d: [[frontX, fs, -1.3], [rearX, rs, 1.3]].map(([fx, spread, dx]) => {
+        const root = spread / 2 - W / 2 < 0.6 ? 0 : dx, ry = root ? W * 0.42 : W / 2;
+        return `M${X(fx + root)} ${Y(-ry)} L${X(fx)} ${Y(-spread / 2)} M${X(fx + root)} ${Y(ry)} L${X(fx)} ${Y(spread / 2)}`;
+      }).join(' '), lw: lw(0.14) },
+    // support footprint — the pad-to-pad outline the pump stands on
+    { d: `M${X(frontX)} ${Y(-fs / 2)} L${X(frontX)} ${Y(fs / 2)} L${X(rearX)} ${Y(rs / 2)} L${X(rearX)} ${Y(-rs / 2)} Z`, lw: lw(0.04), dash: 1 },
+    { d: [[frontX, -fs / 2], [frontX, fs / 2], [rearX, -rs / 2], [rearX, rs / 2]]
+        .map(([x, y]) => rect(x - pad / 2, y - pad / 2, x + pad / 2, y + pad / 2)).join(' '), f: 1 },
+  ];
+  // reach label on the chassis, between the rear legs and the turret
+  const t = [{ t: `${Math.round(s.reachV || s.r)}m`, x: X((rearX + 0.9 + turretX - 0.8) / 2), y: Y(0.78), s: _sr(0.62 * u) }];
+  const b = [_sr(ox + minX * u), _sr(oy - half * u), _sr(spanX * u), _sr(spanY * u)];
+  return {
+    id: s.id, name: `${s.make} ${s.model} — ${Math.round(s.reachV || s.r)}m boom pump`,
+    w: 90, b, p, t,
+    k: `concrete pump boom outrigger footprint true size scale classic ${s.make} ${s.model} ${Math.round(s.reachV || s.r)}m`.toLowerCase(),
+    real: { w: spanX * 1000, h: spanY * 1000 },     // mm, of the b-box
+    pump: Object.assign({}, s, { ffEst, u, cx: _sr(ox + turretX * u), cy: oy, reachR: s.r * u })
+  };
+}
+if (CONCRETE_PUMPS.length) SYMBOL_LIBRARY.push({
+  id: 'cmp-pumps', name: 'Construction — Concrete Pumps (true size)', items: CONCRETE_PUMPS.map(_symPump)
+});
+
 // Search aliases — the everyday word, not the drawing-office one. Applied
 // after the library is built so the definitions above stay readable.
 const SYMBOL_KEYWORDS = {
@@ -20743,6 +20870,22 @@ function drawSymbolAnn(ctx, ann) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(t.t, x + ((t.x ?? 50) - bx) * sx, y + ((t.y ?? 50) - by) * sy);
   });
+  // v3.37: a pump's boom reach, drawn round the turret at the same scale as
+  // the footprint. It reaches well outside the annotation box on purpose.
+  if (def.pump && ann.showReach) {
+    const cx = x + (def.pump.cx - bx) * sx, cy = y + (def.pump.cy - by) * sy;
+    const r = def.pump.reachR * k;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(0.5, 0.08 * def.pump.u * k * weight);
+    ctx.setLineDash([r * 0.04, r * 0.025]);
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - r); ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.font = `bold ${Math.max(3, r * 0.06)}px Arial`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(`R ${def.pump.r} m`, cx + r * 0.02, cy - r * 0.5);
+  }
 }
 
 // Tile preview — the same path data rendered as inline SVG for the panel.
@@ -20776,8 +20919,14 @@ function addSymbolAnn(screenPt) {
   const p = toPage(screenPt);
   // v3.26: a bed is placed bed-shaped. def.b carries the artwork's true
   // proportions; without it the old square placement is unchanged.
-  const w = def.w || 40;
-  const h = def.b ? w * (def.b[3] / def.b[2]) : w;
+  let w = def.w || 40;
+  let h = def.b ? w * (def.b[3] / def.b[2]) : w;
+  // v3.37: true-size symbols (concrete pumps) take the page's scale.
+  if (def.real) {
+    const cal = _calFor(currentPage, p);
+    if (cal && cal.pixelsPerMm > 0) { w = def.real.w * cal.pixelsPerMm; h = def.real.h * cal.pixelsPerMm; }
+    else showToast('Page isn’t calibrated — placed at a nominal size. Calibrate, then use “Reset to true size” in Properties.');
+  }
   const ann = {
     id: generateId(), type: 'symbol', page: currentPage,
     symbolId: def.id, color: '#111111', thickness: 2,
@@ -20786,6 +20935,55 @@ function addSymbolAnn(screenPt) {
   annotations.push(ann);
   saveToHistory();
   redrawAnnotations();
+}
+
+// ---- True-size pumps (v3.37) -------------------------------------
+function getPumpPropsHTML(ann, def) {
+  const s = def.pump, m = v => (v == null ? '—' : (+v).toFixed(1) + ' m');
+  const cal = _calFor(ann.page, { x: (ann.points[0].x + ann.points[1].x) / 2, y: (ann.points[0].y + ann.points[1].y) / 2 });
+  let scaleNote;
+  if (!(cal && cal.pixelsPerMm > 0)) scaleNote = '<span style="color:var(--danger,#c0392b)">Page not calibrated — not to scale.</span>';
+  else {
+    const w = Math.abs(ann.points[1].x - ann.points[0].x), want = def.real.w * cal.pixelsPerMm;
+    scaleNote = Math.abs(w - want) / want < 0.005
+      ? `True size at ${escapeHtml(cal.scale || 'page scale')}.`
+      : `<span style="color:var(--danger,#c0392b)">Resized — ${Math.round(w / want * 100)}% of true size.</span>`;
+  }
+  const row = (k, v) => `<div style="display:flex;justify-content:space-between"><span>${k}</span><b>${v}</b></div>`;
+  return `<div class="properties-section"><div class="properties-section-title">Concrete Pump</div><div class="properties-section-content">
+    <div style="font-size:11px;line-height:1.55">
+      ${row('Horizontal reach', m(s.r))}${s.reachV ? row('Vertical reach', m(s.reachV)) : ''}
+      ${row('Outrigger spread — front', m(s.fs))}${row('Outrigger spread — rear', m(s.rs))}
+      ${row('Front ↔ rear feet', m(s.sl))}${row('Truck (travel)', `${m(s.L)} × ${m(s.W)}`)}
+      ${row('Footprint (box)', `${m(def.real.w / 1000)} × ${m(def.real.h / 1000)}`)}
+    </div>
+    <div style="font-size:11px;margin-top:6px">${scaleNote}</div>
+    ${s.note ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">${escapeHtml(s.note)}</div>` : ''}
+    <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" class="checkbox-input" ${ann.showReach ? 'checked' : ''} onchange="setPumpReach(this.checked)"> Show boom reach circle (${m(s.r)})</label>
+    <button onclick="resetSymbolTrueSize()" class="modal-btn" style="width:100%;margin-top:6px;font-size:11px" title="Resize to the pump's real footprint at this page's calibrated scale (keeps its centre)">Reset to true size</button>
+    ${s.ds ? `<a href="${escapeHtml(s.ds)}" target="_blank" rel="noopener" style="display:block;font-size:11px;margin-top:6px">Manufacturer data sheet ↗</a>` : ''}
+    <div style="font-size:10px;color:var(--text-muted);margin-top:6px">Check outrigger spread and pad loads with the pump operator before finalising a set-up position.</div>
+  </div></div>`;
+}
+
+function setPumpReach(on) {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  if (!a) return;
+  a.showReach = !!on;
+  saveToHistory(); redrawAnnotations();
+}
+
+function resetSymbolTrueSize() {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  const def = a && SYMBOL_DEFS[a.symbolId];
+  if (!def || !def.real) return;
+  const c = { x: (a.points[0].x + a.points[1].x) / 2, y: (a.points[0].y + a.points[1].y) / 2 };
+  const cal = _calFor(a.page, c);
+  if (!(cal && cal.pixelsPerMm > 0)) { showToast('Calibrate this page first — true size needs a scale'); return; }
+  const w = def.real.w * cal.pixelsPerMm, h = def.real.h * cal.pixelsPerMm;
+  a.points = [{ x: c.x - w / 2, y: c.y - h / 2 }, { x: c.x + w / 2, y: c.y + h / 2 }];
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
 }
 
 // ---- Panel -----------------------------------------------------
@@ -20810,7 +21008,8 @@ function getSymbolsPanelHTML() {
       <span style="margin-left:auto">${SYMBOL_LIBRARY.reduce((n, c) => n + c.items.length, 0)} symbols</span>
     </div>
     <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
-      Click a symbol, then click the drawing to place it. Drag corners to resize, use the rotate handle to turn, recolour from Properties.</div>
+      Click a symbol, then click the drawing to place it. Drag corners to resize, use the rotate handle to turn, recolour from Properties.
+      <b>Concrete pumps</b> place at true size on a calibrated page — search <i>pump</i>.</div>
     <div id="sym-cats">${getSymbolCatsHTML()}</div>
   </div>`;
 }
