@@ -2218,3 +2218,7 @@ James: *"is it possible to add a button at the top that changes the UI to look a
 - `node check-syntax.js` clean.
 
 Pre-existing, seen while testing and **not** changed here: with the Text tool, clicking away to finish a note opens a fresh empty text box where you clicked. This happens in both layouts.
+
+## v3.44 (6 Oct 2026) — "Acrobat style" renamed "Traditional"
+
+James asked for the layout switch not to say "Acrobat style". The user-facing wording is now **Traditional**: the menu-bar pill reads **Datum | Traditional**, the View menu item is **Traditional Layout**, and the tooltip and toast match. Internals are unchanged (`data-ui="acrobat"`, `localStorage 'datum-ui' = 'acrobat'`, `acro*` functions), so anyone already using the layout keeps it. Code comments still say Acrobat, because that's what it's modelled on.

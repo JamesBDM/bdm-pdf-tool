@@ -1610,7 +1610,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();cycleRailDock()">Move Tool Rail (left / top / right)</div>
       <div class="ami" onclick="amClose();toggleTopbarCompact()">Compact Toolbar</div>
       <div class="ami" onclick="amClose();toggleDatumTheme()">Light / Dark Theme</div>
-      <div class="ami" onclick="amClose();setUiMode(uiMode() === 'acrobat' ? 'datum' : 'acrobat')">Acrobat-Style Layout <span class="k">on / off</span></div>
+      <div class="ami" onclick="amClose();setUiMode(uiMode() === 'acrobat' ? 'datum' : 'acrobat')">Traditional Layout <span class="k">on / off</span></div>
     </div></div>
     <div class="am"><button onclick="amToggle(this)">Document</button><div class="am-drop">
       <div class="ami" onclick="amClose();openMergeDialog()">Combine / Split PDFs…</div>
@@ -1677,9 +1677,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <button class="mb-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg></button>
     <button class="mb-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7L21 13"/></svg></button>
     <div class="m-spring"></div>
-    <div id="ui-switch" title="Layout — Datum's own layout, or an Acrobat-style one for people coming from Adobe Acrobat. Saved on this computer only; files are the same either way.">
+    <div id="ui-switch" title="Layout — Datum's own layout, or a traditional PDF-editor layout (menus, Comment / Measure toolbars, comments list) for people used to standard PDF software. Saved on this computer only; files are the same either way.">
       <button data-ui="datum" onclick="setUiMode('datum')">Datum</button>
-      <button data-ui="acrobat" onclick="setUiMode('acrobat')">Acrobat style</button>
+      <button data-ui="acrobat" onclick="setUiMode('acrobat')">Traditional</button>
     </div>
     <span class="m-file" id="menubar-file"></span>
   </div>
@@ -2214,7 +2214,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.43';
+const APP_VERSION = 'v3.44';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -10580,7 +10580,7 @@ function setUiMode(mode, quiet) {
   if (mode === 'acrobat') { acroRenderSet(); acroSyncState(); acroRefreshComments(); }
   // The canvas area changed width — let the page re-centre
   try { window.dispatchEvent(new Event('resize')); } catch (e) {}
-  if (!quiet) showToast(mode === 'acrobat' ? 'Acrobat-style layout on — switch back any time, top right' : 'Datum layout on');
+  if (!quiet) showToast(mode === 'acrobat' ? 'Traditional layout on — switch back any time, top right' : 'Datum layout on');
 }
 
 // Acrobat's "Add sticky note" — Datum has no pop-up note object, so a sticky
