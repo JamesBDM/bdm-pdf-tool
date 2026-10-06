@@ -2222,3 +2222,16 @@ Pre-existing, seen while testing and **not** changed here: with the Text tool, c
 ## v3.44 (6 Oct 2026) — "Acrobat style" renamed "Traditional"
 
 James asked for the layout switch not to say "Acrobat style". The user-facing wording is now **Traditional**: the menu-bar pill reads **Datum | Traditional**, the View menu item is **Traditional Layout**, and the tooltip and toast match. Internals are unchanged (`data-ui="acrobat"`, `localStorage 'datum-ui' = 'acrobat'`, `acro*` functions), so anyone already using the layout keeps it. Code comments still say Acrobat, because that's what it's modelled on.
+
+---
+
+## datum-markup skill — bake step (6 Oct 2026, no app change)
+
+James: *"how come datum mark ups aren't visible on adobe unless i flatten them? bluebeam's markups show up?"* Datum's own Save was fine — every Datum-saved PDF on his machine had `BDMBakedOverlay = 1`. The blank files came from the **datum-markup skill**: `embed()` writes only `/BDMMarkupData` with `BDMBakedOverlay = 0`, so Adobe, Chrome and Bluebeam show the clean drawing until someone opens the file in Datum and presses Save. (Bluebeam markups show because Bluebeam writes real PDF annotations with appearance streams; Datum deliberately doesn't — it paints a full-page overlay image and carries the clean original plus the project inside.)
+
+**Fix: `scripts/datum-bake.js` + `bake()` in `datum_markup.py`.** Rather than re-implement Datum's renderer in Python (dozens of markup types, would drift every release), the skill now runs Datum itself: Playwright opens the app headless (live site by default, `--app`/`$DATUM_APP` for a local copy; pdf-lib 1.17.1 / pdfjs-dist 3.11.174 served locally when installed), loads the PDF through `#pdf-input`, calls the real `saveProject()`, and intercepts only `writeSavedBytes` — checks the bytes with `readBDMDataFromPdfBytes` (baked, clean source present, same markup count), then hands them out as a download and replaces the file. Browser order: `$CHROMIUM_PATH`, Playwright Chromium, Chrome, Edge.
+
+- **Trap:** after open, `currentPdfBytes` is Datum's *clean inner copy* when the file was already saved by Datum — and the skill's original file IS that clean copy, still carrying `/BDMMarkupData` with baked=0. So "is this file already baked?" can't be asked of `currentPdfBytes`; the script hooks `readBDMDataFromPdfBytes` before the open and records the first read (the file itself).
+- Failure (no node / browser / internet, or the save falls back to no-bake for a huge set) leaves the file as `embed()` wrote it and returns the reason; SKILL.md tells the agent to say so on delivery.
+- Verified: skill-built test PDF (cloud, stamp, text, arrow, north symbol, calibrated measure) baked in ~10 s with v3.44 local and live; MuPDF render shows every markup and the 10.58 m label; re-bake reports "already baked"; PDF with no Datum data refused; Python `bake()` returns `(True, msg)` / `(False, reason)`.
+- Repackaged as `datum-markup.skill`; previous build kept as `datum-markup.BACKUP-v3.44.skill`.
