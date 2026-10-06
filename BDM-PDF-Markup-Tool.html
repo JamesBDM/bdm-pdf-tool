@@ -2034,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.38';
+const APP_VERSION = 'v3.39';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -12987,6 +12987,7 @@ function getAnnotationPropertiesHTML(ann) {
     </div></div>`;
     if (def && def.pump) html += getPumpPropsHTML(ann, def);
     if (def && def.veh) html += getVehiclePropsHTML(ann, def);
+    if (def && def.crane) html += getCranePropsHTML(ann, def);
   }
 
   if (ann.type === 'table') {
@@ -20909,6 +20910,149 @@ if (TRUE_SIZE_VEHICLES.length) SYMBOL_LIBRARY.push({
   id: 'cmp-vehicles', name: 'Construction — Trucks & Vehicles (true size)', items: TRUE_SIZE_VEHICLES.map(_symVehicle)
 });
 
+// v3.39 — Cranes at TRUE SIZE. Same pattern as the pumps and trucks: a data
+// table in metres → plan-view artwork with def.real (mm of its b-box), so
+// addSymbolAnn places the machine's footprint at the page's scale.
+//   tower / luffer / self — the box is the BASE (footing or outrigger cross);
+//     the jib and counter-jib are drawn by _drawLiftOverlay at the placed
+//     annotation's own (editable) lengths, out along +x — rotate to slew.
+//   franna — articulated pick-and-carry, cab to the right (+x), no slew.
+//   mobile — all-terrain, outriggers out, boom stowed forward over the cab.
+// rings = the default reach chart, [radius m, capacity]. EVERY capacity is a
+// typical figure for the class, not a load chart — the Properties panel says
+// so, and all of them are editable per placed crane.
+//   base  footing / outrigger square   mast  mast section   jib  jib length
+//   cj    counter-jib (tower) or tail radius (luffer / self-erecting ballast)
+//   parked  luffer's out-of-service radius (jib parked up)
+//   ol × ot  outrigger pad centres, along × across   tail  tail-swing radius
+const TRUE_SIZE_CRANES = [
+  { id:'cr-tc-flat-50', kind:'tower', name:'Tower Crane — flat-top, 50 m jib', tag:'8t', base:6.0, mast:1.6, jib:50, cj:14, max:'8 t',
+    rings:[[15,'8.0 t'],[25,'5.0 t'],[35,'3.3 t'],[50,'2.0 t']],
+    note:'Typical 8 t flat-top (Potain MDT 219 / Liebherr 172 EC-B class).' },
+  { id:'cr-tc-flat-60', kind:'tower', name:'Tower Crane — flat-top, 60 m jib', tag:'12t', base:8.0, mast:2.0, jib:60, cj:17.5, max:'12 t',
+    rings:[[20,'10.0 t'],[30,'6.6 t'],[45,'4.2 t'],[60,'2.8 t']],
+    note:'Typical 12 t flat-top (Potain MDT 389 / Liebherr 340 EC-B class).' },
+  { id:'cr-tc-hammer-70', kind:'tower', name:'Tower Crane — hammerhead, 70 m jib', tag:'16t', base:8.0, mast:2.0, jib:70, cj:22, max:'16 t',
+    rings:[[20,'14.0 t'],[35,'8.0 t'],[50,'5.0 t'],[70,'3.0 t']],
+    note:'Typical 16 t hammerhead (Liebherr 280 EC-H class). The tower head sits above the mast; in plan it reads like a flat-top.' },
+  { id:'cr-tc-luff-45', kind:'luffer', name:'Tower Crane — luffing jib, 45 m', tag:'18t', base:6.0, mast:2.0, jib:45, cj:10, parked:14, max:'18 t',
+    rings:[[15,'18 t'],[25,'11 t'],[35,'7.5 t'],[45,'5.0 t']],
+    note:'Typical 18 t luffer (Liebherr 280 HC-L / Favelle Favco M235 class). Out of service the jib parks up, so its weathervane radius is the parked radius, not the jib.' },
+  { id:'cr-tc-luff-60', kind:'luffer', name:'Tower Crane — luffing jib, 60 m', tag:'32t', base:10.0, mast:2.5, jib:60, cj:13, parked:18, max:'32 t',
+    rings:[[20,'28 t'],[30,'18 t'],[45,'11 t'],[60,'7.0 t']],
+    note:'Typical 32 t heavy luffer (Favelle Favco M760D / Liebherr 710 HC-L class).' },
+  { id:'cr-tc-self-40', kind:'self', name:'Tower Crane — self-erecting, 40 m jib', tag:'4t', base:4.5, mast:1.2, jib:40, cj:3.5, max:'4 t',
+    rings:[[10,'4.0 t'],[20,'2.2 t'],[30,'1.4 t'],[40,'1.0 t']],
+    note:'Typical self-erecting crane (Potain Igo / Hup 40 class) on its outrigger cross. Counter-jib = ballast slewing radius.' },
+  { id:'cr-franna-at15', kind:'franna', name:'Franna — AT15 (15 t pick & carry)', tag:'AT15', L:8.7, W:2.35, boom:14, max:'15 t',
+    rings:[[4,'8.0 t'],[8,'3.6 t'],[12,'1.8 t']],
+    note:'Typical Terex Franna AT15. Pick-and-carry: no slew, so the chart is drawn as a front arc. Rings measured from the front axle — check the datum on the crane’s own chart.' },
+  { id:'cr-franna-at20', kind:'franna', name:'Franna — AT20 (20 t pick & carry)', tag:'AT20', L:9.8, W:2.5, boom:17.9, max:'20 t',
+    rings:[[4,'11 t'],[8,'5.5 t'],[12,'3.2 t'],[16,'1.8 t']],
+    note:'Typical Terex Franna AT20. Pick-and-carry: no slew, so the chart is drawn as a front arc. Rings measured from the front axle — check the datum on the crane’s own chart.' },
+  { id:'cr-franna-mac25', kind:'franna', name:'Franna — MAC25 (25 t pick & carry)', tag:'MAC25', L:11.2, W:2.5, boom:19.9, max:'25 t',
+    rings:[[4,'14 t'],[8,'7.2 t'],[12,'4.2 t'],[18,'2.0 t']],
+    note:'Typical Terex Franna MAC25. Pick-and-carry: no slew, so the chart is drawn as a front arc. Rings measured from the front axle — check the datum on the crane’s own chart.' },
+  { id:'cr-franna-at40', kind:'franna', name:'Franna — AT40 (40 t pick & carry)', tag:'AT40', L:12.7, W:2.75, boom:26, max:'40 t',
+    rings:[[5,'20 t'],[10,'9.5 t'],[16,'5.0 t'],[24,'2.2 t']],
+    note:'Typical Terex Franna AT40. Pick-and-carry: no slew, so the chart is drawn as a front arc. Rings measured from the front axle — check the datum on the crane’s own chart.' },
+  { id:'cr-mc-25', kind:'mobile', name:'Mobile Crane — 25 t city crane', tag:'25t', L:9.5, W:2.5, ax:2, ol:5.2, ot:6.2, tail:3.0, boom:30, max:'25 t',
+    rings:[[5,'11 t'],[10,'5.5 t'],[20,'2.2 t'],[28,'1.1 t']],
+    note:'Typical 2-axle 25 t city / all-terrain crane, outriggers fully extended.' },
+  { id:'cr-mc-60', kind:'mobile', name:'Mobile Crane — 60 t all-terrain', tag:'60t', L:11.4, W:2.55, ax:3, ol:6.0, ot:7.2, tail:3.9, boom:48, max:'60 t',
+    rings:[[6,'22 t'],[12,'11 t'],[20,'6.0 t'],[30,'3.4 t'],[40,'2.0 t']],
+    note:'Typical 3-axle 60 t all-terrain (Liebherr LTM 1060 / Tadano AC 3.055 class), full outriggers and counterweight.' },
+  { id:'cr-mc-100', kind:'mobile', name:'Mobile Crane — 100 t all-terrain', tag:'100t', L:13.6, W:2.75, ax:4, ol:7.7, ot:7.8, tail:4.3, boom:60, max:'100 t',
+    rings:[[8,'38 t'],[14,'20 t'],[24,'10 t'],[36,'5.0 t'],[50,'2.5 t']],
+    note:'Typical 4-axle 100 t all-terrain (Liebherr LTM 1100 / Grove GMK4100 class), full outriggers and counterweight.' },
+  { id:'cr-mc-220', kind:'mobile', name:'Mobile Crane — 220 t all-terrain', tag:'220t', L:15.9, W:3.0, ax:5, ol:8.9, ot:9.0, tail:4.9, boom:60, max:'220 t',
+    rings:[[10,'58 t'],[20,'26 t'],[30,'14 t'],[40,'9.0 t'],[56,'4.5 t']],
+    note:'Typical 5-axle 220 t all-terrain (Liebherr LTM 1230 / Grove GMK5250 class), full outriggers and counterweight.' },
+  { id:'cr-mc-400', kind:'mobile', name:'Mobile Crane — 400 t all-terrain', tag:'400t', L:19.6, W:3.0, ax:8, ol:10.4, ot:10.0, tail:5.6, boom:60, max:'400 t',
+    rings:[[12,'95 t'],[20,'52 t'],[30,'30 t'],[45,'15 t'],[60,'8.0 t']],
+    note:'Typical 8-axle 400 t all-terrain (Liebherr LTM 1450 class), full outriggers and counterweight.' },
+];
+
+const _CRANE_TOWER = { tower: 1, luffer: 1, self: 1 };
+
+// Build a symbol definition from one TRUE_SIZE_CRANES row.
+function _symCrane(s) {
+  const pad = 0.8, tower = _CRANE_TOWER[s.kind];
+  let minX, maxX, half, cxm, tc = 0, fa = 0;        // metres; cxm = chart centre
+  if (tower) { half = s.base / 2; minX = -half; maxX = half; cxm = 0; }
+  else if (s.kind === 'franna') { minX = 0; maxX = s.L; half = s.W / 2; fa = s.L - 2.4; cxm = fa; }
+  else {
+    tc = s.L * 0.42;
+    minX = Math.min(0, tc - s.ol / 2 - pad / 2); maxX = Math.max(s.L, tc + s.ol / 2 + pad / 2);
+    half = Math.max(s.W / 2, s.ot / 2 + pad / 2); cxm = tc;
+  }
+  const spanX = maxX - minX, spanY = half * 2;
+  const u = 96 / Math.max(spanX, spanY);
+  const ox = 50 - (minX + spanX / 2) * u, oy = 50;
+  const X = m => _sr(ox + m * u), Y = m => _sr(oy + m * u), lw = m => _sr(m * u);
+  const rect = (x1, y1, x2, y2) => `M${X(x1)} ${Y(y1)} H${X(x2)} V${Y(y2)} H${X(x1)} Z`;
+  const p = [], t = [];
+  const padsAt = pts => ({ d: pts.map(([x, y]) => rect(x - pad / 2, y - pad / 2, x + pad / 2, y + pad / 2)).join(' '), f: 1 });
+  const wheel = (x, W) => rect(x - 0.55, -W / 2 + 0.05, x + 0.55, -W / 2 + 0.42) + ' ' + rect(x - 0.55, W / 2 - 0.42, x + 0.55, W / 2 - 0.05);
+  if (s.kind === 'self') {
+    const e = half - pad / 2;
+    p.push({ d: `M${X(-e)} ${Y(-e)} L${X(e)} ${Y(e)} M${X(-e)} ${Y(e)} L${X(e)} ${Y(-e)}`, lw: lw(0.22) });
+    p.push(padsAt([[-e, -e], [e, -e], [-e, e], [e, e]]));
+    p.push({ d: _symCircle(ox, oy, 1.5 * u), lw: lw(0.08) });
+    p.push({ d: rect(-s.mast / 2, -s.mast / 2, s.mast / 2, s.mast / 2), lw: lw(0.1) });
+  } else if (tower) {
+    const m = s.mast / 2;
+    p.push({ d: rect(-half, -half, half, half), lw: lw(0.08) });                     // footing
+    p.push({ d: rect(-m, -m, m, m), lw: lw(0.14) });                                 // mast
+    p.push({ d: `M${X(-m)} ${Y(-m)} L${X(m)} ${Y(m)} M${X(-m)} ${Y(m)} L${X(m)} ${Y(-m)}`, lw: lw(0.06) });
+    const a = half - 0.6;                                                            // anchor / ballast blocks
+    p.push({ d: [[-a, -a], [a, -a], [-a, a], [a, a]].map(([x, y]) => rect(x - 0.35, y - 0.35, x + 0.35, y + 0.35)).join(' '), f: 1 });
+  } else if (s.kind === 'franna') {
+    const W = s.W, hw = W / 2, art = s.L * 0.45, front = s.L - 0.9;
+    p.push({ d: rect(0, -hw, art - 0.15, hw), lw: lw(0.09) });                       // rear (engine) section
+    p.push({ d: rect(art + 0.15, -hw + 0.1, front, hw - 0.1), lw: lw(0.09) });       // front section
+    p.push({ d: _symCircle(ox + art * u, oy, 0.3 * u), lw: lw(0.07) });             // articulation
+    p.push({ d: rect(front - 2.1, -hw + 0.1, front - 0.2, -hw + 1.05), lw: lw(0.06) }); // cab, left front
+    p.push({ d: rect(1.0, -0.15, s.L, 0.75), lw: lw(0.07) });                       // boom stowed forward
+    p.push({ d: `M${X(s.L - 0.5)} ${Y(-0.15)} V${Y(0.75)}`, lw: lw(0.05) });
+    p.push({ d: wheel(1.5, W) + ' ' + wheel(fa, W), f: 1 });
+    t.push({ t: s.tag, x: X(art / 2), y: Y(0), s: _sr(Math.min(0.8, W * 0.3) * u) });
+  } else {
+    const W = s.W, hw = W / 2, cab = s.L - 2.0;
+    p.push({ d: rect(0, -hw, s.L, hw), lw: lw(0.09) });                             // carrier
+    p.push({ d: `M${X(cab)} ${Y(-hw)} V${Y(0)} H${X(s.L)}`, lw: lw(0.06) });        // one-man cab, left
+    const ax0 = 1.4, ax1 = cab - 0.8;
+    let wd = '';
+    for (let i = 0; i < s.ax; i++) wd += wheel(s.ax > 1 ? ax0 + (ax1 - ax0) * i / (s.ax - 1) : ax1, W) + ' ';
+    p.push({ d: wd.trim(), f: 1 });
+    const fx = tc + s.ol / 2, rx = tc - s.ol / 2, oh = s.ot / 2;                   // outriggers out
+    p.push({ d: `M${X(fx)} ${Y(-hw)} V${Y(-oh)} M${X(fx)} ${Y(hw)} V${Y(oh)} M${X(rx)} ${Y(-hw)} V${Y(-oh)} M${X(rx)} ${Y(hw)} V${Y(oh)}`, lw: lw(0.2) });
+    p.push(padsAt([[fx, -oh], [fx, oh], [rx, -oh], [rx, oh]]));
+    p.push({ d: `M${X(fx)} ${Y(-oh)} L${X(fx)} ${Y(oh)} L${X(rx)} ${Y(oh)} L${X(rx)} ${Y(-oh)} Z`, lw: lw(0.04), dash: 1 });
+    p.push({ d: _symCircle(ox + tc * u, oy, 1.2 * u), lw: lw(0.08) });             // slew ring
+    const cw = Math.min(s.tail, tc);                                                 // counterweight at the tail
+    p.push({ d: rect(tc - cw, -hw * 0.85, tc - cw + 1.1, hw * 0.85), f: 1 });
+    p.push({ d: rect(tc, -0.45, s.L - 0.2, 0.45), lw: lw(0.07) });                   // boom stowed forward
+    t.push({ t: s.tag, x: X((tc + 1.2 + cab) / 2), y: Y(hw * 0.55 + 0.05), s: _sr(Math.min(0.7, W * 0.26) * u) });
+  }
+  const b = [_sr(ox + minX * u), _sr(oy - half * u), _sr(spanX * u), _sr(spanY * u)];
+  const def = {
+    id: s.id, name: s.name, w: tower ? 40 : 90, b, p, t,
+    k: `crane lifting reach chart load radius true size scale ${s.kind} ${s.name} ${s.tag} ${tower ? 'tower tc jib slew weathervane weather vane' : ''} ${s.kind === 'franna' ? 'pick and carry' : ''} ${s.kind === 'mobile' ? 'all terrain at outrigger tail swing' : ''}`.toLowerCase().replace(/\s+/g, ' '),
+    real: { w: spanX * 1000, h: spanY * 1000 },     // mm, of the b-box
+    crane: Object.assign({}, s, { upm: u, cx: _sr(ox + cxm * u), cy: oy, rings: s.rings.map(([r, c]) => ({ r, t: c })) })
+  };
+  // The placed box is only the base, so give the panel tile a whole crane.
+  if (tower) def.tile = { b: [0, 34, 100, 32], p: [
+    { d: 'M30 46 H98 M30 54 H98 M98 46 V54', lw: 1.4 }, { d: _symZig(30, 98, 46, 54, 12), lw: 0.8 },
+    { d: 'M4 47 H24 M4 53 H24', lw: 1.4 }, { d: 'M2 44 H10 V56 H2 Z', f: 1 },
+    { d: 'M23 43 H31 V57 H23 Z', lw: 2.6 }, { d: 'M23 43 L31 57 M31 43 L23 57', lw: 1 }] };
+  return def;
+}
+if (TRUE_SIZE_CRANES.length) SYMBOL_LIBRARY.push({
+  id: 'cmp-cranes', name: 'Construction — Cranes (true size)', items: TRUE_SIZE_CRANES.map(_symCrane)
+});
+
 // Search aliases — the everyday word, not the drawing-office one. Applied
 // after the library is built so the definitions above stay readable.
 const SYMBOL_KEYWORDS = {
@@ -21045,22 +21189,9 @@ function drawSymbolAnn(ctx, ann) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(t.t, x + ((t.x ?? 50) - bx) * sx, y + ((t.y ?? 50) - by) * sy);
   });
-  // v3.37: a pump's boom reach, drawn round the turret at the same scale as
-  // the footprint. It reaches well outside the annotation box on purpose.
-  if (def.pump && ann.showReach) {
-    const cx = x + (def.pump.cx - bx) * sx, cy = y + (def.pump.cy - by) * sy;
-    const r = def.pump.reachR * k;
-    ctx.strokeStyle = col;
-    ctx.lineWidth = Math.max(0.5, 0.08 * def.pump.u * k * weight);
-    ctx.setLineDash([r * 0.04, r * 0.025]);
-    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - r); ctx.stroke();
-    ctx.fillStyle = col;
-    ctx.font = `bold ${Math.max(3, r * 0.06)}px Arial`;
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(`R ${def.pump.r} m`, cx + r * 0.02, cy - r * 0.5);
-  }
+  // v3.37/v3.39: pump reach, crane jib, reach chart and weathervane —
+  // drawn round the machine at its own scale, outside the box on purpose.
+  if (def.pump || def.crane) _drawLiftOverlay(ctx, ann, def, { x, y, bx, by, sx, sy, k, col, weight });
   // v3.38: a vehicle's indicative turning circle — outer body sweep and
   // inner wheel path round a centre on the lead unit's rear-axle line, on
   // the driver's left (or right). Like the pump reach it leaves the box.
@@ -21087,6 +21218,7 @@ function drawSymbolAnn(ctx, ann) {
 
 // Tile preview — the same path data rendered as inline SVG for the panel.
 function symbolTileSVG(def) {
+  if (def.tile) def = Object.assign({}, def, def.tile);   // v3.39: tower cranes place as a base, tile as a whole crane
   let inner = '';
   (def.p || []).forEach(p => {
     inner += `<path d="${p.d}" fill="${p.f ? 'currentColor' : 'none'}" stroke="${p.f ? 'none' : 'currentColor'}" stroke-width="${p.lw || 4}"${p.dash ? ' stroke-dasharray="6 4"' : ''} stroke-linecap="round" stroke-linejoin="round"/>`;
@@ -21134,6 +21266,246 @@ function addSymbolAnn(screenPt) {
   redrawAnnotations();
 }
 
+// ---- Lifting overlays: reach chart, jib, weathervane (v3.39) ------
+// Shared by concrete pumps (def.pump) and cranes (def.crane). Everything is
+// drawn round the chart centre (pump turret / crane slew centre) in metres,
+// at the symbol's own scale, and deliberately reaches outside the annotation
+// box. The placed annotation can override any default:
+//   ann.showReach   reach chart on      ann.rings  [{r, t}] (else the def's)
+//   ann.jib / ann.cj / ann.parked / ann.tail   overrides, metres
+//   ann.showVane    tower: weathervane zone · mobile: tail-swing circle
+function _liftMeta(def) { return def && (def.crane || def.pump) || null; }
+function _liftVal(ann, def, key) {
+  const v = ann && ann[key];
+  return (v != null && +v > 0) ? +v : _liftMeta(def)[key];
+}
+function _liftRings(ann, def) {
+  if (Array.isArray(ann.rings)) return ann.rings;
+  const c = _liftMeta(def);
+  return c.rings || (def.pump ? [{ r: c.r, t: 'max reach' }] : []);
+}
+function _liftVaneR(ann, def) {
+  const c = def.crane;
+  return c.kind === 'luffer'
+    ? Math.max(_liftVal(ann, def, 'parked'), _liftVal(ann, def, 'cj'))
+    : Math.max(_liftVal(ann, def, 'jib'), _liftVal(ann, def, 'cj'));
+}
+
+function _drawLiftOverlay(ctx, ann, def, o) {
+  const c = _liftMeta(def);
+  if (!c) return;
+  const ppm = (def.crane ? c.upm : c.u) * o.k;                 // canvas px per metre
+  const CX = o.x + (c.cx - o.bx) * o.sx, CY = o.y + (c.cy - o.by) * o.sy;
+  const col = o.col, W = m => Math.max(0.5, m * ppm * o.weight);
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineCap = 'butt';
+  const kind = def.crane ? c.kind : 'pump';
+  const tower = !!_CRANE_TOWER[kind];
+  // Text and the vane glyph grow with the chart (S), so labels stay legible
+  // on a 1:500 site plan as well as a 1:100 detail.
+  const big = Math.max(c.r || 0, c.boom || 0, tower ? _liftVal(ann, def, 'jib') : 0,
+    ..._liftRings(ann, def).map(g => +g.r || 0));
+  const S = Math.max(1, big * 0.035 / 0.9);
+  const font = m => `bold ${Math.max(3, m * S * ppm)}px Arial`;
+
+  // Tower jib (+x) and counter-jib (−x), always drawn — they ARE the crane.
+  if (tower) {
+    const jib = _liftVal(ann, def, 'jib'), cj = _liftVal(ann, def, 'cj');
+    const m0 = c.mast / 2, hw = kind === 'self' ? 0.45 : 0.75, cw = kind === 'luffer' ? 1.5 : kind === 'self' ? 0.6 : 1.0;
+    const P = (mx, my) => [CX + mx * ppm, CY + my * ppm];
+    const line = (a, b) => { ctx.moveTo(...P(...a)); ctx.lineTo(...P(...b)); };
+    ctx.setLineDash([]); ctx.lineWidth = W(0.1);
+    ctx.beginPath();
+    line([m0, -hw], [jib, -hw]); line([m0, hw], [jib, hw]); line([jib, -hw], [jib, hw]);
+    line([-m0, -cw], [-cj, -cw]); line([-m0, cw], [-cj, cw]); line([-cj, -cw], [-cj, cw]);
+    ctx.stroke();
+    ctx.lineWidth = W(0.05); ctx.beginPath();                  // lattice
+    const n = Math.max(2, Math.round((jib - m0) / 2.5));
+    for (let i = 0; i < n; i++) line([m0 + (jib - m0) * i / n, i % 2 ? hw : -hw], [m0 + (jib - m0) * (i + 1) / n, i % 2 ? -hw : hw]);
+    ctx.stroke();
+    const blk = Math.min(kind === 'self' ? 1.2 : 2.5, Math.max(0.5, cj - m0));   // counterweight
+    ctx.fillRect(CX - cj * ppm, CY - (cw + 0.3) * ppm, blk * ppm, (cw + 0.3) * 2 * ppm);
+    ctx.font = font(0.9); ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+    ctx.fillText(`JIB ${+jib.toFixed(1)} m`, CX + (jib - 1) * ppm, CY - (hw + 0.4 * S) * ppm);
+  }
+
+  // Weathervane (tower) / tail swing (mobile).
+  if (ann.showVane && (tower || kind === 'mobile')) {
+    const R = tower ? _liftVaneR(ann, def) : _liftVal(ann, def, 'tail');
+    ctx.lineWidth = W(0.14); ctx.setLineDash([2.4 * ppm, 0.8 * ppm, 0.4 * ppm, 0.8 * ppm]);
+    ctx.beginPath(); ctx.arc(CX, CY, R * ppm, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = font(1.0); ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    if (tower) {
+      const cj = _liftVal(ann, def, 'cj');
+      if (cj < R - 0.5) {                                       // counter-jib tail circle
+        ctx.lineWidth = W(0.06); ctx.setLineDash([0.6 * ppm, 0.6 * ppm]);
+        ctx.beginPath(); ctx.arc(CX, CY, cj * ppm, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      }
+      ctx.fillText(`WEATHERVANE ZONE  R ${+R.toFixed(1)} m`, CX, CY + R * ppm + 0.8 * S * ppm);
+      if (kind === 'luffer') ctx.fillText('(jib parked — out of service)', CX, CY + R * ppm + 2.1 * S * ppm);
+      // weather vane glyph above the circle: arrow, tail fin, pivot and post
+      const q = S * ppm, gx = CX, gy = CY - R * ppm - 3.2 * q, L = 3.2 * q;
+      ctx.lineWidth = W(0.14 * S); ctx.beginPath();
+      ctx.moveTo(gx - L, gy); ctx.lineTo(gx + L, gy);
+      ctx.moveTo(gx + L - 0.9 * q, gy - 0.6 * q); ctx.lineTo(gx + L, gy); ctx.lineTo(gx + L - 0.9 * q, gy + 0.6 * q);
+      ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + 2.0 * q);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gx - L, gy); ctx.lineTo(gx - L - 0.5 * q, gy - 1.3 * q); ctx.lineTo(gx - L + 1.2 * q, gy - 1.3 * q);
+      ctx.lineTo(gx - L + 1.6 * q, gy); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.arc(gx, gy, 0.35 * q, 0, Math.PI * 2); ctx.fill();
+    } else ctx.fillText(`TAIL SWING  R ${+R.toFixed(1)} m`, CX, CY + R * ppm + 0.6 * S * ppm);
+  }
+
+  // Reach chart: one ring per radius, capacity label on a radial at −50°
+  // (a front arc of ±45° for a pick-and-carry Franna, which can't slew).
+  if (ann.showReach) {
+    const rings = _liftRings(ann, def).filter(g => +g.r > 0).slice().sort((a, b) => a.r - b.r);
+    if (!rings.length) return;
+    const sector = kind === 'franna' ? Math.PI / 4 : null;
+    const th = sector ? -Math.PI / 6 : -50 * Math.PI / 180;
+    const rMax = rings[rings.length - 1].r * ppm;
+    ctx.lineWidth = W(0.07);
+    rings.forEach(g => {
+      const r = g.r * ppm;
+      ctx.setLineDash([1.6 * ppm, 0.9 * ppm]);
+      ctx.beginPath();
+      if (sector) ctx.arc(CX, CY, r, -sector, sector); else ctx.arc(CX, CY, r, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    ctx.lineWidth = W(0.05); ctx.beginPath();
+    ctx.moveTo(CX, CY); ctx.lineTo(CX + Math.cos(th) * rMax, CY + Math.sin(th) * rMax);
+    if (sector) [-sector, sector].forEach(a => { ctx.moveTo(CX, CY); ctx.lineTo(CX + Math.cos(a) * rMax, CY + Math.sin(a) * rMax); });
+    ctx.stroke();
+    ctx.font = font(0.9); ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    rings.forEach(g => {
+      const r = g.r * ppm, px = CX + Math.cos(th) * r, py = CY + Math.sin(th) * r;
+      ctx.beginPath(); ctx.arc(px, py, 0.25 * S * ppm, 0, Math.PI * 2); ctx.fill();
+      ctx.fillText(`${+(+g.r).toFixed(1)} m${g.t ? ' — ' + g.t : ''}`, px + 0.5 * S * ppm, py - 0.2 * S * ppm);
+    });
+  }
+}
+
+// ---- Properties ---------------------------------------------------
+function _trueSizeNote(ann, def) {
+  const cal = _calFor(ann.page, { x: (ann.points[0].x + ann.points[1].x) / 2, y: (ann.points[0].y + ann.points[1].y) / 2 });
+  if (!(cal && cal.pixelsPerMm > 0)) return '<span style="color:var(--danger,#c0392b)">Page not calibrated — not to scale.</span>';
+  const w = Math.abs(ann.points[1].x - ann.points[0].x), want = def.real.w * cal.pixelsPerMm;
+  return Math.abs(w - want) / want < 0.005
+    ? `True size at ${escapeHtml(cal.scale || 'page scale')}.`
+    : `<span style="color:var(--danger,#c0392b)">Resized — ${Math.round(w / want * 100)}% of true size.</span>`;
+}
+
+function _liftNumHTML(ann, def, key, label) {
+  const v = _liftVal(ann, def, key);
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:4px;font-size:11px">
+    <span>${label}</span><span style="display:flex;align-items:center;gap:4px">
+    <input type="number" class="property-input" style="width:64px" min="0.5" step="0.5" value="${+(+v).toFixed(2)}" onchange="setLiftDim('${key}', this.value)"> m</span></div>`;
+}
+
+function _reachEditorHTML(ann, def) {
+  const rings = _liftRings(ann, def);
+  const rows = rings.map((g, i) => `<div style="display:flex;align-items:center;gap:4px;margin-top:3px">
+      <input type="number" class="property-input" style="width:58px" min="0.5" step="0.5" value="${+(+g.r).toFixed(2)}" onchange="setReachRing(${i}, 'r', this.value)" title="Radius (m)">
+      <span style="font-size:11px">m</span>
+      <input type="text" class="property-input" style="flex:1;min-width:0" maxlength="40" value="${escapeHtml(g.t || '')}" placeholder="capacity, e.g. 4.2 t" onchange="setReachRing(${i}, 't', this.value)">
+      <button class="modal-btn" style="padding:2px 7px;font-size:11px" onclick="removeReachRing(${i})" title="Remove this ring">×</button></div>`).join('');
+  return `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" class="checkbox-input" ${ann.showReach ? 'checked' : ''} onchange="setLiftFlag('showReach', this.checked)"> Show reach chart</label>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Radius (m) and the label to print on each ring.</div>
+    ${rows}
+    <div style="display:flex;gap:4px;margin-top:5px">
+      <button class="modal-btn" style="flex:1;font-size:11px" onclick="addReachRing()">+ Add ring</button>
+      <button class="modal-btn" style="flex:1;font-size:11px" onclick="resetReachRings()" title="Back to this machine's default rings">Reset rings</button></div>`;
+}
+
+function getCranePropsHTML(ann, def) {
+  const s = def.crane, m = v => (v == null ? '—' : (+v).toFixed(1) + ' m');
+  const row = (k, v) => `<div style="display:flex;justify-content:space-between"><span>${k}</span><b>${v}</b></div>`;
+  const tower = _CRANE_TOWER[s.kind];
+  const kinds = { tower: 'Tower crane (fixed jib)', luffer: 'Tower crane (luffing jib)', self: 'Self-erecting tower crane', franna: 'Pick-and-carry (Franna)', mobile: 'All-terrain mobile crane' };
+  let dims = '';
+  if (tower) {
+    dims = _liftNumHTML(ann, def, 'jib', 'Jib length') +
+           _liftNumHTML(ann, def, 'cj', s.kind === 'tower' ? 'Counter-jib radius' : 'Tail / ballast radius') +
+           (s.kind === 'luffer' ? _liftNumHTML(ann, def, 'parked', 'Parked (out-of-service) radius') : '') +
+           `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:6px">
+             <input type="checkbox" class="checkbox-input" ${ann.showVane ? 'checked' : ''} onchange="setLiftFlag('showVane', this.checked)"> Show weathervane zone (R ${m(_liftVaneR(ann, def))})</label>`;
+  } else if (s.kind === 'mobile') {
+    dims = _liftNumHTML(ann, def, 'tail', 'Tail-swing radius') +
+           `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:6px">
+             <input type="checkbox" class="checkbox-input" ${ann.showVane ? 'checked' : ''} onchange="setLiftFlag('showVane', this.checked)"> Show tail-swing circle</label>`;
+  }
+  return `<div class="properties-section"><div class="properties-section-title">Crane</div><div class="properties-section-content">
+    <div style="font-size:11px;line-height:1.55">
+      ${row('Type', kinds[s.kind])}${row('Max capacity', escapeHtml(s.max || '—'))}
+      ${tower ? row(s.kind === 'self' ? 'Outrigger base' : 'Base / footing', `${m(s.base)} × ${m(s.base)}`) : row('Carrier', `${m(s.L)} × ${m(s.W)}`)}
+      ${s.kind === 'mobile' ? row('Outriggers (pad centres)', `${m(s.ol)} × ${m(s.ot)}`) : ''}
+      ${s.boom ? row('Main boom (max)', m(s.boom)) : ''}
+      ${row('Footprint (box)', `${m(def.real.w / 1000)} × ${m(def.real.h / 1000)}`)}
+    </div>
+    <div style="font-size:11px;margin-top:6px">${_trueSizeNote(ann, def)}</div>
+    ${s.note ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">${escapeHtml(s.note)}</div>` : ''}
+    ${tower ? '<div style="font-size:10px;color:var(--text-muted);margin-top:4px">The jib is drawn along the symbol — rotate the crane to slew it.</div>' : ''}
+    ${dims}
+    ${_reachEditorHTML(ann, def)}
+    <button onclick="resetSymbolTrueSize()" class="modal-btn" style="width:100%;margin-top:8px;font-size:11px" title="Resize to the crane's real footprint at this page's calibrated scale (keeps its centre)">Reset to true size</button>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:6px">Capacities are typical for the class, not a load chart. Enter the radii and capacities from the crane’s own chart and lift plan, and confirm set-up, outrigger loads and exclusion zones with the crane supplier.</div>
+  </div></div>`;
+}
+
+function _liftSel() {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  const def = a && SYMBOL_DEFS[a.symbolId];
+  return (def && _liftMeta(def)) ? { a, def } : null;
+}
+function setLiftFlag(key, on) {
+  const s = _liftSel(); if (!s) return;
+  s.a[key] = !!on;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+// A dimension box: blank or 0 goes back to the machine's default.
+function setLiftDim(key, val) {
+  const s = _liftSel(); if (!s) return;
+  const n = parseFloat(val);
+  if (n > 0) s.a[key] = Math.min(n, 500); else delete s.a[key];
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+function _ownRings(s) {
+  if (!Array.isArray(s.a.rings)) s.a.rings = _liftRings(s.a, s.def).map(g => ({ r: +g.r, t: g.t || '' }));
+  return s.a.rings;
+}
+function setReachRing(i, field, val) {
+  const s = _liftSel(); if (!s) return;
+  const rings = _ownRings(s);
+  if (!rings[i]) return;
+  if (field === 'r') {
+    const n = parseFloat(val);
+    if (!(n > 0)) { showToast('Radius must be more than 0'); openPropertiesPanel(); return; }
+    rings[i].r = Math.min(n, 500);
+  } else rings[i].t = String(val || '').slice(0, 40);
+  s.a.showReach = true;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+function addReachRing() {
+  const s = _liftSel(); if (!s) return;
+  const rings = _ownRings(s);
+  const top = rings.reduce((mx, g) => Math.max(mx, +g.r || 0), 0);
+  rings.push({ r: top ? top + 5 : 10, t: '' });
+  s.a.showReach = true;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+function removeReachRing(i) {
+  const s = _liftSel(); if (!s) return;
+  _ownRings(s).splice(i, 1);
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+function resetReachRings() {
+  const s = _liftSel(); if (!s) return;
+  delete s.a.rings;
+  saveToHistory(); redrawAnnotations(); openPropertiesPanel();
+}
+
 // ---- True-size pumps (v3.37) -------------------------------------
 function getPumpPropsHTML(ann, def) {
   const s = def.pump, m = v => (v == null ? '—' : (+v).toFixed(1) + ' m');
@@ -21156,19 +21528,11 @@ function getPumpPropsHTML(ann, def) {
     </div>
     <div style="font-size:11px;margin-top:6px">${scaleNote}</div>
     ${s.note ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">${escapeHtml(s.note)}</div>` : ''}
-    <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:8px">
-      <input type="checkbox" class="checkbox-input" ${ann.showReach ? 'checked' : ''} onchange="setPumpReach(this.checked)"> Show boom reach circle (${m(s.r)})</label>
+    ${_reachEditorHTML(ann, def)}
     <button onclick="resetSymbolTrueSize()" class="modal-btn" style="width:100%;margin-top:6px;font-size:11px" title="Resize to the pump's real footprint at this page's calibrated scale (keeps its centre)">Reset to true size</button>
     ${s.ds ? `<a href="${escapeHtml(s.ds)}" target="_blank" rel="noopener" style="display:block;font-size:11px;margin-top:6px">Manufacturer data sheet ↗</a>` : ''}
     <div style="font-size:10px;color:var(--text-muted);margin-top:6px">Check outrigger spread and pad loads with the pump operator before finalising a set-up position.</div>
   </div></div>`;
-}
-
-function setPumpReach(on) {
-  const a = annotations.find(x => x.id === selectedAnnotationId);
-  if (!a) return;
-  a.showReach = !!on;
-  saveToHistory(); redrawAnnotations();
 }
 
 // ---- True-size vehicles (v3.38) ---------------------------------
@@ -21247,7 +21611,7 @@ function getSymbolsPanelHTML() {
     </div>
     <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
       Click a symbol, then click the drawing to place it. Drag corners to resize, use the rotate handle to turn, recolour from Properties.
-      <b>Concrete pumps</b> and <b>trucks</b> place at true size on a calibrated page — search <i>pump</i> or <i>truck</i>.</div>
+      <b>Cranes</b>, <b>concrete pumps</b> and <b>trucks</b> place at true size on a calibrated page — search <i>crane</i>, <i>pump</i> or <i>truck</i>.</div>
     <div id="sym-cats">${getSymbolCatsHTML()}</div>
   </div>`;
 }
