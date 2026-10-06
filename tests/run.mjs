@@ -6,7 +6,7 @@
 import path from 'node:path';
 import { buildAppUnderTest, serve, report, WORK, HERE } from './harness.mjs';
 import { ensureFixtures, ensureLarge } from './fixtures.mjs';
-import { roundTrip, reopenAndCompatibility } from './save-format.test.mjs';
+import { roundTrip, reopenAndCompatibility, photosAndProjectStream } from './save-format.test.mjs';
 
 const args = process.argv.slice(2);
 const largeAt = args.includes('--large') ? Number(args[args.indexOf('--large') + 1] || 150) : 0;
@@ -24,6 +24,7 @@ let failed = 0;
 try {
   failed += await roundTrip(server.port, path.join(fixtures, 'heavy.pdf'));
   failed += await reopenAndCompatibility(server.port, path.join(fixtures, 'plain-8p.pdf'));
+  failed += await photosAndProjectStream(server.port, path.join(fixtures, 'plain-8p.pdf'));
 
   if (largeAt) {
     console.log('\nBuilding a ' + largeAt + 'MB set (this takes a minute)…');

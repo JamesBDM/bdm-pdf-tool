@@ -2034,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.40';
+const APP_VERSION = 'v3.41';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -3592,7 +3592,12 @@ async function loadPdf(arrayBuffer, filename, fileHandle = null) {
         // crashes pdf.js ("Invalid PDF structure") and the file won't open at all.
         let cb = bdmData.cleanBytes;
         if (cb && !(cb instanceof Uint8Array)) cb = new Uint8Array(cb);
-        const looksLikePdf = cb && cb.length > 1024 &&
+        // v3.41 — the floor was 1024 bytes, but a sheet started from blank
+        // pages has a genuine clean source of ~600 bytes. Rejecting it sent
+        // the whole baked file to pdf.js instead (and doubled every markup).
+        // The %PDF header is the real test; pdf.js still has the baked copy
+        // to fall back on if the clean one won't parse.
+        const looksLikePdf = cb && cb.length > 64 &&
           cb[0] === 0x25 && cb[1] === 0x50 && cb[2] === 0x44 && cb[3] === 0x46; // "%PDF"
         let cleanCorrupt = false;
         if (cb && cb.length > 0 && !looksLikePdf) {
@@ -15664,7 +15669,7 @@ async function thumbCtxRotateCW() {
 // IMAGE PASTE / SNIP — paste a screenshot (or image) onto the page
 // ============================================================
 
-// v3.40 — keep photos small. The clipboard hands over a pasted photo as a
+// v3.41 — keep photos small. The clipboard hands over a pasted photo as a
 // PNG, and a PNG of a photo is ~5 MB where a JPEG of it is ~300 KB. Six of
 // those in one inspection sheet made a 50 MB file whose markup data swelled
 // to ~149 MB on reopen and ran the browser out of memory. So: anything
@@ -15716,7 +15721,7 @@ async function _compactImageDataUrl(dataUrl) {
 }
 
 // Shrink any oversized image already on the sheet (pasted by a build before
-// v3.40, or arriving by another route) so the next save is small again.
+// v3.41, or arriving by another route) so the next save is small again.
 // Runs before every save; each image is only ever examined once.
 const _compactedImageKeys = new Set();
 async function _compactImageAnnotations() {
@@ -15740,7 +15745,7 @@ async function addImageFromBlob(blob) {
       fr.onerror = () => reject(new Error('Could not read image data'));
       fr.readAsDataURL(blob);
     });
-    // v3.40 — a pasted phone photo arrives as a ~5 MB PNG; shrink it first
+    // v3.41 — a pasted phone photo arrives as a ~5 MB PNG; shrink it first
     const dataUrl = await _compactImageDataUrl(rawUrl);
     // Decode to get natural width/height
     const img = await new Promise((resolve, reject) => {
@@ -16698,15 +16703,23 @@ async function readBDMDataFromPdfBytes(pdfBytes) {
     const infoDict = probe.getInfoDict();
     if (!infoDict || typeof infoDict.lookup !== 'function') return null;
 
-    // Project JSON (required — if absent, this isn't a BDM-saved file)
-    const entry = infoDict.lookup(PDFLib.PDFName.of('BDMMarkupData'));
-    if (!entry) return null;
-    let b64 = null;
-    if (typeof entry.decodeText === 'function') b64 = entry.decodeText();
-    else if (typeof entry.asString === 'function') b64 = entry.asString();
-    else if (entry.value !== undefined) b64 = String(entry.value);
-    if (!b64) return null;
-    const json = b64ToUtf8(b64);
+    // Project JSON (required — if absent, this isn't a BDM-saved file).
+    // v3.41+: a stream object at /BDMMarkupDataRef. Older saves, and files
+    // written by the datum-markup skill: a string at /BDMMarkupData.
+    let json = null;
+    const projRef = infoDict.lookup(PDFLib.PDFName.of('BDMMarkupDataRef'));
+    if (projRef) {
+      try {
+        const bytes = await _pdfStreamBytes(projRef);
+        if (bytes && bytes.length) json = new TextDecoder('utf-8').decode(bytes);
+      } catch (e) { console.warn('project stream unreadable:', e); }
+    }
+    if (!json) {
+      const entry = infoDict.lookup(PDFLib.PDFName.of('BDMMarkupData'));
+      if (!entry) return null;
+      json = _legacyProjectJson(entry);
+    }
+    if (!json) return null;
     const project = JSON.parse(json);
 
     // Clean source bytes. Three routes, newest first — a file saved by any
@@ -16879,6 +16892,53 @@ async function _embedCleanSource(outDoc, infoDict, cleanBytes) {
 
   const stream = PDFRawStream.of(outDoc.context.obj(dict), payload);
   infoDict.set(PDFLib.PDFName.of('BDMCleanSourceRef'), outDoc.context.register(stream));
+}
+
+// v3.41 — the project JSON goes the same way the clean source went in v3.34:
+// a real /FlateDecode stream object, referenced from the Info dict by
+// /BDMMarkupDataRef. The old route was base64 → PDFHexString.fromText, which
+// is UTF-16 hex: FOUR file bytes per base64 character, eight-ish per JSON
+// byte, all built and read back as one giant JavaScript string. A 28 MB
+// project became a 149 MB string and the reopen ran out of memory.
+async function _embedProjectJson(outDoc, infoDict, projectJson) {
+  const PDFRawStream = PDFLib.PDFRawStream;
+  if (!PDFRawStream || typeof PDFRawStream.of !== 'function') {
+    console.warn('PDFRawStream unavailable — falling back to the legacy project string');
+    infoDict.set(PDFLib.PDFName.of('BDMMarkupData'), PDFLib.PDFHexString.fromText(utf8ToB64(projectJson)));
+    return;
+  }
+  const raw = new TextEncoder().encode(projectJson);
+  let payload = raw, flate = false;
+  const comp = await _zlibCompress(raw);
+  if (comp && comp.length < raw.length) { payload = comp; flate = true; }
+  const dict = { Type: 'BDMMarkupData', Length: payload.length, BDMRawLength: raw.length };
+  if (flate) dict.Filter = 'FlateDecode';
+  const stream = PDFRawStream.of(outDoc.context.obj(dict), payload);
+  infoDict.set(PDFLib.PDFName.of('BDMMarkupDataRef'), outDoc.context.register(stream));
+}
+
+// Read the pre-v3.41 /BDMMarkupData string without pdf-lib's decodeText,
+// which turns a big UTF-16 hex string into arrays of JS numbers — several
+// hundred MB for a photo-heavy sheet. Hex → bytes → TextDecoder instead,
+// then base64 → bytes → UTF-8. Same result, a fraction of the memory.
+function _legacyProjectJson(entry) {
+  const hex = (PDFLib.PDFHexString && entry instanceof PDFLib.PDFHexString && typeof entry.value === 'string') ? entry.value : null;
+  let b64 = null;
+  if (hex && hex.length > 1000000) {
+    const n = hex.length >> 1, bytes = new Uint8Array(n);
+    const nib = c => (c & 0xF) + (c > 64 ? 9 : 0);   // '0'-'9', 'A'-'F', 'a'-'f'
+    for (let i = 0; i < n; i++) bytes[i] = (nib(hex.charCodeAt(2 * i)) << 4) | nib(hex.charCodeAt(2 * i + 1));
+    b64 = (bytes[0] === 0xFE && bytes[1] === 0xFF)
+      ? new TextDecoder('utf-16be').decode(bytes.subarray(2))
+      : new TextDecoder('latin1').decode(bytes);
+  } else if (typeof entry.decodeText === 'function') b64 = entry.decodeText();
+  else if (typeof entry.asString === 'function') b64 = entry.asString();
+  else if (entry.value !== undefined) b64 = String(entry.value);
+  if (!b64) return null;
+  if (b64.length < 1000000) return b64ToUtf8(b64);
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(out);
 }
 
 // PNG bytes straight out of a canvas.
@@ -17085,13 +17145,12 @@ async function _buildSavedPdf(cleanBytes, embedClean) {
     savedAt: new Date().toISOString()
   };
   const projectJson = JSON.stringify(project);
-  const jsonB64 = utf8ToB64(projectJson);
 
   // Stash project JSON + (optionally) the clean source bytes inside
   // the PDF's Info dictionary as custom entries. Same reliable path
   // the JSON already uses — no attachment walker required.
   const infoDict = outDoc.getInfoDict();
-  infoDict.set(PDFLib.PDFName.of('BDMMarkupData'), PDFLib.PDFHexString.fromText(jsonB64));
+  await _embedProjectJson(outDoc, infoDict, projectJson);
   infoDict.set(PDFLib.PDFName.of('BDMVersion'), PDFLib.PDFHexString.fromText('4'));
   infoDict.set(PDFLib.PDFName.of('BDMBakedOverlay'), PDFLib.PDFHexString.fromText(embedClean ? '1' : '0'));
 

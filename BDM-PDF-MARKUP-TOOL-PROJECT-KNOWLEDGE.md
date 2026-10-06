@@ -2093,3 +2093,41 @@ James: *"add hoists and EWPs at true size too"*
 - Boom panel: reach editor present. Setting `showReach`, relabelling the ring and adding a second ring (12.6 m) all worked.
 - Search: "scissor" → 7, "boom lift" → 7, "cherry picker" → 6, "spider" → 1. "hoist" and "ewp" match the whole new category via its name (19).
 - `node check-syntax.js` clean.
+
+## v3.41 (6 Oct 2026) — Photo-heavy sheets no longer run the browser out of memory
+
+James's on-maintenance inspection sheet (Tiki Village) wouldn't open. Chrome/Edge showed *"This page is having a problem — Out of Memory"*. It was 4 blank A4 pages with 6 pasted site photos and 15 callouts, lines and zones, and the file was 50.6 MB.
+
+**Cause — three things stacked up:**
+1. **Pasted photos were stored as PNG.** The clipboard hands a photo over as PNG, and `addImageFromBlob` kept it as-is: about 5 MB each at 1200×1600 (a JPEG is about 300 KB).
+2. **The project JSON was stored at about 4× its base64 size.** It went in as `PDFHexString.fromText(base64)`, which is UTF-16 hex, so four file bytes per base64 character. 28 MB of JSON became a **149 MB** string inside the Info dict. On reopen, pdf-lib's `decodeText` expanded that into arrays of JS numbers, several hundred MB more, and the tab died.
+3. **The clean source was wrongly rejected as corrupt.** `loadPdf` treated any clean source under 1024 bytes as corrupt. A sheet started from blank pages has a genuine ~600-byte clean source, so it was thrown away and the whole 50 MB baked file went to pdf.js too. That fallback also renders the baked markups under the live ones.
+
+**Fixes:**
+- **`_compactImageDataUrl(dataUrl)`:**
+  - Images larger than `IMAGE_MAX_EDGE` (2400 px) on the long side are scaled down.
+  - An opaque image becomes JPEG q0.88 only when that's under 60% of the PNG size. So photos go to JPEG, and crisp screenshots of linework stay PNG.
+  - Transparent images (lasso snips) stay PNG.
+  - Anything under `IMAGE_SMALL_BYTES` (400 KB) at full size is untouched.
+  - Called from `addImageFromBlob`. Snips are untouched: they're screen-sized already.
+- **`_compactImageAnnotations()`** runs at the top of `saveProject`. Oversized photos pasted by older builds get shrunk on the next save, so old files heal themselves. Each image is only examined once (`id:length` key).
+- **Project JSON is now a real `/FlateDecode` stream** at `/BDMMarkupDataRef` (`_embedProjectJson`), the same pattern as the v3.34 clean source. No `/BDMMarkupData` string is written any more, unless pdf-lib lacks `PDFRawStream`.
+- **The reader tries `/BDMMarkupDataRef` first, then the legacy `/BDMMarkupData`.** The legacy path is `_legacyProjectJson`: for strings over 1M chars it goes hex → `Uint8Array` → `TextDecoder('utf-16be')`, then base64 → bytes → `TextDecoder('utf-8')`, bypassing `decodeText`. Files written by the datum-markup skill (which still writes `/BDMMarkupData`) are unaffected.
+- **The clean-source sanity floor is now 64 bytes** plus the `%PDF` header. pdf.js still falls back to the baked copy if the clean one won't parse.
+
+**Result on the real file:**
+- The 50.6 MB file now opens: all 21 markups, clean 614-byte background, about 27 s (pdf-lib parsing the old 149 MB string is most of that).
+- Re-saved, it is **17.6 MB** and reopens in **90 ms**. The photos are about 1 MB JPEGs each.
+- What's left in the re-save is mostly the baked overlay PNGs (photos rasterised at scale 2). Baking photo-heavy pages as JPEG + soft mask would cut it further. Not done yet.
+
+**Tests.** New `photosAndProjectStream` in `tests/save-format.test.mjs` (12 checks):
+- A pasted photo becomes a JPEG at under ¼ of its PNG size.
+- An old oversized PNG is shrunk before save and capped at 2400 px.
+- Transparency is kept.
+- The project is saved as a stream, with no legacy string.
+- Markups and photo data survive byte-for-byte.
+- A multi-MB legacy hex project still opens.
+
+The full suite passes (round trip, reopen + compatibility, photos). Ran it with `CHROMIUM_PATH` set to the local Chrome on Windows.
+
+James also got two one-off files for that sheet: a FLATTENED 1.7 MB copy for email and a SLIM editable 6.9 MB copy.

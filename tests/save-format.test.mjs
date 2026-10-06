@@ -156,3 +156,92 @@ export async function reopenAndCompatibility(port, pdfFile) {
     return failed;
   } finally { await browser.close(); }
 }
+
+// v3.41 — photos and the project payload. A sheet of pasted site photos once
+// made a 50 MB file whose markup data swelled to ~149 MB on reopen and ran the
+// browser out of memory. Pasted photos must come in small, the project must
+// travel as a compressed stream, and big files from older builds must still open.
+export async function photosAndProjectStream(port, pdfFile) {
+  const { browser, page, errors, dialogs } = await openApp(port, pdfFile);
+  try {
+    const r = await page.evaluate(async () => {
+      const out = {};
+      // A photo-like PNG: smooth gradient plus grain, which PNG compresses badly
+      const photo = (w, h) => {
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const x = c.getContext('2d'), d = x.createImageData(w, h);
+        for (let i = 0; i < d.data.length; i += 4) {
+          const p = i / 4, px = p % w, py = (p / w) | 0, n = Math.random() * 40;
+          d.data[i] = (px / w) * 200 + n; d.data[i + 1] = (py / h) * 200 + n; d.data[i + 2] = 120 + n; d.data[i + 3] = 255;
+        }
+        x.putImageData(d, 0, 0); return c;
+      };
+      const blob = await new Promise(res => photo(1200, 1600).toBlob(res, 'image/png'));
+      out.pastedInBytes = blob.size;
+      await addImageFromBlob(blob);
+      const pasted = annotations[annotations.length - 1];
+      out.pastedIsJpeg = pasted.src.startsWith('data:image/jpeg');
+      out.pastedOutBytes = Math.round(pasted.src.length * 0.75);
+
+      // An oversized PNG already on the sheet (pasted by an older build)
+      const oldSrc = photo(3200, 2400).toDataURL('image/png');
+      annotations.push({ id: 'old-photo', type: 'image', page: 0, src: oldSrc, opacity: 100, aspect: 0.75,
+        points: [{ x: 50, y: 50 }, { x: 450, y: 350 }] });
+      out.oldInBytes = Math.round(oldSrc.length * 0.75);
+      await _compactImageAnnotations();
+      const old = annotations.find(a => a.id === 'old-photo');
+      out.oldOutBytes = Math.round(old.src.length * 0.75);
+      const oldImg = await new Promise(res => { const i = new Image(); i.onload = () => res(i); i.src = old.src; });
+      out.oldLongEdge = Math.max(oldImg.naturalWidth, oldImg.naturalHeight);
+
+      // A transparent PNG keeps its transparency
+      const t = photo(1500, 1500), tx = t.getContext('2d'); tx.clearRect(0, 0, 300, 300);
+      const tSrc = t.toDataURL('image/png');
+      out.transparentKept = (await _compactImageDataUrl(tSrc)).startsWith('data:image/png');
+
+      // The project travels as a stream, not a hex string
+      await _awaitImageAnnotationDecode();
+      const saved = await _buildSavedPdf(currentPdfBytes.slice(), true);
+      out.savedBytes = saved.length;
+      const probe = await PDFLib.PDFDocument.load(saved.slice(), { updateMetadata: false });
+      const info = probe.getInfoDict();
+      out.hasStream = !!info.lookup(PDFLib.PDFName.of('BDMMarkupDataRef'));
+      out.hasLegacyString = !!info.lookup(PDFLib.PDFName.of('BDMMarkupData'));
+      const back = await readBDMDataFromPdfBytes(saved.slice());
+      out.restored = back && back.project ? back.project.annotations.length : -1;
+      out.drawn = annotations.length;
+      out.photoIntact = !!(back && back.project && back.project.annotations.find(a => a.id === 'old-photo').src === old.src);
+
+      // A big pre-v3.40 file (multi-MB UTF-16 hex project string) still opens
+      const doc = await PDFLib.PDFDocument.load(currentPdfBytes.slice(), { updateMetadata: false });
+      const big = 'x'.repeat(3000000);
+      doc.getInfoDict().set(PDFLib.PDFName.of('BDMMarkupData'), PDFLib.PDFHexString.fromText(utf8ToB64(JSON.stringify(
+        { version: 4, annotations: [{ id: 'legacy-big', type: 'image', page: 0, src: big, points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] }] }))));
+      const backBig = await readBDMDataFromPdfBytes(await doc.save());
+      out.legacyBigOpens = !!(backBig && backBig.project && backBig.project.annotations[0].src === big);
+      return out;
+    });
+
+    const failed = report('photos + project stream — ' + pdfFile.split('/').pop(), [
+      ['a pasted photo becomes a JPEG', r.pastedIsJpeg === true],
+      ['a pasted photo comes in at under a quarter of its PNG size', r.pastedOutBytes < r.pastedInBytes / 4],
+      ['an oversized photo already on the sheet is shrunk before save', r.oldOutBytes < r.oldInBytes / 4],
+      ['and scaled to the 2400 px long-edge cap', r.oldLongEdge === 2400],
+      ['a transparent image stays a PNG', r.transparentKept === true],
+      ['project saved as a stream', r.hasStream === true],
+      ['no legacy hex project string written', r.hasLegacyString === false],
+      ['every markup survives', r.restored === r.drawn],
+      ['photo data survives byte-for-byte', r.photoIntact === true],
+      ['a big pre-v3.41 file still opens', r.legacyBigOpens === true],
+      ['nothing unexpected shown to the user', dialogs.length === 0],
+      ['no page errors', errors.length === 0],
+    ], {
+      'pasted photo': (r.pastedInBytes / 1e6).toFixed(2) + ' MB PNG → ' + (r.pastedOutBytes / 1e6).toFixed(2) + ' MB',
+      'old photo': (r.oldInBytes / 1e6).toFixed(2) + ' MB → ' + (r.oldOutBytes / 1e6).toFixed(2) + ' MB',
+      'saved file': (r.savedBytes / 1e6).toFixed(2) + ' MB',
+    });
+    if (errors.length) console.log('  errors:', errors.slice(0, 5));
+    if (dialogs.length) console.log('  dialogs:', dialogs);
+    return failed;
+  } finally { await browser.close(); }
+}
