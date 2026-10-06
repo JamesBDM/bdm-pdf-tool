@@ -2034,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.37';
+const APP_VERSION = 'v3.38';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -12986,6 +12986,7 @@ function getAnnotationPropertiesHTML(ann) {
       <div style="font-size:11px;color:var(--text-secondary);margin-top:6px">Drag corners to resize, use the rotate handle to turn, and change the colour below (e.g. red for demolition).</div>
     </div></div>`;
     if (def && def.pump) html += getPumpPropsHTML(ann, def);
+    if (def && def.veh) html += getVehiclePropsHTML(ann, def);
   }
 
   if (ann.type === 'table') {
@@ -20734,6 +20735,180 @@ if (CONCRETE_PUMPS.length) SYMBOL_LIBRARY.push({
   id: 'cmp-pumps', name: 'Construction — Concrete Pumps (true size)', items: CONCRETE_PUMPS.map(_symPump)
 });
 
+// v3.38 — Concrete trucks and delivery vehicles at TRUE SIZE, built the same
+// way as the pumps: a data table in metres → generated plan-view artwork with
+// def.real (mm of its b-box), so addSymbolAnn places them at the page's scale.
+// Cab to the RIGHT (+x). Typical Australian units plus the AS 2890 design
+// vehicles; each row's note says which it is.
+//   L × W  overall (L is display only — the drawing is built from the units)
+//   fo  front of unit → its front axle   wb  front axle (or kingpin) → centre
+//   of its rear axle group   ax  rear axles   st  steer axles (2 = twin steer)
+//   R   design turning radius (outer front wheel)
+// Combinations list their units front to back in `u`. kp = where the NEXT unit
+// couples, measured forward of this unit's axle group (negative = behind it,
+// a drawbar hitch). A semi trailer's fo is negative: its kingpin sits |fo|
+// behind its nose. A dog trailer adds db = drawbar eye → its front axle, and
+// fa = axles in its front group.
+const TRUE_SIZE_VEHICLES = [
+  { id:'tv-b99', name:'Car — B99 design vehicle', tag:'B99', body:'car', L:5.2, W:1.94, fo:0.95, wb:3.05, ax:1, st:1, R:6.25,
+    note:'AS/NZS 2890.1 B99 design car (99th percentile). Use for parking and visitor / staff car spaces.' },
+  { id:'tv-ute', name:'Ute / Van — light commercial', tag:'UTE', body:'tray', L:5.4, W:1.95, fo:0.9, wb:3.25, ax:1, st:1, R:6.5,
+    note:'Typical dual-cab ute / long-wheelbase van (HiLux, Ranger, HiAce). Indicative.' },
+  { id:'tv-srv', name:'Small Rigid Vehicle (SRV) — light truck', tag:'SRV', body:'box', L:6.4, W:2.33, fo:1.1, wb:3.7, ax:1, st:1, R:7.1,
+    note:'AS 2890.2 SRV design vehicle — e.g. small pantech or light tray truck.' },
+  { id:'tv-mrv', name:'Medium Rigid Vehicle (MRV) — tray / tautliner', tag:'MRV', body:'tray', L:8.8, W:2.5, fo:1.5, wb:5.0, ax:1, st:1, R:10.0,
+    note:'AS 2890.2 MRV design vehicle — the usual “medium rigid” delivery truck.' },
+  { id:'tv-crane', name:'Crane Truck (Hiab) — 6×4 rigid', tag:'HIAB', body:'crane', L:10.0, W:2.5, fo:1.45, wb:5.4, ax:2, st:1, R:11.0, os:5.8,
+    note:'Typical 6×4 tray with a knuckle-boom crane behind the cab, outriggers drawn out. Spread varies by crane (≈5–7 m) — confirm with the supplier.' },
+  { id:'tv-hrv', name:'Heavy Rigid Vehicle (HRV) — 12.5 m', tag:'HRV', body:'box', L:12.5, W:2.5, fo:1.5, wb:7.0, ax:2, st:1, R:12.5,
+    note:'AS 2890.2 HRV design vehicle — the largest single rigid truck.' },
+  { id:'tv-tipper', name:'Tipper — 6×4 (≈10 m³)', tag:'TIPPER', body:'tipper', L:8.3, W:2.5, fo:1.4, wb:4.6, ax:2, st:1, R:9.5,
+    note:'Typical 6×4 tipper (≈10 m³). Indicative.' },
+  { id:'tv-tipper8', name:'Tipper — 8×4 twin steer (≈14 m³)', tag:'TIPPER', body:'tipper', L:9.5, W:2.5, fo:1.4, wb:5.6, ax:2, st:2, R:11.0,
+    note:'Typical 8×4 twin-steer tipper. Indicative.' },
+  { id:'tv-agi-mini', name:'Concrete Truck — minimix 4×2 (≈3 m³)', tag:'3m³', body:'agitator', L:6.6, W:2.4, fo:1.2, wb:3.6, ax:1, st:1, R:7.5,
+    note:'Typical minimix / small agitator on a 4×2 light truck. Indicative — confirm with the supplier.' },
+  { id:'tv-agi-6', name:'Concrete Truck — 6×4 agitator (≈5.5–6 m³)', tag:'6m³', body:'agitator', L:8.4, W:2.5, fo:1.4, wb:4.5, ax:2, st:1, R:9.5,
+    note:'Typical 6×4 agitator. Indicative — confirm with the concrete supplier.' },
+  { id:'tv-agi-8', name:'Concrete Truck — 8×4 agitator (≈7.6–8 m³)', tag:'8m³', body:'agitator', L:9.6, W:2.5, fo:1.4, wb:5.7, ax:2, st:2, R:11.0,
+    note:'Typical 8×4 twin-steer agitator — the standard Australian city truck. The chute is drawn folded; allow ≈1.5 m more behind it to discharge.' },
+  { id:'tv-semi', name:'Semi-trailer — 19 m (AV)', tag:'SEMI', L:19.0, W:2.5, R:12.5, u:[
+      { L:6.6, fo:1.5, wb:4.4, ax:2, st:1, kp:0.4, body:'prime' },
+      { L:14.6, fo:-1.2, wb:9.9, ax:3, body:'flat' } ],
+    note:'AS 2890.2 articulated design vehicle (AV) — 6×4 prime mover + 14.6 m (48 ft) tri-axle flat-top.' },
+  { id:'tv-truckdog', name:'Truck & Dog — 19 m', tag:'T&D', L:19.0, W:2.5, R:12.5, u:[
+      { L:9.3, fo:1.4, wb:5.6, ax:2, st:2, kp:-2.5, body:'tipper' },
+      { L:7.2, db:3.2, fo:0.9, wb:5.0, ax:2, fa:2, body:'tipper' } ],
+    note:'Typical 8×4 tipper towing a 4-axle dog trailer (spoil / aggregate). Indicative.' },
+  { id:'tv-bdouble', name:'B-double — 26 m', tag:'B-DOUBLE', L:26.0, W:2.5, R:12.5, u:[
+      { L:6.6, fo:1.5, wb:4.4, ax:2, st:1, kp:0.4, body:'prime' },
+      { L:9.8, fo:-1.0, wb:7.3, ax:3, kp:0.3, body:'flat' },
+      { L:14.5, fo:-1.0, wb:10.2, ax:3, body:'flat' } ],
+    note:'Typical 26 m B-double (needs a gazetted route and an access designed for it). Indicative.' },
+];
+
+// Lay a vehicle out unit by unit. Distances run back from the overall front
+// (d…), then flip to x = metres from the rear so the cab lands on the right.
+// Also works out a steady full-lock LEFT turn at the design radius: the
+// centre sits on the lead unit's rear-axle line, each coupling's radius
+// follows from the one before (hypot out along the unit, then the trailing
+// unit's wheelbase back in), and the inner sweep is the last axle group's
+// inside edge. Indicative only — a check, not a swept-path analysis.
+function _vehLayout(s) {
+  const W = s.W || 2.5, half = W / 2 - 0.15;          // half wheel track
+  const src = s.u || [{ L: s.L, fo: s.fo, wb: s.wb, ax: s.ax, st: s.st, body: s.body }];
+  const us = [];
+  src.forEach((u, i) => {
+    const pivot = i ? us[i - 1].dg - us[i - 1].kp + (u.db || 0) : u.fo;
+    const nose = i ? pivot - Math.abs(u.fo) : 0;
+    us.push(Object.assign({}, u, { dn: nose, dp: pivot, dg: pivot + u.wb }));
+  });
+  const tot = Math.max(...us.map(u => u.dn + u.L));
+  us.forEach(u => {
+    u.x0 = tot - u.dn - u.L; u.x1 = tot - u.dn;        // body rear / front
+    u.xp = tot - u.dp; u.xg = tot - u.dg;              // front axle-or-kingpin / rear group
+  });
+  const lead = us[0];
+  const c = Math.sqrt(Math.max(0, s.R * s.R - lead.wb * lead.wb)) - half;
+  const outer = Math.hypot(lead.fo + lead.wb, c + W / 2);
+  let r = Math.max(0, c);
+  for (let i = 1; i < us.length; i++) {
+    let rr = Math.hypot(r, us[i - 1].kp);                                      // coupling
+    if (us[i].db) rr = Math.sqrt(Math.max(0, rr * rr - us[i].db * us[i].db));  // drawbar → dog front axle
+    r = Math.sqrt(Math.max(0, rr * rr - us[i].wb * us[i].wb));
+  }
+  return { us, tot, W, c, outer, inner: Math.max(0, r - W / 2) };
+}
+
+// Build a symbol definition from one TRUE_SIZE_VEHICLES row.
+function _symVehicle(s) {
+  const g = _vehLayout(s), W = g.W, us = g.us;
+  const chute = us.some(u => u.body === 'agitator') ? 1.0 : 0;
+  const pad = 0.6;
+  const minX = -chute, maxX = g.tot;
+  const half = Math.max(W / 2, s.os ? s.os / 2 + pad / 2 : 0);
+  const spanX = maxX - minX, spanY = half * 2;
+  const u = 96 / Math.max(spanX, spanY);
+  const ox = 50 - (minX + spanX / 2) * u, oy = 50;
+  const X = m => _sr(ox + m * u), Y = m => _sr(oy + m * u), lw = m => _sr(m * u);
+  const rect = (x1, y1, x2, y2) => `M${X(x1)} ${Y(y1)} H${X(x2)} V${Y(y2)} H${X(x1)} Z`;
+  const p = [], wheels = [];
+  const wheelsAt = (x, n, gap) => { for (let i = 0; i < n; i++) {
+    const wx = x + (i - (n - 1) / 2) * gap;
+    wheels.push(rect(wx - 0.5, -W / 2 + 0.05, wx + 0.5, -W / 2 + 0.38), rect(wx - 0.5, W / 2 - 0.38, wx + 0.5, W / 2 - 0.05));
+  } };
+  const longest = Math.max(...us.map(z => z.x1 - z.x0));
+  let tagX = null;
+  us.forEach((v, i) => {
+    const hw = W / 2, x0 = v.x0, x1 = v.x1;
+    const cab = v.st && v.body !== 'car' ? 2.2 : 0, cabX = x1 - cab;
+    // wheels: steer axle(s) — a second steer sits 1.9 m behind the first —
+    // a dog's front group, and the rear group
+    if (v.st) wheelsAt(v.xp + (v.st - 1) * -0.95, v.st, 1.9);
+    if (v.fa) wheelsAt(v.xp, v.fa, 1.3);
+    wheelsAt(v.xg, v.ax || 1, 1.3);
+    if (v.body === 'car') {
+      p.push({ d: _symRRect(ox + x0 * u, oy - hw * u, (x1 - x0) * u, W * u, 0.35 * u), lw: lw(0.07) });
+      p.push({ d: `M${X(x1 - 1.6)} ${Y(-hw + 0.15)} Q${X(x1 - 1.35)} ${Y(0)} ${X(x1 - 1.6)} ${Y(hw - 0.15)}` +
+                  ` M${X(x0 + 1.0)} ${Y(-hw + 0.2)} Q${X(x0 + 0.8)} ${Y(0)} ${X(x0 + 1.0)} ${Y(hw - 0.2)}`, lw: lw(0.05) });
+      tagX = (x0 + x1) / 2 - 0.15;
+      return;
+    }
+    if (v.body === 'prime') {
+      // prime mover: cab plus chassis rails running back under the trailer
+      p.push({ d: rect(cabX, -hw, x1, hw), lw: lw(0.09) });
+      p.push({ d: `M${X(x0)} ${Y(-0.5)} H${X(cabX)} M${X(x0)} ${Y(0.5)} H${X(cabX)} M${X(x0)} ${Y(-0.5)} V${Y(0.5)}`, lw: lw(0.06) });
+      p.push({ d: `M${X(x1 - 0.35)} ${Y(-hw + 0.2)} V${Y(hw - 0.2)}`, lw: lw(0.05) });
+      return;
+    }
+    p.push({ d: rect(x0, -hw, x1, hw), lw: lw(0.09) });
+    if (cab) p.push({ d: `M${X(cabX)} ${Y(-hw)} V${Y(hw)} M${X(x1 - 0.35)} ${Y(-hw + 0.2)} V${Y(hw - 0.2)}`, lw: lw(0.06) });
+    const bx0 = x0 + 0.15, bx1 = cabX - 0.15;          // body / deck behind the cab
+    if (v.body === 'box') {
+      p.push({ d: `M${X(bx0)} ${Y(-hw)} L${X(bx1)} ${Y(hw)} M${X(bx0)} ${Y(hw)} L${X(bx1)} ${Y(-hw)}`, lw: lw(0.04) });
+    } else if (v.body === 'tray' || v.body === 'flat') {
+      p.push({ d: rect(bx0, -hw + 0.15, bx1, hw - 0.15), lw: lw(0.035) });
+      if (v.body === 'flat') p.push({ d: _symCircle(ox + v.xp * u, oy, 0.22 * u), lw: lw(0.06) });  // kingpin
+    } else if (v.body === 'tipper') {
+      p.push({ d: rect(bx0, -hw + 0.18, bx1, hw - 0.18) +
+        ` M${X(bx0 + 0.5)} ${Y(-hw + 0.18)} L${X(bx0 + 0.9)} ${Y(-hw + 0.55)} H${X(bx1 - 0.4)} L${X(bx1)} ${Y(-hw + 0.18)}` +
+        ` M${X(bx0 + 0.5)} ${Y(hw - 0.18)} L${X(bx0 + 0.9)} ${Y(hw - 0.55)} H${X(bx1 - 0.4)} L${X(bx1)} ${Y(hw - 0.18)}`, lw: lw(0.04) });
+      if (v.db) p.push({ d: `M${X(x1)} ${Y(-0.45)} L${X(v.xp + v.db)} ${Y(0)} L${X(x1)} ${Y(0.45)}`, lw: lw(0.07) });  // A-frame drawbar
+    } else if (v.body === 'agitator') {
+      const dx0 = x0 + 0.3, dx1 = bx1 - 0.2, dl = dx1 - dx0, cx = (dx0 + dx1) / 2;
+      p.push({ d: _symEllipse(ox + cx * u, oy, dl / 2 * u, (hw - 0.15) * u), lw: lw(0.07) });
+      let sp = '';
+      for (let j = 1; j <= 4; j++) { const sx = dx0 + dl * j / 5; sp += ` M${X(sx - 0.3)} ${Y(-hw * 0.7)} Q${X(sx + 0.25)} ${Y(0)} ${X(sx - 0.3)} ${Y(hw * 0.7)}`; }
+      p.push({ d: sp.trim(), lw: lw(0.035) });
+      p.push({ d: `M${X(x0)} ${Y(-0.2)} H${X(x0 - chute)} V${Y(0.2)} H${X(x0)}`, lw: lw(0.06) });  // folded chute
+      tagX = x1 - cab / 2 - 0.1;
+    } else if (v.body === 'crane') {
+      const kx = cabX - 0.55;                         // crane column just behind the cab
+      p.push({ d: rect(bx0, -hw + 0.15, kx - 0.6, hw - 0.15), lw: lw(0.035) });
+      p.push({ d: _symCircle(ox + kx * u, oy, 0.45 * u), lw: lw(0.07) });
+      p.push({ d: rect(bx0 + 0.6, -0.22, kx - 0.6, 0.22), lw: lw(0.05) });   // folded boom on the deck
+      const oh = s.os / 2;
+      p.push({ d: `M${X(kx)} ${Y(-hw)} V${Y(-oh)} M${X(kx)} ${Y(hw)} V${Y(oh)}`, lw: lw(0.14) });
+      p.push({ d: rect(kx - pad / 2, -oh - pad / 2, kx + pad / 2, -oh + pad / 2) + ' ' + rect(kx - pad / 2, oh - pad / 2, kx + pad / 2, oh + pad / 2), f: 1 });
+      tagX = (bx0 + kx) / 2;
+    }
+    if (tagX == null && (x1 - x0) >= longest - 0.01) tagX = (bx0 + bx1) / 2;
+  });
+  p.push({ d: wheels.join(' '), f: 1 });
+  const ts = Math.min(0.85, W * 0.34);
+  const t = [{ t: s.tag, x: X(tagX == null ? g.tot / 2 : tagX), y: Y(0.04), s: _sr(ts * u) }];
+  const b = [_sr(ox + minX * u), _sr(oy - half * u), _sr(spanX * u), _sr(spanY * u)];
+  return {
+    id: s.id, name: s.name, w: 90, b, p, t,
+    k: `vehicle truck delivery true size scale turning circle swept path ${s.name} ${s.tag} ${s.body === 'agitator' ? 'agitator mixer concrete' : ''}`.toLowerCase(),
+    real: { w: spanX * 1000, h: spanY * 1000 },     // mm, of the b-box
+    veh: Object.assign({}, s, { upm: u, tot: g.tot, outer: g.outer, inner: g.inner, c: g.c, cx: _sr(ox + us[0].xg * u), cy: oy })
+  };
+}
+if (TRUE_SIZE_VEHICLES.length) SYMBOL_LIBRARY.push({
+  id: 'cmp-vehicles', name: 'Construction — Trucks & Vehicles (true size)', items: TRUE_SIZE_VEHICLES.map(_symVehicle)
+});
+
 // Search aliases — the everyday word, not the drawing-office one. Applied
 // after the library is built so the definitions above stay readable.
 const SYMBOL_KEYWORDS = {
@@ -20886,6 +21061,28 @@ function drawSymbolAnn(ctx, ann) {
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(`R ${def.pump.r} m`, cx + r * 0.02, cy - r * 0.5);
   }
+  // v3.38: a vehicle's indicative turning circle — outer body sweep and
+  // inner wheel path round a centre on the lead unit's rear-axle line, on
+  // the driver's left (or right). Like the pump reach it leaves the box.
+  if (def.veh && ann.showTurn) {
+    const v = def.veh, side = ann.turnRight ? 1 : -1;
+    const cx = x + (v.cx - bx) * sx, cy = y + (v.cy + side * v.c * v.upm - by) * sy;
+    const ro = v.outer * v.upm * k, ri = v.inner * v.upm * k;
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.lineWidth = Math.max(0.5, 0.06 * v.upm * k * weight);
+    ctx.setLineDash([ro * 0.035, ro * 0.025]);
+    ctx.beginPath(); ctx.arc(cx, cy, ro, 0, Math.PI * 2); ctx.stroke();
+    if (ri > 0) { ctx.beginPath(); ctx.arc(cx, cy, ri, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.setLineDash([]);
+    const tick = Math.max(2, 0.5 * v.upm * k);
+    ctx.beginPath(); ctx.moveTo(cx - tick, cy); ctx.lineTo(cx + tick, cy); ctx.moveTo(cx, cy - tick); ctx.lineTo(cx, cy + tick); ctx.stroke();
+    ctx.font = `bold ${Math.max(3, 0.8 * v.upm * k)}px Arial`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // labels on the far side of the circles from the truck
+    const gap = 1.1 * v.upm * k;
+    ctx.fillText(`Outer swept R ${v.outer.toFixed(1)} m`, cx, cy + side * (ro + gap));
+    if (ri > gap * 2) ctx.fillText(`Inner R ${v.inner.toFixed(1)} m`, cx, cy + side * (ri - gap));
+  }
 }
 
 // Tile preview — the same path data rendered as inline SVG for the panel.
@@ -20974,6 +21171,47 @@ function setPumpReach(on) {
   saveToHistory(); redrawAnnotations();
 }
 
+// ---- True-size vehicles (v3.38) ---------------------------------
+function getVehiclePropsHTML(ann, def) {
+  const s = def.veh, m = v => (v == null ? '—' : (+v).toFixed(1) + ' m');
+  const cal = _calFor(ann.page, { x: (ann.points[0].x + ann.points[1].x) / 2, y: (ann.points[0].y + ann.points[1].y) / 2 });
+  let scaleNote;
+  if (!(cal && cal.pixelsPerMm > 0)) scaleNote = '<span style="color:var(--danger,#c0392b)">Page not calibrated — not to scale.</span>';
+  else {
+    const w = Math.abs(ann.points[1].x - ann.points[0].x), want = def.real.w * cal.pixelsPerMm;
+    scaleNote = Math.abs(w - want) / want < 0.005
+      ? `True size at ${escapeHtml(cal.scale || 'page scale')}.`
+      : `<span style="color:var(--danger,#c0392b)">Resized — ${Math.round(w / want * 100)}% of true size.</span>`;
+  }
+  const row = (k, v) => `<div style="display:flex;justify-content:space-between"><span>${k}</span><b>${v}</b></div>`;
+  const lead = s.u ? s.u[0] : s;
+  return `<div class="properties-section"><div class="properties-section-title">Vehicle</div><div class="properties-section-content">
+    <div style="font-size:11px;line-height:1.55">
+      ${row('Overall length × width', `${m(s.L)} × ${m(s.W)}`)}
+      ${row(s.u ? 'Prime mover / truck wheelbase' : 'Wheelbase', m(lead.wb))}
+      ${s.os ? row('Crane outrigger spread', m(s.os)) : ''}
+      ${row('Design turning radius', m(s.R))}
+      ${row('Outer swept radius (body)', m(s.outer))}${row('Inner swept radius', m(s.inner))}
+      ${row('Footprint (box)', `${m(def.real.w / 1000)} × ${m(def.real.h / 1000)}`)}
+    </div>
+    <div style="font-size:11px;margin-top:6px">${scaleNote}</div>
+    ${s.note ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">${escapeHtml(s.note)}</div>` : ''}
+    <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" class="checkbox-input" ${ann.showTurn ? 'checked' : ''} onchange="setVehicleTurn('showTurn', this.checked)"> Show turning circle</label>
+    <label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:6px;margin-top:4px">
+      <input type="checkbox" class="checkbox-input" ${ann.turnRight ? 'checked' : ''} onchange="setVehicleTurn('turnRight', this.checked)"> Turning right (default left)</label>
+    <button onclick="resetSymbolTrueSize()" class="modal-btn" style="width:100%;margin-top:6px;font-size:11px" title="Resize to the vehicle's real footprint at this page's calibrated scale (keeps its centre)">Reset to true size</button>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:6px">Typical dimensions — confirm with the supplier. The turning circle is an indicative steady full-lock turn, not a swept-path analysis; use AS 2890.2 templates or AutoTURN to design an access.</div>
+  </div></div>`;
+}
+
+function setVehicleTurn(key, on) {
+  const a = annotations.find(x => x.id === selectedAnnotationId);
+  if (!a) return;
+  a[key] = !!on;
+  saveToHistory(); redrawAnnotations();
+}
+
 function resetSymbolTrueSize() {
   const a = annotations.find(x => x.id === selectedAnnotationId);
   const def = a && SYMBOL_DEFS[a.symbolId];
@@ -21009,7 +21247,7 @@ function getSymbolsPanelHTML() {
     </div>
     <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
       Click a symbol, then click the drawing to place it. Drag corners to resize, use the rotate handle to turn, recolour from Properties.
-      <b>Concrete pumps</b> place at true size on a calibrated page — search <i>pump</i>.</div>
+      <b>Concrete pumps</b> and <b>trucks</b> place at true size on a calibrated page — search <i>pump</i> or <i>truck</i>.</div>
     <div id="sym-cats">${getSymbolCatsHTML()}</div>
   </div>`;
 }

@@ -2005,3 +2005,22 @@ James: *"In the Symbols tab can you add a concrete pumping section and download 
 **Data provenance.** The data sheets are saved in `Concrete Pump Data Sheets/`, which stays private because of the deny-by-default `.gitignore`. Several sheets give spreads but only a schematic support plan, so front↔rear distances for the Putzmeisters and the Sany SY39/SY45 are estimated. The Schwing 17, Sany SY25 (sheet 404s) and Junjin JXZ30 (undimensioned plan) footprints are estimated from equivalent pumps. The Hangil 21ZX sheet is really an Everdigm ECP21ZX whose labels contradict its drawing. The 58 m uses Putzmeister's US 58 m brochure. Every estimate is stated in that row's `note`, which is shown in Properties, and every symbol carries a "confirm with the operator" line. Line pumps (WIN, MOLI, Sany LP) were left out because no outrigger or footprint data exists for them.
 
 **datum-markup skill** — the symbol catalogue is now 25 ids out of date (see v3.36); regenerate `references/symbols.md` and `SYMBOL_SIZES` next time the skill is touched. Pump ids are `cp-*`, and their true size comes from `real`, not `w`.
+
+## v3.38 (6 Oct 2026) — Trucks & vehicles at true size: 244 → 258
+
+James: *"similar to concrete pumps, can you add scaled drawings for concrete truck, delivery trucks of different sizes"*
+
+**New category "Construction — Trucks & Vehicles (true size)"** (`cmp-vehicles`, ids `tv-*`), 14 vehicles built from a data table (`TRUE_SIZE_VEHICLES`) by `_vehLayout()` + `_symVehicle()`, the same pattern as the pumps: plan view, cab to the right, `def.real` in mm, so `addSymbolAnn` places them at the page's calibrated scale and **Reset to true size** works unchanged.
+
+- **Concrete trucks:** minimix 4×2 (≈3 m³), 6×4 agitator (≈6 m³), 8×4 twin-steer agitator (≈8 m³). Drum, folded chute (counted in the footprint), tag on the cab.
+- **Delivery / earthmoving:** B99 car, ute/van, AS 2890.2 SRV / MRV / HRV, crane truck (Hiab) with outriggers drawn out (5.8 m — varies by crane), 6×4 and 8×4 tippers, 19 m semi (AV), 19 m truck & dog, 26 m B-double.
+- Body types: car, tray, box (crossed), tipper, agitator, crane, prime mover, flat trailer (kingpin circle). Wheels drawn per axle; twin steer shows both steer axles.
+- **Combinations** are lists of units (`u:[…]`): `kp` is where the next unit couples (forward of that unit's axle group; negative = a drawbar hitch behind it), a semi trailer's negative `fo` puts its kingpin |fo| behind its nose, and a dog adds `db` (drawbar eye to front axle) and `fa` (front-group axles). `L` on these rows is for display only; the drawing is built from the units.
+
+**Turning circle.** Properties → Vehicle lists the dimensions and has **Show turning circle** (`ann.showTurn`) and **Turning right** (`ann.turnRight`). It draws the outer body sweep and inner wheel path for a steady full-lock turn at the design radius R, centred on the lead unit's rear-axle line; each trailer's radius is chained through its coupling (`hypot` out along the unit, then its wheelbase back in). Like the pump reach it draws outside the annotation box. It is labelled and documented as **indicative, not a swept-path analysis** — a B-double comes out at an inner radius of 0 (it tracks into the centre in steady state). The scale field on `def.veh` is `upm` — not `u`, which is the units array on combination rows (they collided on first build).
+
+**Data provenance.** The AS 2890.1/2890.2 design vehicles (B99, SRV, MRV, HRV, AV) use the standard's length, width, wheelbase and design turning radius. Everything else is a typical Australian unit and says "Indicative — confirm with the supplier" in its note. No manufacturer data sheets were downloaded for this set.
+
+**Verified** in the preview: contact sheet of all 14 through `drawSymbolAnn`, zero draw errors; turning circles left and right on the agitator, semi and B-double (labels moved to the far side of the circle); placement on a page calibrated at 1:200 lands exactly at `real × pixelsPerMm` for the agitator, semi and crane truck; Properties says "True size at 1:200"; search "truck" → 17, "agitator" → 4, "hiab" → 1; `node check-syntax.js` clean.
+
+**datum-markup skill** is now 39 ids out of date (the pumps plus these); regenerate `references/symbols.md` and `SYMBOL_SIZES` next time the skill is touched.
