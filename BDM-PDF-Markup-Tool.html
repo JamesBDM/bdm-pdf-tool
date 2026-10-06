@@ -1433,6 +1433,120 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 #ml-layers-drop { position: absolute; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 24px 60px -24px rgba(10,18,40,.55); padding: 8px; z-index: 500; display: none; min-width: 180px; }
 #ml-layers-drop label { display: flex; gap: 8px; align-items: center; padding: 4px 6px; font-size: 12px; color: var(--text-primary); border-radius: 4px; cursor: pointer; }
 #ml-layers-drop label:hover { background: var(--bg-hover); }
+
+/* ============================================================
+   v3.43 — ACROBAT-STYLE LAYOUT (data-ui="acrobat" on <html>)
+   A per-user switch for people coming from Adobe Acrobat. Same engine,
+   same files — only the shell changes: Acrobat's light grey skin and
+   blue accent, a two-row Acrobat toolbar (quick tools + the tool set's
+   own bar: Comment / Measure / Organize Pages / Fill & Sign), a left
+   navigation strip, a Comments pane on the right, Acrobat shortcuts.
+   Everything here is scoped to [data-ui="acrobat"] so the Datum layout
+   is untouched. :root[data-ui] outranks [data-theme="light"], so the
+   Acrobat skin wins whichever Datum theme was last chosen.
+   ============================================================ */
+:root[data-ui="acrobat"] {
+  --font-ui: 'Segoe UI', 'Adobe Clean', system-ui, -apple-system, sans-serif;
+  --font-display: 'Segoe UI', 'Adobe Clean', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Segoe UI', 'Adobe Clean', system-ui, sans-serif;
+  --bg: #E8E8E8; --surface: #FFFFFF; --surface-2: #FFFFFF; --line: #DADADA;
+  --text: #222222; --muted: #6E6E6E; --text-muted: #8E8E8E;
+  --accent-role: #1473E6; --accent-text: #0D66D0; --accent-on: #FFFFFF;
+  --accent-hover: #0D66D0; --accent-dim: rgba(20,115,230,0.12);
+  --secondary: #B4701F; --warning: #B4701F;
+  --sheet: #FFFFFF; --sheet-grid: rgba(0,0,0,.04); --focus-ring: #1473E6;
+  --bg-hover: #EDEDED; --bg-active: #E1ECFB;
+}
+#acro-bar, #acro-nav, #acro-comments { display: none; }
+#ui-switch { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 999px; padding: 2px; gap: 2px; margin-right: 10px; flex-shrink: 0; }
+#ui-switch button { padding: 2px 10px; border-radius: 999px; font-size: 11px; color: var(--text-secondary); }
+#ui-switch button:hover { color: var(--text-primary); }
+#ui-switch button.on { background: var(--accent); color: var(--accent-on); }
+
+[data-ui="acrobat"] body { font-size: 12.5px; }
+[data-ui="acrobat"] #topbar, [data-ui="acrobat"] #toolbar { display: none !important; }
+[data-ui="acrobat"] #menubar { background: #FFFFFF; height: 32px; }
+[data-ui="acrobat"] #menubar .logo .logo-word { font-size: 15px; }
+[data-ui="acrobat"] .am > button { font-size: 12.5px; padding: 5px 10px; }
+[data-ui="acrobat"] .am-drop, [data-ui="acrobat"] #ml-layers-drop { border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+[data-ui="acrobat"] .ami { border-radius: 2px; }
+[data-ui="acrobat"] .ami:hover { background: #EDEDED; color: var(--text-primary); }
+[data-ui="acrobat"] .ami:hover .k { color: var(--text-muted); }
+[data-ui="acrobat"] #doc-tabs { background: #F5F5F5; }
+[data-ui="acrobat"] .doc-tab { background: #F5F5F5; }
+[data-ui="acrobat"] .doc-tab.active { background: #FFFFFF; box-shadow: inset 0 -2px 0 0 var(--accent); }
+[data-ui="acrobat"] #canvas-wrapper { background: #E8E8E8; }
+[data-ui="acrobat"] #statusbar { background: #FFFFFF; font-size: 11px; }
+[data-ui="acrobat"] .sb-btn, [data-ui="acrobat"] .tool-btn, [data-ui="acrobat"] .modal-btn, [data-ui="acrobat"] .drop-btn { border-radius: 4px; }
+[data-ui="acrobat"] .status-cal.calibrated { background: #2D9D78; border-color: #2D9D78; }
+[data-ui="acrobat"] .tool-group-label::before { background: var(--accent); }
+[data-ui="acrobat"] #ml-table tr.ml-sel td { background: var(--accent-dim); }
+[data-ui="acrobat"] #drop-zone .drop-title { font-weight: 300; }
+[data-ui="acrobat"] .panel-header { text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text-primary); }
+[data-ui="acrobat"] .panel-tab { text-transform: none; letter-spacing: 0; font-size: 12px; }
+[data-ui="acrobat"] .modal-header h2, [data-ui="acrobat"] #panel-title { font-weight: 600; }
+
+/* Acrobat toolbar — row 1 quick tools, row 2 the active tool set */
+[data-ui="acrobat"] #acro-bar { display: flex; flex-direction: column; background: #FFFFFF; border-bottom: 1px solid var(--line); flex-shrink: 0; z-index: 90; }
+.acro-row { display: flex; align-items: center; gap: 2px; padding: 3px 10px; flex-wrap: wrap; min-height: 38px; }
+#acro-sub { background: #FAFAFA; border-top: 1px solid var(--line); min-height: 50px; }
+.acro-sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; flex-shrink: 0; }
+.acro-spring { flex: 1; min-width: 6px; }
+.acro-btn { display: flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border-radius: 4px; color: #4B4B4B; font-size: 12.5px; white-space: nowrap; flex-shrink: 0; }
+.acro-btn:hover { background: #EDEDED; color: #222; }
+.acro-btn:disabled { opacity: .35; cursor: default; background: none; }
+.acro-btn svg { width: 18px; height: 18px; flex-shrink: 0; stroke-width: 1.6; }
+.acro-btn.icon { padding: 0 4px; }
+.acro-btn.on, .acro-q.tool-btn.active { background: var(--accent-dim); color: var(--accent-text); }
+/* Tool-set tabs — Acrobat's "Comment / Measure / Organize Pages" picker */
+.acro-set { height: 30px; padding: 0 9px; border-radius: 4px; color: #4B4B4B; font-size: 12.5px; font-weight: 600; flex-shrink: 0; }
+.acro-set:hover { background: #EDEDED; }
+.acro-set.on { color: var(--accent-text); box-shadow: inset 0 -2px 0 var(--accent); border-radius: 4px 4px 0 0; }
+/* Tool-set bar buttons: icon over label, the way Acrobat's Comment bar reads */
+.acro-t.tool-btn, .acro-t { width: auto; min-width: 54px; height: 44px; padding: 3px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 4px; color: #4B4B4B; flex-shrink: 0; }
+.acro-t svg { width: 19px; height: 19px; stroke-width: 1.6; }
+.acro-t .al { font-size: 10.5px; line-height: 1.1; white-space: nowrap; }
+.acro-t:hover { background: #EDEDED; }
+.acro-t.tool-btn.active { background: var(--accent-dim); color: var(--accent-text); box-shadow: inset 0 0 0 1px rgba(20,115,230,.45); }
+.acro-t.on { background: var(--accent-dim); color: var(--accent-text); }
+.acro-t .shortcut { display: none; }
+.acro-set-title { font-size: 13px; font-weight: 600; color: #222; padding: 0 12px 0 2px; flex-shrink: 0; }
+#acro-page { width: 38px; text-align: center; border: 1px solid var(--line); border-radius: 4px; height: 24px; font-size: 12px; background: #fff; }
+#acro-page-total { font-size: 12px; color: var(--muted); padding: 0 4px; white-space: nowrap; }
+#acro-zoom { min-width: 50px; text-align: center; font-size: 12px; color: #4B4B4B; border: 1px solid var(--line); border-radius: 4px; height: 24px; line-height: 22px; cursor: pointer; }
+/* Small drop-down menus (Shapes ▾, More Tools ▾) */
+.acro-menu { position: fixed; background: #fff; border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.18); padding: 4px; z-index: 600; min-width: 210px; }
+.acro-menu .ami { color: #222; }
+.acro-menu .ami svg { width: 16px; height: 16px; margin-right: 8px; flex-shrink: 0; }
+.acro-menu .ami span.lbl { flex: 1; display: flex; align-items: center; }
+
+/* Left navigation strip (Page Thumbnails / Bookmarks / Search) */
+[data-ui="acrobat"] #acro-nav { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 40px; min-width: 40px; padding: 8px 0; background: #FFFFFF; border-right: 1px solid var(--line); }
+#acro-nav .acro-btn { width: 32px; height: 32px; padding: 0; justify-content: center; }
+
+/* Comments pane — Acrobat's comment list on the right */
+[data-ui="acrobat"] #acro-comments.open { display: flex; flex-direction: column; width: 280px; min-width: 280px; background: #FFFFFF; border-left: 1px solid var(--line); }
+.acm-head { display: flex; align-items: center; gap: 6px; padding: 10px 12px 6px; }
+.acm-head .t { font-size: 14px; font-weight: 600; flex: 1; }
+.acm-head .c { font-size: 11px; color: var(--muted); }
+.acm-tools { display: flex; gap: 6px; padding: 0 12px 8px; border-bottom: 1px solid var(--line); }
+.acm-tools input, .acm-tools select { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; font-size: 12px; background: #fff; }
+.acm-tools select { flex: 0 0 auto; }
+#acm-list { flex: 1; overflow-y: auto; padding: 6px 8px 12px; }
+.acm-page { font-size: 11px; font-weight: 600; color: var(--muted); padding: 10px 4px 4px; }
+.acm-card { display: flex; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 6px; cursor: pointer; background: #fff; position: relative; }
+.acm-card:hover { border-color: #B8B8B8; }
+.acm-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.acm-card.hid { opacity: .45; }
+.acm-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 3px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.15); }
+.acm-body { flex: 1; min-width: 0; }
+.acm-type { font-size: 12px; font-weight: 600; color: #222; }
+.acm-text { font-size: 12px; color: #4B4B4B; margin-top: 2px; word-break: break-word; white-space: pre-wrap; }
+.acm-val { font-size: 12px; color: var(--accent-text); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.acm-del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 4px; color: var(--muted); display: none; align-items: center; justify-content: center; font-size: 14px; }
+.acm-card:hover .acm-del { display: flex; }
+.acm-del:hover { background: #FDE8E8; color: #C9252D; }
+.acm-empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.6; }
 </style>
 </head>
 <body>
@@ -1496,6 +1610,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <div class="ami" onclick="amClose();cycleRailDock()">Move Tool Rail (left / top / right)</div>
       <div class="ami" onclick="amClose();toggleTopbarCompact()">Compact Toolbar</div>
       <div class="ami" onclick="amClose();toggleDatumTheme()">Light / Dark Theme</div>
+      <div class="ami" onclick="amClose();setUiMode(uiMode() === 'acrobat' ? 'datum' : 'acrobat')">Acrobat-Style Layout <span class="k">on / off</span></div>
     </div></div>
     <div class="am"><button onclick="amToggle(this)">Document</button><div class="am-drop">
       <div class="ami" onclick="amClose();openMergeDialog()">Combine / Split PDFs…</div>
@@ -1562,7 +1677,49 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
     <button class="mb-btn" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg></button>
     <button class="mb-btn" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7L21 13"/></svg></button>
     <div class="m-spring"></div>
+    <div id="ui-switch" title="Layout — Datum's own layout, or an Acrobat-style one for people coming from Adobe Acrobat. Saved on this computer only; files are the same either way.">
+      <button data-ui="datum" onclick="setUiMode('datum')">Datum</button>
+      <button data-ui="acrobat" onclick="setUiMode('acrobat')">Acrobat style</button>
+    </div>
     <span class="m-file" id="menubar-file"></span>
+  </div>
+
+  <!-- ACROBAT-STYLE TOOLBAR (v3.43) — shown only when data-ui="acrobat".
+       Row 1 = Acrobat's quick tools; row 2 = the chosen tool set's bar,
+       filled in by acroRenderSet(). -->
+  <div id="acro-bar">
+    <div class="acro-row" id="acro-quick">
+      <button class="acro-btn icon" onclick="openFile()" title="Open (Ctrl+O)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></button>
+      <button class="acro-btn icon" onclick="saveProject()" title="Save (Ctrl+S)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button>
+      <button class="acro-btn icon" onclick="openPrintDialog()" title="Print (Ctrl+P)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button>
+      <button class="acro-btn icon" onclick="openSearchDialog()" title="Find text (Ctrl+F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/></svg></button>
+      <div class="acro-sep"></div>
+      <button class="acro-btn icon" id="acro-undo" onclick="undo()" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-15-6.7L3 13"/></svg></button>
+      <button class="acro-btn icon" id="acro-redo" onclick="redo()" title="Redo (Ctrl+Shift+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0115-6.7L21 13"/></svg></button>
+      <div class="acro-sep"></div>
+      <button class="acro-btn icon" onclick="previousPage()" title="Previous page (Page Up)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="18 15 12 9 6 15"/></svg></button>
+      <button class="acro-btn icon" onclick="nextPage()" title="Next page (Page Down)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="6 9 12 15 18 9"/></svg></button>
+      <input id="acro-page" value="1" title="Go to page (Ctrl+Shift+N)" onkeydown="if(event.key==='Enter'){jumpToPage(this.value);this.blur()}">
+      <span id="acro-page-total">/ 0</span>
+      <div class="acro-sep"></div>
+      <button class="acro-btn icon tool-btn acro-q" data-tool="select" onclick="setTool('select')" title="Select (V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 3l6.5 17 2.4-7.1L20 10.5z"/></svg></button>
+      <button class="acro-btn icon tool-btn acro-q" data-tool="pan" onclick="setTool('pan')" title="Hand tool (H) — or hold Space"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 11V6a2 2 0 00-4 0v5m0 0V4a2 2 0 00-4 0v7m0 0V6a2 2 0 00-4 0v7m12-1v5a6 6 0 01-6 6h-2a6 6 0 01-6-6v-3"/></svg></button>
+      <div class="acro-sep"></div>
+      <button class="acro-btn icon" onclick="zoomOut()" title="Zoom out (Ctrl+−)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
+      <span id="acro-zoom" onclick="acroZoomMenu(this)" title="Zoom — click for Fit Page / Fit Width / Actual Size">100%</span>
+      <button class="acro-btn icon" onclick="zoomIn()" title="Zoom in (Ctrl++)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="12" y1="8" x2="12" y2="16"/></svg></button>
+      <button class="acro-btn icon" onclick="acroFitPage()" title="Fit one full page to window (Ctrl+0)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="3" width="12" height="18" rx="1"/><path d="M9 8l3-3 3 3M9 16l3 3 3-3"/></svg></button>
+      <div class="acro-spring"></div>
+      <button class="acro-set" data-set="comment" onclick="acroSetToolSet('comment')" title="Comment — sticky notes, text, highlight, drawing tools, stamps">Comment</button>
+      <button class="acro-set" data-set="measure" onclick="acroSetToolSet('measure')" title="Measure — set scale, distance, perimeter, area, count">Measure</button>
+      <button class="acro-set" data-set="organize" onclick="acroSetToolSet('organize')" title="Organize Pages — insert, rotate, replace, combine">Organize Pages</button>
+      <button class="acro-set" data-set="sign" onclick="acroSetToolSet('sign')" title="Fill &amp; Sign — add text, checkmarks, signature">Fill &amp; Sign</button>
+      <button class="acro-set" onclick="acroMoreTools(this)" title="More tools — estimate, reports, symbols, split view">More Tools ▾</button>
+      <div class="acro-sep"></div>
+      <button class="acro-btn icon" id="acro-btn-comments" onclick="acroToggleComments()" title="Comments pane — every comment and markup in this document"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 01-2 2H8l-5 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="13" y2="12"/></svg></button>
+      <button class="acro-btn icon" id="acro-btn-props" onclick="togglePanelVisible()" title="Properties (Ctrl+E) — colour, line width, opacity, font of the selected comment"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="9" cy="6" r="2" fill="#fff"/><circle cx="15" cy="12" r="2" fill="#fff"/><circle cx="8" cy="18" r="2" fill="#fff"/></svg></button>
+    </div>
+    <div class="acro-row" id="acro-sub"></div>
   </div>
   <!-- TOP BAR -->
   <div id="topbar">
@@ -1635,6 +1792,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 
   <!-- MAIN AREA -->
   <div id="main">
+    <!-- ACROBAT-STYLE LEFT NAVIGATION STRIP (v3.43, data-ui="acrobat" only) -->
+    <div id="acro-nav">
+      <button class="acro-btn" id="acro-nav-thumbs" onclick="toggleThumbnails();acroSyncState()" title="Page Thumbnails"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="3" width="7" height="8" rx="1"/><rect x="13" y="3" width="7" height="8" rx="1"/><rect x="4" y="13" width="7" height="8" rx="1"/><rect x="13" y="13" width="7" height="8" rx="1"/></svg></button>
+      <button class="acro-btn" onclick="openSheetsPanel()" title="Bookmarks — sheet index read from the title blocks, with links"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3h12v18l-6-4-6 4z"/></svg></button>
+      <button class="acro-btn" onclick="openSearchDialog()" title="Find text (Ctrl+F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16" y2="16"/></svg></button>
+      <button class="acro-btn" onclick="toggleMarkupsList()" title="Comment list as a table — sort, layers, CSV export"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="1"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="20"/></svg></button>
+    </div>
     <!-- TOOL RAIL (dockable: left / top / right — drag grip cycles position) -->
     <div id="toolbar">
       <div id="rail-grip" onclick="cycleRailDock()" title="Move the tool rail — click to cycle left → top → right">⠿</div>
@@ -1760,6 +1924,22 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
       <!-- Crosshair guides (v3.16) — moved by _moveCrosshair on mousemove -->
       <div id="xhair-v" class="xhair"></div>
       <div id="xhair-h" class="xhair"></div>
+    </div>
+
+    <!-- ACROBAT-STYLE COMMENTS PANE (v3.43, data-ui="acrobat" only) -->
+    <div id="acro-comments">
+      <div class="acm-head"><span class="t">Comments</span><span class="c" id="acm-count"></span>
+        <button class="acro-btn icon" onclick="acroToggleComments(false)" title="Close">✕</button></div>
+      <div class="acm-tools">
+        <input id="acm-search" placeholder="Search comments" oninput="acroRefreshComments()">
+        <select id="acm-filter" onchange="acroRefreshComments()" title="Show">
+          <option value="all">All</option>
+          <option value="page">This page</option>
+          <option value="marks">Comments only</option>
+          <option value="meas">Measurements</option>
+        </select>
+      </div>
+      <div id="acm-list"></div>
     </div>
 
     <!-- RIGHT PANEL -->
@@ -2034,7 +2214,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.42';
+const APP_VERSION = 'v3.43';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -3028,6 +3208,12 @@ document.addEventListener('DOMContentLoaded', () => {
   try { if (localStorage.getItem('datum-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); } catch (e) {}
   // Tool rail dock position (v3.1) — Bluebeam users expect it on the RIGHT
   try { applyRailDock(localStorage.getItem('datum-rail') || 'right'); } catch (e) {}
+  // v3.43: Acrobat-style layout (per user) — restore it and the Comments pane
+  try {
+    const cp = document.getElementById('acro-comments');
+    if (cp) cp.classList.toggle('open', acroCommentsOpen);
+    setUiMode(localStorage.getItem('datum-ui') === 'acrobat' ? 'acrobat' : 'datum', true);
+  } catch (e) {}
   // Set initial snap button state
   const snapBtn = document.getElementById('btn-snap');
   if (snapBtn && snapEnabled) snapBtn.style.color = 'var(--accent)';
@@ -4144,6 +4330,7 @@ function attachPageAnnotationListeners(annCanvas, pageIdx) {
 }
 
 function redrawAnnotations() {
+  acroScheduleComments(); // v3.43: keep the Acrobat-style Comments pane current
   const canvas = getActiveAnnotationCanvas();
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
@@ -7713,6 +7900,7 @@ function scheduleZoom(targetScale, anchor) {
   // Update the zoom indicator immediately so the UI feels responsive even if the
   // render is still a frame away.
   document.getElementById('zoom-indicator').textContent = `${Math.round(targetScale*100)}%`;
+  acroSyncState();
   if (pendingZoomFrame) return;
   pendingZoomFrame = requestAnimationFrame(applyPendingZoom);
 }
@@ -8204,6 +8392,9 @@ function onKeyDown(e) {
   // Tool shortcuts — guarded with !mod so Ctrl-combos (save, copy, etc.) don't
   // accidentally swap the active tool. Previously "c" with Ctrl held was firing
   // the Count tool when the user was trying to copy.
+  // v3.43: Acrobat-style layout uses Acrobat's shortcuts instead of Datum's letters
+  if (acroHandleKey(e, key, mod)) return;
+
   if (mod || e.altKey) { /* let the Ctrl-shortcut block below handle it */ }
   else if (!pdfDoc) { /* no document loaded — tool shortcuts do nothing useful */ }
   else if (key === 'v') setTool('select');
@@ -8879,6 +9070,8 @@ function showTextInput(screenPt) {
         fontSize: toolProperties.fontSize, fontFamily: toolProperties.fontFamily,
         fontWeight: toolProperties.fontWeight, fontStyle: toolProperties.fontStyle,
         textDecoration: toolProperties.textDecoration, opacity: toolProperties.opacity };
+      // v3.43: Acrobat-style "Sticky Note" = a text markup in the yellow note style
+      if (window.acroStickyArmed) Object.assign(ann, ACRO_STICKY_STYLE);
       annotations.push(ann); saveToHistory(); redrawAnnotations();
     }
     overlay.remove();
@@ -9019,6 +9212,7 @@ function selectAllText(el) {
 // TOOL MANAGEMENT
 // ============================================================
 function setTool(tool) {
+  window.acroStickyArmed = false; // v3.43: the sticky-note style lasts for one note
   // Track the last select/pan tool so we can return after drawing
   if (tool === 'select' || tool === 'pan') lastNavTool = tool;
   // Leaving Select ends "add existing shapes" pick mode
@@ -9040,6 +9234,7 @@ function setTool(tool) {
   openPropertiesPanel();
   // Arming Select Text pre-loads this page's text layer so the first drag hits
   if (tool === 'selecttext' && pdfDoc) ensurePageTextItems(currentPage);
+  acroSyncState();
 }
 
 // Return to the last select/pan tool after completing a drawing action
@@ -9304,7 +9499,11 @@ function openPropertiesPanel(forceOpen) {
 
   // Respect the user's choice to keep the panel closed — only force it open
   // on an explicit action (tab click / selection), not on every page turn.
-  const maybeOpen = () => { if (forceOpen || !panelUserCollapsed) panel.classList.remove('collapsed'); };
+  // v3.43: in the Acrobat-style layout the panel is Acrobat's Properties — it
+  // opens on Ctrl+E / the toolbar button, or for tools that must be set up
+  // before use (stamp, signature, scale, count), not on every selection.
+  const _acroQuiet = uiMode() === 'acrobat' && !(!selectedAnnotationId && ACRO_PANEL_TOOLS.includes(currentTool));
+  const maybeOpen = () => { if (forceOpen || (!panelUserCollapsed && !_acroQuiet)) panel.classList.remove('collapsed'); acroSyncState(); };
 
   // Sync the tab strip with the current mode every time we redraw the panel.
   document.querySelectorAll('.panel-tab').forEach(t =>
@@ -10323,7 +10522,13 @@ function _buildWindowMenu() {
     '<div class="am-sep"></div><div class="ami" onclick="amClose();toggleSplitView()">Split View</div>';
 }
 function showShortcutsHelp() {
-  const rows = [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['U','Box Measure (length × width)'],['I / C','Dimension / Count'],
+  const rows = (typeof uiMode === 'function' && uiMode() === 'acrobat') ? [
+    ['V / H','Select / Hand tool'],['Space (hold)','Hand tool while held'],['S','Sticky note'],['X','Text box'],['U','Highlight'],
+    ['D / Shift+D','Drawing tool / cycle shapes (Rectangle, Oval, Line, Arrow, Polygon, Connected Lines, Cloud)'],['K','Stamp'],
+    ['Ctrl+E','Properties (colour, line width, font)'],['Ctrl+0 / Ctrl+1 / Ctrl+2','Fit page / Actual size / Fit width'],['Ctrl+= / Ctrl+−','Zoom in / out'],
+    ['Ctrl+Shift+N','Go to page'],['Home / End','First / last page'],['Page Up / Page Down','Previous / next page'],
+    ['Ctrl+C / Ctrl+V','Copy / paste comment'],['Ctrl+Z / Ctrl+Shift+Z','Undo / Redo'],['Delete','Delete selected comment'],
+    ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Find / Print'],['Return / Ctrl+Return','While typing: new line / finish the text'],['Esc','Cancel / back to Select']] : [['V','Select'],['Space (hold)','Pan'],['K','Calibrate'],['M / L','Measure / Polyline'],['A / F','Area / Room Fill'],['U','Box Measure (length × width)'],['I / C','Dimension / Count'],
     ['N / W / Y','Line / Arrow / Polyline shape'],['R / O / Q / D','Rect / Ellipse / Polygon / Cloud'],['T / B / S / J','Text / Callout / Stamp / Tick'],
     ['P / G','Pen / Highlight'],['E / X','Cut Content / Delete'],['Ctrl+C / Ctrl+V','Copy / paste markup — or whole pages, in the thumbnail strip'],['Ctrl+Z / Ctrl+Y','Undo / Redo'],
     ['Ctrl+S / Ctrl+Shift+S','Save / Save As'],['Ctrl+O / Ctrl+F / Ctrl+P','Open / Search / Print'],['F4','Right panel'],['H','Crosshair guides'],['Alt+←','Back after following a sheet link'],['Return / Ctrl+Return','While typing: new line / finish the text'],['Esc / right-click','Cancel draft']];
@@ -10353,6 +10558,400 @@ function cycleRailDock() {
   const next = cur === 'left' ? 'top' : cur === 'top' ? 'right' : 'left';
   applyRailDock(next);
   showToast('Tool rail docked ' + next.toUpperCase());
+}
+
+// ============================================================
+// v3.43 — ACROBAT-STYLE LAYOUT
+// A per-user shell for people who know Adobe Acrobat and don't want to
+// relearn a Bluebeam-style workspace. data-ui="acrobat" on <html> swaps
+// the skin (CSS) and shows #acro-bar / #acro-nav / #acro-comments; the
+// Datum rail and topbar are hidden, not removed, so every existing
+// function keeps working. Nothing here touches the file format — a PDF
+// marked up in either layout is identical. Stored per browser in
+// localStorage 'datum-ui'.
+// ============================================================
+function uiMode() { return document.documentElement.getAttribute('data-ui') === 'acrobat' ? 'acrobat' : 'datum'; }
+function setUiMode(mode, quiet) {
+  const root = document.documentElement;
+  if (mode === 'acrobat') root.setAttribute('data-ui', 'acrobat'); else root.removeAttribute('data-ui');
+  try { localStorage.setItem('datum-ui', mode); } catch (e) {}
+  document.querySelectorAll('#ui-switch button').forEach(b => b.classList.toggle('on', b.dataset.ui === mode));
+  acroCloseMenu();
+  if (mode === 'acrobat') { acroRenderSet(); acroSyncState(); acroRefreshComments(); }
+  // The canvas area changed width — let the page re-centre
+  try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+  if (!quiet) showToast(mode === 'acrobat' ? 'Acrobat-style layout on — switch back any time, top right' : 'Datum layout on');
+}
+
+// Acrobat's "Add sticky note" — Datum has no pop-up note object, so a sticky
+// note is a Text markup wearing a yellow note style. It stays a normal text
+// markup in the file (editable, printable, listed) in either layout.
+// Tools whose settings live in the panel — it opens for these on its own
+const ACRO_PANEL_TOOLS = ['stamp', 'signature', 'calibrate', 'count', 'sequence', 'table', 'symbol'];
+window.acroStickyArmed = false;
+const ACRO_STICKY_STYLE = {
+  boxFill: '#FFF2A8', fillColor: '#FFF2A8', fillOpacity: 100, boxPad: 6, radius: 3,
+  boxStroke: '#D4B106', textColor: '#1F1F1F', color: '#D4B106', subject: 'Sticky Note'
+};
+function acroSticky() {
+  setTool('text');
+  window.acroStickyArmed = true;
+  showToast('Sticky note — click where it goes and type');
+  acroSyncState();
+}
+
+const ACRO_SHAPES = [
+  ['rectangle', 'Rectangle'], ['ellipse', 'Oval'], ['line', 'Line'], ['arrow', 'Arrow'],
+  ['polygon', 'Polygon'], ['polyshape', 'Connected Lines'], ['cloud', 'Cloud']
+];
+let acroLastShape = 'rectangle';
+try { const s = localStorage.getItem('datum-acro-shape'); if (s && ACRO_SHAPES.some(x => x[0] === s)) acroLastShape = s; } catch (e) {}
+function acroPickShape(tool) {
+  acroLastShape = tool;
+  try { localStorage.setItem('datum-acro-shape', tool); } catch (e) {}
+  acroCloseMenu();
+  setTool(tool);
+  acroRenderSet();
+}
+
+// Own icons for the Acrobat-only buttons. Tool buttons borrow the Datum rail
+// icon for the same tool (_acroToolIcon) so the two layouts read alike.
+const ACRO_ICONS = {
+  sticky: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v11l-5 5H4z"/><path d="M15 20v-5h5"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="12.5" x2="13" y2="12.5"/></svg>',
+  snap: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>',
+  snaplines: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 17L9 11L13 15L21 7"/><circle cx="9" cy="11" r="2.5"/></svg>',
+  summary: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 4-10"/></svg>',
+  workbook: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>',
+  thumbs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="3" width="7" height="8" rx="1"/><rect x="13" y="3" width="7" height="8" rx="1"/><rect x="4" y="13" width="7" height="8" rx="1"/><rect x="13" y="13" width="7" height="8" rx="1"/></svg>',
+  insert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="11" x2="12" y2="18"/><line x1="8.5" y1="14.5" x2="15.5" y2="14.5"/></svg>',
+  combine: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="10" height="13" rx="1"/><rect x="11" y="8" width="10" height="13" rx="1"/></svg>',
+  rotl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 4v6h6"/><path d="M3.5 10A9 9 0 1112 21"/></svg>',
+  rotr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 4v6h-6"/><path d="M20.5 10A9 9 0 1012 21"/></svg>',
+  rotall: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 4v6h-6"/><path d="M20.5 10A9 9 0 1012 21"/><rect x="9" y="9" width="6" height="7" rx="1"/></svg>',
+  replace: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="9" height="12" rx="1"/><path d="M14 9h4a2 2 0 012 2v8a2 2 0 01-2 2h-6a2 2 0 01-2-2v-1"/><polyline points="15 6 18 9 15 12"/></svg>',
+  compare: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/><path d="M6 10h3M15 14h3"/></svg>',
+  compress: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
+  flatten: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 16l9 5 9-5"/></svg>',
+  shapes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="9" height="9" rx="1"/><circle cx="16.5" cy="16.5" r="4.5"/></svg>'
+};
+function _acroToolIcon(tool) {
+  const src = document.querySelector('#toolbar .tool-btn[data-tool="' + tool + '"] svg');
+  return src ? src.outerHTML : ACRO_ICONS.shapes;
+}
+
+// Each tool set = Acrobat's tool of the same name. Items:
+//   { tool, label, tip }        → arms a Datum tool (highlights while armed)
+//   { act, label, tip, icon, id } → runs a command
+//   'sep'                        → divider
+const ACRO_SETS = {
+  comment: { title: 'Comment', items: [
+    { act: 'acroSticky()', id: 'acro-sticky', icon: 'sticky', label: 'Sticky Note', tip: 'Add a sticky note (S) — click where it goes and type' },
+    { tool: 'text', label: 'Text Box', tip: 'Add a text box (X) — click and type. Return = new line, click away to finish' },
+    { tool: 'callout', label: 'Callout', tip: 'Text callout — click what you\'re pointing at, then double-click where the text goes' },
+    { tool: 'highlight', label: 'Highlight', tip: 'Highlight (U) — drag a box over the area to highlight' },
+    { tool: 'pen', label: 'Draw', tip: 'Draw free form (pencil)' },
+    { tool: 'eraser', label: 'Delete', tip: 'Click a comment to delete it' },
+    'sep',
+    { shapes: true },
+    { tool: 'cloud', label: 'Cloud', tip: 'Cloud — click points around the area, double-click to finish' },
+    { tool: 'arrow', label: 'Arrow', tip: 'Arrow' },
+    'sep',
+    { tool: 'stamp', label: 'Stamp', tip: 'Stamp (K) — pick the stamp in the Properties pane (Ctrl+E)' },
+    { tool: 'tick', label: 'Checkmark', tip: 'Add a checkmark' },
+    { tool: 'selecttext', label: 'Select Text', tip: 'Drag over the drawing\'s text to copy it to the clipboard' },
+    { tool: 'symbol', act: 'openSymbolsPanel()', label: 'Symbols', tip: 'Construction symbols library' }
+  ]},
+  measure: { title: 'Measure', items: [
+    { tool: 'calibrate', label: 'Set Scale', tip: 'Set the scale — drag along a known dimension, then type its real length' },
+    { tool: 'measure', label: 'Distance', tip: 'Distance — click start, click end' },
+    { tool: 'polyline', label: 'Perimeter', tip: 'Perimeter — click each point, double-click / Enter to finish' },
+    { tool: 'area', label: 'Area', tip: 'Area — click each corner, double-click / Enter to finish (or drag a box)' },
+    'sep',
+    { tool: 'measurebox', label: 'Box', tip: 'Box measure — drag a box to get its length and width' },
+    { tool: 'magicarea', label: 'Room Fill', tip: 'Click inside a room to measure its area automatically' },
+    { tool: 'dimension', label: 'Dimension', tip: 'Dimension line' },
+    { tool: 'count', label: 'Count', tip: 'Count — click each item' },
+    'sep',
+    { act: 'toggleSnap();acroSyncState()', id: 'acro-snap', icon: 'snap', label: 'Snap', tip: 'Snap to your markups\' points (on / off)' },
+    { act: 'toggleContentSnap();acroSyncState()', id: 'acro-snaplines', icon: 'snaplines', label: 'Snap Lines', tip: 'Snap to the drawing\'s lines while measuring (on / off)' },
+    'sep',
+    { act: 'openMeasurementSummary()', icon: 'summary', label: 'Summary', tip: 'Measurement summary' },
+    { act: 'toggleWorkbook()', icon: 'workbook', label: 'Estimate', tip: 'Estimate workbook — trade breakdown linked to the measurements' }
+  ]},
+  organize: { title: 'Organize Pages', items: [
+    { act: 'toggleThumbnails();acroSyncState()', id: 'acro-thumbs', icon: 'thumbs', label: 'Thumbnails', tip: 'Page thumbnails — drag to reorder, right-click a page for more' },
+    'sep',
+    { act: "addBlankPageAfterCurrent('same')", icon: 'insert', label: 'Insert Blank', tip: 'Insert a blank page after this one' },
+    { act: 'openMergeDialog()', icon: 'combine', label: 'Combine', tip: 'Combine files / split / insert pages from another PDF' },
+    { act: 'openRevisionDialog()', icon: 'replace', label: 'Replace', tip: 'Replace this page with a revised drawing — your comments carry over' },
+    'sep',
+    { act: 'rotateCurrentPageCCW()', icon: 'rotl', label: 'Rotate Left', tip: 'Rotate this page left' },
+    { act: 'rotateCurrentPageCW()', icon: 'rotr', label: 'Rotate Right', tip: 'Rotate this page right' },
+    { act: 'rotateAllPagesCW()', icon: 'rotall', label: 'Rotate All', tip: 'Rotate every page right' },
+    'sep',
+    { act: 'openCompareDialog()', icon: 'compare', label: 'Compare', tip: 'Compare two drawing revisions' },
+    { act: 'openCompressDialog()', icon: 'compress', label: 'Reduce Size', tip: 'Reduce file size' },
+    { act: 'flattenAndDownload()', icon: 'flatten', label: 'Flatten', tip: 'Flatten comments into the page and download a copy' }
+  ]},
+  sign: { title: 'Fill & Sign', items: [
+    { tool: 'text', label: 'Add Text', tip: 'Add text — click and type' },
+    { tool: 'tick', label: 'Checkmark', tip: 'Add a checkmark' },
+    { tool: 'signature', label: 'Sign', tip: 'Sign — place your saved signature (set it up in the Properties pane the first time)' },
+    { tool: 'stamp', label: 'Stamp', tip: 'Stamp — APPROVED, REVIEWED, etc.' }
+  ]}
+};
+let acroToolSet = 'comment';
+try { const s = localStorage.getItem('datum-acro-set'); if (s && ACRO_SETS[s]) acroToolSet = s; } catch (e) {}
+
+function acroSetToolSet(set) {
+  if (!ACRO_SETS[set]) return;
+  acroToolSet = set;
+  try { localStorage.setItem('datum-acro-set', set); } catch (e) {}
+  acroRenderSet();
+  // Acrobat opens the comment list alongside the Comment tools
+  if (set === 'comment' && !acroCommentsOpen) acroToggleComments(true);
+  acroSyncState();
+}
+function acroRenderSet() {
+  const bar = document.getElementById('acro-sub');
+  if (!bar) return;
+  const def = ACRO_SETS[acroToolSet];
+  const esc = (s) => escapeHtml(String(s));
+  let h = `<span class="acro-set-title">${esc(def.title)}</span><div class="acro-sep"></div>`;
+  def.items.forEach(it => {
+    if (it === 'sep') { h += '<div class="acro-sep"></div>'; return; }
+    if (it.shapes) {
+      const cur = ACRO_SHAPES.find(x => x[0] === acroLastShape) || ACRO_SHAPES[0];
+      h += `<button class="acro-t tool-btn" data-tool="${cur[0]}" onclick="setTool('${cur[0]}')" oncontextmenu="event.preventDefault();acroShapesMenu(this)" title="${esc(cur[1])} (D) — click ▾ for other shapes; Shift+D cycles">${_acroToolIcon(cur[0])}<span class="al">${esc(cur[1])}</span></button>`;
+      h += `<button class="acro-btn icon" style="height:44px;padding:0 3px;margin-left:-3px" onclick="acroShapesMenu(this)" title="Drawing tools — Rectangle, Oval, Line, Arrow, Polygon, Connected Lines, Cloud">▾</button>`;
+      return;
+    }
+    const icon = it.icon ? ACRO_ICONS[it.icon] : _acroToolIcon(it.tool);
+    if (it.tool && !it.act) {
+      h += `<button class="acro-t tool-btn" data-tool="${it.tool}" onclick="setTool('${it.tool}')" title="${esc(it.tip || it.label)}">${icon}<span class="al">${esc(it.label)}</span></button>`;
+    } else {
+      const dt = it.tool ? ` tool-btn" data-tool="${it.tool}` : '';
+      h += `<button class="acro-t${dt}"${it.id ? ` id="${it.id}"` : ''} onclick="${it.act}" title="${esc(it.tip || it.label)}">${icon}<span class="al">${esc(it.label)}</span></button>`;
+    }
+  });
+  bar.innerHTML = h;
+  // setTool() highlights .tool-btn by data-tool — re-apply to the fresh buttons
+  bar.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === currentTool));
+  acroSyncState();
+}
+
+// Keep the Acrobat bar in step with the app: page, zoom, toggles, tool set.
+function acroSyncState() {
+  if (uiMode() !== 'acrobat') return;
+  const total = pdfDoc ? pdfDoc.numPages : 0;
+  const pg = document.getElementById('acro-page');
+  if (pg && document.activeElement !== pg) pg.value = pdfDoc ? currentPage + 1 : '';
+  const pt = document.getElementById('acro-page-total');
+  if (pt) pt.textContent = '/ ' + total;
+  const z = document.getElementById('acro-zoom');
+  const zi = document.getElementById('zoom-indicator');
+  if (z && zi) z.textContent = zi.textContent;
+  document.querySelectorAll('#acro-quick .acro-set[data-set]').forEach(b => b.classList.toggle('on', b.dataset.set === acroToolSet));
+  const on = (id, v) => { const el = document.getElementById(id); if (el) el.classList.toggle('on', !!v); };
+  on('acro-snap', typeof snapEnabled !== 'undefined' && snapEnabled);
+  on('acro-snaplines', typeof snapContentEnabled !== 'undefined' && snapContentEnabled);
+  on('acro-thumbs', showThumbnails);
+  on('acro-nav-thumbs', showThumbnails);
+  on('acro-btn-comments', acroCommentsOpen);
+  const panel = document.getElementById('panel');
+  on('acro-btn-props', panel && !panel.classList.contains('collapsed'));
+  // Sticky note is the Text tool underneath — light the right button
+  const sticky = window.acroStickyArmed && currentTool === 'text';
+  on('acro-sticky', sticky);
+  if (sticky) document.querySelectorAll('#acro-sub .tool-btn[data-tool="text"]').forEach(b => b.classList.remove('active'));
+}
+
+// ---- Drop-down menus (Shapes ▾, More Tools ▾, zoom) ----
+let _acroMenu = null;
+function acroCloseMenu() { if (_acroMenu) { _acroMenu.remove(); _acroMenu = null; } }
+function acroOpenMenu(anchor, html) {
+  acroCloseMenu();
+  const m = document.createElement('div');
+  m.className = 'acro-menu';
+  m.innerHTML = html;
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const left = Math.min(r.left, window.innerWidth - m.offsetWidth - 8);
+  m.style.left = Math.max(8, left) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  _acroMenu = m;
+}
+document.addEventListener('mousedown', (e) => {
+  if (_acroMenu && !_acroMenu.contains(e.target) && !e.target.closest('[onclick*="Menu("],[onclick*="acroMoreTools"]')) acroCloseMenu();
+});
+function acroShapesMenu(anchor) {
+  acroOpenMenu(anchor, ACRO_SHAPES.map(([t, l]) =>
+    `<div class="ami" onclick="acroPickShape('${t}')"><span class="lbl">${_acroToolIcon(t)}${l}</span>${t === acroLastShape ? '<span class="k">✓</span>' : ''}</div>`).join(''));
+}
+function acroMoreTools(anchor) {
+  const row = (act, label, k) => `<div class="ami" onclick="acroCloseMenu();${act}">${label}${k ? ` <span class="k">${k}</span>` : ''}</div>`;
+  acroOpenMenu(anchor, [
+    row('toggleWorkbook()', 'Estimate Workbook'),
+    row('openMeasurementSummary()', 'Measurement Summary'),
+    row('openMarkupReport()', 'Comments Summary Report', 'PDF'),
+    row('openBOQReport()', 'BOQ Report', 'PDF'),
+    row('syncQuantityLink()', 'Sync Quantities to Excel'),
+    '<div class="am-sep"></div>',
+    row('openSymbolsPanel()', 'Symbols Library'),
+    row("setTool('table')", 'Legend / Table'),
+    row('armSequenceTool()', 'Numbered Labels (Door 01, 02…)'),
+    row("setTool('sniplasso')", 'Snip Shape as Image'),
+    row("setTool('cutcontent')", 'Cover Up (white-out)'),
+    row('openToolChest()', 'Tool Chest (saved styles)…'),
+    row('openThemeDialog()', 'Comment Colour Theme…'),
+    '<div class="am-sep"></div>',
+    row('openSheetsPanel()', 'Sheet Index &amp; Links'),
+    row('toggleSplitView()', 'Split View'),
+    row('openPopoutWindow()', 'New Window (second screen)'),
+    row('toggleCrosshair()', 'Crosshair Guides'),
+    row('toggleMarkupsList()', 'Comment List (table)')
+  ].join(''));
+}
+function acroZoomMenu(anchor) {
+  const z = (s, l) => `<div class="ami" onclick="acroCloseMenu();scheduleZoom(${s}, null)">${l}</div>`;
+  acroOpenMenu(anchor,
+    '<div class="ami" onclick="acroCloseMenu();acroFitPage()">Fit Page <span class="k">Ctrl+0</span></div>' +
+    '<div class="ami" onclick="acroCloseMenu();zoomFit()">Fit Width <span class="k">Ctrl+2</span></div>' +
+    '<div class="ami" onclick="acroCloseMenu();resetZoom()">Actual Size <span class="k">Ctrl+1</span></div>' +
+    '<div class="am-sep"></div>' + [0.5, 0.75, 1.25, 1.5, 2, 4].map(s => z(s, Math.round(s * 100) + '%')).join(''));
+}
+async function acroFitPage() {
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(currentPage + 1);
+  const vp = page.getViewport({ scale: 1 });
+  const w = document.getElementById('canvas-wrapper');
+  const s = Math.min((w.clientWidth - 20) / vp.width, (w.clientHeight - 20) / vp.height);
+  scheduleZoom(Math.max(0.1, s), null);
+}
+
+// ---- Comments pane ----
+let acroCommentsOpen = false;
+try { acroCommentsOpen = localStorage.getItem('datum-acro-comments') === '1'; } catch (e) {}
+function acroToggleComments(force) {
+  acroCommentsOpen = (force !== undefined) ? !!force : !acroCommentsOpen;
+  try { localStorage.setItem('datum-acro-comments', acroCommentsOpen ? '1' : '0'); } catch (e) {}
+  const pane = document.getElementById('acro-comments');
+  if (pane) pane.classList.toggle('open', acroCommentsOpen);
+  _acmSig = '';
+  acroRefreshComments();
+  acroSyncState();
+  try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+}
+// redrawAnnotations() calls this on every repaint; only rebuild the list when
+// something it shows has actually changed.
+let _acmSig = '', _acmTimer = null;
+function acroScheduleComments() {
+  if (!acroCommentsOpen || uiMode() !== 'acrobat') return;
+  clearTimeout(_acmTimer);
+  _acmTimer = setTimeout(() => {
+    const sig = annotations.length + '|' + historyIndex + '|' + selectedAnnotationId + '|' + currentPage + '|' + activeDocIndex;
+    if (sig !== _acmSig) acroRefreshComments();
+  }, 180);
+}
+function acroRefreshComments() {
+  const list = document.getElementById('acm-list');
+  if (!list || !acroCommentsOpen || uiMode() !== 'acrobat') return;
+  _acmSig = annotations.length + '|' + historyIndex + '|' + selectedAnnotationId + '|' + currentPage + '|' + activeDocIndex;
+  const q = (document.getElementById('acm-search')?.value || '').toLowerCase();
+  const filter = document.getElementById('acm-filter')?.value || 'all';
+  const measTypes = ['measure', 'polyline', 'area', 'dimension', 'count'];
+  const isMeas = (a) => measTypes.includes(a.type) && !a.isShape;
+  let rows = annotations.map((a, i) => ({ a, i })).filter(({ a }) => a && typeof a.page === 'number');
+  if (filter === 'page') rows = rows.filter(r => r.a.page === currentPage);
+  else if (filter === 'marks') rows = rows.filter(r => !isMeas(r.a));
+  else if (filter === 'meas') rows = rows.filter(r => isMeas(r.a));
+  const label = (a) => a.subject === 'Sticky Note' ? 'Sticky Note' : _annTypeLabel(a);
+  if (q) rows = rows.filter(({ a }) => (label(a) + ' ' + _annDescription(a) + ' ' + (a.subject || '')).toLowerCase().includes(q));
+  rows.sort((x, y) => (x.a.page - y.a.page) || (x.i - y.i));
+  const cnt = document.getElementById('acm-count');
+  if (cnt) cnt.textContent = rows.length ? '(' + rows.length + ')' : '';
+  if (!pdfDoc) { list.innerHTML = '<div class="acm-empty">Open a PDF to see its comments.</div>'; return; }
+  if (!rows.length) {
+    list.innerHTML = '<div class="acm-empty">' + (annotations.length ? 'No comments match.' : 'No comments yet.<br>Pick a tool from the Comment bar above and click on the page.') + '</div>';
+    return;
+  }
+  let h = '', lastPage = -1;
+  rows.forEach(({ a }) => {
+    if (a.page !== lastPage) { lastPage = a.page; h += `<div class="acm-page">Page ${a.page + 1}</div>`; }
+    const text = a.text ? String(a.text) : '';
+    const val = isMeas(a) && a.label ? String(a.label) : '';
+    const desc = !text && !val ? _annDescription(a) : '';
+    const col = a.subject === 'Sticky Note' ? '#FFD84D' : (a.color || a.textColor || '#888');
+    h += `<div class="acm-card${a.id === selectedAnnotationId ? ' sel' : ''}${annVisible(a) ? '' : ' hid'}" onclick="acroJumpComment('${a.id}')" title="Click to go to this comment">
+      <span class="acm-dot" style="background:${escapeHtml(col)}"></span>
+      <div class="acm-body"><div class="acm-type">${escapeHtml(label(a))}</div>
+        ${text ? `<div class="acm-text">${escapeHtml(text.slice(0, 400))}</div>` : ''}
+        ${val ? `<div class="acm-val">${escapeHtml(val)}</div>` : ''}
+        ${desc && desc !== '—' ? `<div class="acm-text">${escapeHtml(desc.slice(0, 200))}</div>` : ''}
+      </div>
+      <button class="acm-del" onclick="event.stopPropagation();acroDeleteComment('${a.id}')" title="Delete this comment">✕</button>
+    </div>`;
+  });
+  list.innerHTML = h;
+  const sel = list.querySelector('.acm-card.sel');
+  if (sel) sel.scrollIntoView({ block: 'nearest' });
+}
+function acroJumpComment(id) {
+  mlJump(id);
+  acroRefreshComments();
+}
+function acroDeleteComment(id) {
+  if (!annotations.some(a => a.id === id)) return;
+  selectedAnnotationId = id;
+  deleteSelectedAnnotation();
+  redrawAnnotations();
+  acroRefreshComments();
+}
+
+// ---- Acrobat keyboard shortcuts ----
+// Acrobat ships with single-key tool shortcuts OFF, and with them on uses a
+// different set from Datum's. So in this layout Datum's letters are swallowed
+// and only Acrobat's accelerators work: V select, H hand, S sticky note,
+// X text box, U highlight, K stamp, D drawing tool (Shift+D cycles shapes).
+// Ctrl combos follow Acrobat: Ctrl+E properties, Ctrl+0 fit page, Ctrl+1
+// actual size, Ctrl+2 fit width, Ctrl+Shift+N go to page, Home / End.
+// Returns true when the key was handled here.
+function acroHandleKey(e, key, mod) {
+  if (uiMode() !== 'acrobat') return false;
+  if (mod && !e.altKey) {
+    if (key === 'e') { e.preventDefault(); togglePanelVisible(); acroSyncState(); return true; }
+    if (key === '0') { e.preventDefault(); acroFitPage(); return true; }
+    if (key === '1') { e.preventDefault(); resetZoom(); return true; }
+    if (key === '2') { e.preventDefault(); zoomFit(); return true; }
+    if (key === 'n' && e.shiftKey) {
+      e.preventDefault();
+      const p = document.getElementById('acro-page');
+      if (p) { p.focus(); p.select(); }
+      return true;
+    }
+    return false;
+  }
+  if (e.altKey) return false;
+  if (key === 'home' && pdfDoc) { e.preventDefault(); goToPage(0); return true; }
+  if (key === 'end' && pdfDoc) { e.preventDefault(); goToPage(pdfDoc.numPages - 1); return true; }
+  if (key.length === 1 && key >= 'a' && key <= 'z') {
+    if (!pdfDoc) return true;
+    if (key === 'v') setTool('select');
+    else if (key === 'h') setTool('pan');
+    else if (key === 's') acroSticky();
+    else if (key === 'x') setTool('text');
+    else if (key === 'u') setTool('highlight');
+    else if (key === 'k') setTool('stamp');
+    else if (key === 'd') {
+      if (e.shiftKey) {
+        const i = ACRO_SHAPES.findIndex(x => x[0] === acroLastShape);
+        acroPickShape(ACRO_SHAPES[(i + 1) % ACRO_SHAPES.length][0]);
+        showToast(toolNames[acroLastShape] || acroLastShape);
+      } else setTool(acroLastShape);
+    }
+    return true; // every other letter: do nothing, as in Acrobat
+  }
+  return false;
 }
 
 // ---- Branded alert (v3.3) — replaces the browser's native alert() box.
@@ -14318,6 +14917,7 @@ function updatePageIndicator() {
   const prev = document.getElementById('sb-prev'); if (prev) prev.disabled = atFirst;
   const next = document.getElementById('sb-next'); if (next) next.disabled = atLast;
   const last = document.getElementById('sb-last'); if (last) last.disabled = atLast;
+  acroSyncState();
 }
 
 function jumpToPage(val) {
@@ -14464,6 +15064,7 @@ async function renderSideBySideView() {
 }
 function updateZoomIndicator() {
   document.getElementById('zoom-indicator').textContent = `${Math.round(currentScale*100)}%`;
+  acroSyncState();
   if (typeof updateThumbnailViewbox === 'function') updateThumbnailViewbox();
 }
 

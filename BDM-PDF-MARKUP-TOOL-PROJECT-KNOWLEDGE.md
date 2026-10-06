@@ -2161,3 +2161,60 @@ James: *"add scaffolding and site sheds at true size too"*. (Numbered v3.42 beca
 - The panel shows Run length 14.4 m and True size at 1:200. The shed panel works too.
 - Search: "container" → 5, "office" → 7, "portaloo" → 3, "kwikstage" → 6.
 - `node check-syntax.js` clean.
+
+## v3.43 (6 Oct 2026) — Acrobat-style layout
+
+James: *"is it possible to add a button at the top that changes the UI to look and operate like Adobe? Andrew uses Adobe and doesn't want to retrain on a UI that looks like Bluebeam."* The alternative raised was handing Andrew his own copy of Datum to customise. Rejected: a fork stops getting releases (v3.38–v3.42 plant library and so on), save files drift between the two copies, and every fix has to be done twice. So it's a per-user layout switch inside the one app.
+
+**The switch:** a pill at the right of the menu bar, **Datum | Acrobat style**, plus View → Acrobat-Style Layout. It sets `data-ui="acrobat"` on `<html>` and is saved per browser in `localStorage 'datum-ui'`, so Andrew's machine opens in Acrobat style and nobody else's changes. **Shell only:** the annotation model, save format and every tool are unchanged, and a PDF marked up in either layout is byte-for-byte the same kind of file.
+
+**What the layout changes** (all CSS scoped to `[data-ui="acrobat"]`; the Datum shell is hidden, not removed, so every existing function keeps working):
+- **Skin:**
+  - Acrobat-like light grey workspace (`#E8E8E8`), white chrome, blue accent `#1473E6`, Segoe UI.
+  - `:root[data-ui]` outranks `[data-theme="light"]`, so this skin wins whichever Datum theme was last chosen. Acrobat style is always light.
+- **`#topbar` and the tool rail `#toolbar` are hidden.** In their place, `#acro-bar` has two rows:
+  - **Quick tools:** Open, Save, Print, Find, Undo/Redo, page up/down plus a page box, Select, Hand, zoom −/%/+, Fit Page.
+  - **Tool-set tabs:** Comment, Measure, Organize Pages, Fill & Sign, More Tools ▾. Then the Comments pane toggle and the Properties toggle.
+- **Second row `#acro-sub`:** the chosen tool set's bar, with icon-over-label buttons, rendered from `ACRO_SETS` by `acroRenderSet()`.
+  - Tool buttons carry `class="tool-btn" data-tool=…`, so `setTool()` highlights them with no extra code.
+  - Their icons are cloned from the hidden rail's button for the same tool (`_acroToolIcon`), so the two layouts read alike.
+  - Comment: Sticky Note, Text Box, Callout, Highlight, Draw, Delete, Shapes ▾ (Rectangle / Oval / Line / Arrow / Polygon / Connected Lines / Cloud; remembers the last pick in `datum-acro-shape`), Cloud, Arrow, Stamp, Checkmark, Select Text, Symbols.
+  - Measure: Set Scale, Distance, Perimeter, Area, then Datum's Box, Room Fill, Dimension and Count, Snap / Snap Lines toggles, Summary, Estimate.
+  - Organize Pages: Thumbnails, Insert Blank, Combine, Replace (revision), Rotate Left / Right / All, Compare, Reduce Size, Flatten.
+  - Fill & Sign: Add Text, Checkmark, Sign, Stamp.
+  - More Tools ▾ holds everything else: workbook, reports, BOQ, Quantity Link, symbols, legend, numbering, snip, cover-up, tool chest, colour theme, sheets, split, new window, crosshair, table list.
+- **Left nav strip `#acro-nav`:** Page Thumbnails, Bookmarks (= Sheets index), Find, and the comment table (Markups List).
+- **Comments pane `#acro-comments`:** Acrobat's comment list on the right.
+  - Cards are grouped by page. Search box; filter All / This page / Comments only / Measurements.
+  - Click a card to jump and select (`mlJump`). Hover × deletes.
+  - Opens automatically when the Comment set is picked. Open state is kept in `datum-acro-comments`.
+  - `redrawAnnotations()` calls `acroScheduleComments()`, a 180 ms debounce that only rebuilds when a signature changes (annotation count, historyIndex, selection, page, doc).
+- **Properties panel:** in Acrobat style the right `#panel` is Acrobat's Properties, so it no longer pops open on every selection.
+  - It opens on Ctrl+E or the toolbar button.
+  - It also opens on its own for tools that must be set up first: `ACRO_PANEL_TOOLS` (stamp, signature, calibrate, count, sequence, table, symbol).
+  - This is gated by `_acroQuiet` in `openPropertiesPanel`'s `maybeOpen`.
+- **Sticky Note:**
+  - Datum has no pop-up note object, so a sticky note is a normal `text` markup with `ACRO_STICKY_STYLE` (yellow `boxFill`, border, `subject: 'Sticky Note'`).
+  - It's armed by `acroSticky()`. `window.acroStickyArmed` is cleared by every `setTool()`, so it lasts one note.
+  - It opens, edits, prints and saves as text in either layout.
+- **Keyboard (`acroHandleKey`):** this is called in `onKeyDown` just before Datum's letter shortcuts.
+  - Acrobat ships with single-key tools off, and its accelerators differ from Datum's, so in this layout Datum's letters are **swallowed**. Only Acrobat's work: V select, H hand, S sticky note, X text box, U highlight, K stamp, D drawing tool, Shift+D cycle shapes.
+  - Ctrl+E Properties, Ctrl+0 Fit Page (`acroFitPage`, new), Ctrl+1 Actual Size, Ctrl+2 Fit Width, Ctrl+Shift+N go to page, Home / End.
+  - Space-to-pan, Delete, Esc, Ctrl+Z/S/O/F/P/C/V are unchanged.
+  - Help → Keyboard Shortcuts shows the Acrobat list while the layout is on.
+- `acroSyncState()` keeps the bar in step (page, zoom %, toggles, active set). It's called from `setTool`, `updatePageIndicator`, both zoom-indicator writes and `openPropertiesPanel`.
+
+**Not an Acrobat clone.** It has no text-selection highlight, underline or strikethrough (Datum's Highlight is a box), no attach-file and no comment replies, and it uses its own icons, not Adobe's.
+
+**Verified** in the preview (port 8788; another session held 8787, so a `datum-alt` entry was added to `.claude/launch.json`):
+- The switch toggles both ways, persists over a reload, and the Datum layout is visually unchanged.
+- With the Comments pane open, a 12-markup trial PDF lists all 12. Clicking a marker on the page highlights its card. Clicking a card selects it, and × deletes it.
+- S → click → type → click away makes a yellow "Sticky Note" text markup, which shows in the pane, and the tool returns to Select.
+- In Acrobat style M does nothing. D → Rectangle, and Shift+D → Oval with the Shapes button relabelled.
+- Ctrl+E toggles Properties; Ctrl+0 fits the page (76 %) and the bar's % follows.
+- More Tools menu opens and closes on an outside click.
+- In the Datum layout M still arms Measure.
+- The quick row is one line at ≥1100 px and wraps cleanly below that.
+- `node check-syntax.js` clean.
+
+Pre-existing, seen while testing and **not** changed here: with the Text tool, clicking away to finish a note opens a fresh empty text box where you clicked. This happens in both layouts.
