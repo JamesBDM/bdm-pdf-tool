@@ -2131,3 +2131,33 @@ James's on-maintenance inspection sheet (Tiki Village) wouldn't open. Chrome/Edg
 The full suite passes (round trip, reopen + compatibility, photos). Ran it with `CHROMIUM_PATH` set to the local Chrome on Windows.
 
 James also got two one-off files for that sheet: a FLATTENED 1.7 MB copy for email and a SLIM editable 6.9 MB copy.
+
+## v3.42 (6 Oct 2026) — Scaffold & site sheds at true size: 291 → 311
+
+James: *"add scaffolding and site sheds at true size too"*. (Numbered v3.42 because a parallel session shipped v3.41, the photo-memory fix, while this was being built.)
+
+**New category "Construction — Scaffold & Site Sheds (true size)"** (`cmp-site-true`, ids `sf-*` / `ss-*`, 20 items, table `TRUE_SIZE_SITE`, builder `_symSite`):
+- **Scaffold runs** `sf-run-1200` / `sf-run-700`. Modular (Kwikstage-type), 1.2 m or 0.7 m between standards, default 5 × 2.4 m bays.
+- **Fixed scaffold items:** stair tower 2.4 × 2.4 (dog-leg, UP arrow), loading bay 2.4 × 2.4 (gate on the open face), and aluminium mobile towers 2.5 × 1.35 and 1.8 × 0.7, with stabilisers splayed out and counted in the box.
+- **Portables:** offices 6.0 × 3.0, 9.6 × 3.0, 12.0 × 3.3, and a 2-storey 12 × 3.3 stack with an external stair. Also crib 6 / 12, toilets 6 × 3 (M / F split), change room, first aid 3.6 × 2.4, and portaloos 1.2 and 2.2 (accessible). Door swing(s) on the +y face, a dashed step / landing **outside** the building box (so the box sets out off the walls), and windows on the −y face.
+- **Shipping containers:** 10 / 20 / 40 ft, with corrugations, doors at +x and corner castings.
+
+**Scaffold runs are the first parametric symbol.** `def.scaf` holds the defaults. `drawSymbolAnn` hands off to `_drawScaffoldRun` before the `def.p` loop (def.p is only the tile), which draws `ann.bays` bays across the box: ledgers, a standard at every bay line, alternating plan diagonals, and a "SCAFFOLD 14.4 m (8 × 1.8 m)" label when it fits.
+- Properties (`getSitePropsHTML`) has: number of bays (1–200), bay length (`SCAFFOLD_BAY_LENGTHS` 2.4 / 1.8 / 1.2 / 0.7) and width (`SCAFFOLD_WIDTHS` 1.2 / 0.7).
+- `setScafProp` resizes the box to the new true length. It keeps the **start end** fixed even when rotated (the centre moves Δw/2 along the run's rotated axis), using the page calibration, or the run's current drawn scale on an uncalibrated page.
+- The true size of a placed symbol can now depend on the annotation: **`_symReal(ann, def)`**, used by `_trueSizeNote` and `resetSymbolTrueSize` in place of `def.real`.
+
+**datum-markup skill:**
+- `gen-skill-symbols.js` knows the `scaffold` / `site` kinds and emits a new `SYMBOL_SCAFFOLD` table (default bays, bay length, width).
+- `symbol_true_size()` takes `bays=`, `bay_length=` and `width=` for runs and sizes the box to match.
+- SKILL.md, annotation-types.md and the quick picks are updated; the catalogue is regenerated at 311 symbols.
+- Repackaged; the previous build is kept as `datum-markup.BACKUP-v3.40.skill`.
+- Still not run under Python (none on this machine).
+
+**Verified** in the preview:
+- All 20 draw with zero errors.
+- On a page calibrated at 1:200, the run and the 12 m office place at exactly 12.0 m.
+- A run rotated 30° and changed to 8 bays → 1.8 m bays → 0.7 m wide resizes to exactly 14.4 × 0.7 m, with the start end unmoved (< 0.01 px).
+- The panel shows Run length 14.4 m and True size at 1:200. The shed panel works too.
+- Search: "container" → 5, "office" → 7, "portaloo" → 3, "kwikstage" → 6.
+- `node check-syntax.js` clean.
