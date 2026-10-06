@@ -2034,7 +2034,7 @@ let defaultCalibration = null;
 // APP VERSION — bump this with every release; it shows in the top bar so
 // users can tell at a glance which build they're running (local vs deployed).
 // ============================================================
-const APP_VERSION = 'v3.39';
+const APP_VERSION = 'v3.40';
 // v3.23 — how round "Rounded" is when the Corners picker turns it on. The
 // Corner Radius box overrides it per markup.
 const DEFAULT_CORNER_RADIUS = 8;
@@ -12988,6 +12988,7 @@ function getAnnotationPropertiesHTML(ann) {
     if (def && def.pump) html += getPumpPropsHTML(ann, def);
     if (def && def.veh) html += getVehiclePropsHTML(ann, def);
     if (def && def.crane) html += getCranePropsHTML(ann, def);
+    if (def && def.access) html += getAccessPropsHTML(ann, def);
   }
 
   if (ann.type === 'table') {
@@ -15662,17 +15663,85 @@ async function thumbCtxRotateCW() {
 // ============================================================
 // IMAGE PASTE / SNIP — paste a screenshot (or image) onto the page
 // ============================================================
+
+// v3.40 — keep photos small. The clipboard hands over a pasted photo as a
+// PNG, and a PNG of a photo is ~5 MB where a JPEG of it is ~300 KB. Six of
+// those in one inspection sheet made a 50 MB file whose markup data swelled
+// to ~149 MB on reopen and ran the browser out of memory. So: anything
+// bigger than IMAGE_MAX_EDGE on its long side is scaled down, and an opaque
+// image becomes a JPEG when that's clearly smaller (photos), staying PNG
+// when it isn't (crisp screenshots of linework). Transparent images keep
+// their transparency. Small images are left exactly as they came.
+const IMAGE_MAX_EDGE = 2400;
+const IMAGE_SMALL_BYTES = 400000;
+async function _compactImageDataUrl(dataUrl) {
+  try {
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return dataUrl;
+    const isJpeg = /^data:image\/jpe?g/i.test(dataUrl);
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('decode failed'));
+      i.src = dataUrl;
+    });
+    const w0 = img.naturalWidth, h0 = img.naturalHeight;
+    if (!w0 || !h0) return dataUrl;
+    const k = Math.min(1, IMAGE_MAX_EDGE / Math.max(w0, h0));
+    if (k === 1 && (isJpeg || dataUrl.length < IMAGE_SMALL_BYTES)) return dataUrl;
+
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w0 * k));
+    c.height = Math.max(1, Math.round(h0 * k));
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0, c.width, c.height);
+
+    let opaque = isJpeg;
+    if (!opaque) {
+      opaque = true;
+      const px = cx.getImageData(0, 0, c.width, c.height).data;
+      for (let i = 3; i < px.length; i += 4) if (px[i] < 255) { opaque = false; break; }
+    }
+    const png = k < 1 ? c.toDataURL('image/png') : dataUrl;
+    let out = png;
+    if (opaque) {
+      const jpg = c.toDataURL('image/jpeg', 0.88);
+      if (jpg.length < png.length * 0.6) out = jpg;
+    }
+    c.width = c.height = 0;
+    return out.length < dataUrl.length ? out : dataUrl;
+  } catch (e) {
+    console.warn('image compaction skipped:', e);
+    return dataUrl;
+  }
+}
+
+// Shrink any oversized image already on the sheet (pasted by a build before
+// v3.40, or arriving by another route) so the next save is small again.
+// Runs before every save; each image is only ever examined once.
+const _compactedImageKeys = new Set();
+async function _compactImageAnnotations() {
+  for (const a of annotations) {
+    if (a.type !== 'image' || typeof a.src !== 'string' || a.src.length < IMAGE_SMALL_BYTES) continue;
+    const key = a.id + ':' + a.src.length;
+    if (_compactedImageKeys.has(key)) continue;
+    const out = await _compactImageDataUrl(a.src);
+    if (out !== a.src) a.src = out;
+    _compactedImageKeys.add(a.id + ':' + a.src.length);
+  }
+}
 // Add an image annotation from a Blob. Places it centered on the visible page,
 // scaled to fit (max ~half the page width) while preserving aspect ratio.
 async function addImageFromBlob(blob) {
   if (!pdfDoc) { alert('Open a PDF first, then paste your screenshot.'); return; }
   try {
-    const dataUrl = await new Promise((resolve, reject) => {
+    const rawUrl = await new Promise((resolve, reject) => {
       const fr = new FileReader();
       fr.onload = () => resolve(fr.result);
       fr.onerror = () => reject(new Error('Could not read image data'));
       fr.readAsDataURL(blob);
     });
+    // v3.40 — a pasted phone photo arrives as a ~5 MB PNG; shrink it first
+    const dataUrl = await _compactImageDataUrl(rawUrl);
     // Decode to get natural width/height
     const img = await new Promise((resolve, reject) => {
       const i = new Image();
@@ -16873,6 +16942,7 @@ async function saveProject() {
   const saveBtn = document.querySelector('button[onclick="saveProject()"]');
   if (saveBtn) saveBtn.style.opacity = '0.5';
   try {
+    await _compactImageAnnotations();
     await _awaitImageAnnotationDecode();
 
     // currentPdfBytes is always the CLEAN source (no baked overlay).
@@ -21053,6 +21123,146 @@ if (TRUE_SIZE_CRANES.length) SYMBOL_LIBRARY.push({
   id: 'cmp-cranes', name: 'Construction — Cranes (true size)', items: TRUE_SIZE_CRANES.map(_symCrane)
 });
 
+// v3.40 — Hoists and EWPs at TRUE SIZE, same pattern as the cranes: a data
+// table in metres → plan-view artwork with def.real, placed at the page's
+// scale. Machines face +x (right); rotate to suit.
+//   hoist    rack-and-pinion builder's hoist: mast, cage(s) (cl along the
+//            building face × cw deep), base enclosure (enc = clearance round it)
+//   scissor  slab / rough-terrain scissor, roll-out deck (ext) to the front
+//   mast     vertical mast lift
+//   boom     knuckle / telescopic boom — turntable, counterweight, boom stowed
+//            forward; `out` = max horizontal outreach, drawn as a reach chart
+//   spider   tracked spider lift with outriggers (os × os) set up
+// ph = platform height. All figures are typical for the class — confirm the
+// actual machine with the hire company.
+const TRUE_SIZE_ACCESS = [
+  { id:'ac-hoist-single', kind:'hoist', name:'Builder’s Hoist — single cage (Alimak Scando 650 class)', tag:'2.0t', cl:3.2, cw:1.5, mast:0.65, cages:1, enc:0.5,
+    load:'2,000 kg / 24 persons', note:'Typical single-cage passenger / goods hoist (cage 1.5 × 3.2 m). Base enclosure drawn 0.5 m clear of the cage — check the supplier’s base layout.' },
+  { id:'ac-hoist-twin', kind:'hoist', name:'Builder’s Hoist — twin cage (Alimak Scando 650 class)', tag:'2×2.0t', cl:3.2, cw:1.5, mast:0.65, cages:2, enc:0.5,
+    load:'2 × 2,000 kg', note:'Typical twin-cage hoist, a cage either side of the mast. Base enclosure drawn 0.5 m clear of the cages.' },
+  { id:'ac-hoist-long', kind:'hoist', name:'Builder’s Hoist — long cage 4.2 m', tag:'3.2t', cl:4.2, cw:1.5, mast:0.65, cages:1, enc:0.5,
+    load:'3,200 kg', note:'Typical long-cage goods / passenger hoist for plasterboard and glazing (cage 1.5 × 4.2 m).' },
+  { id:'ac-hoist-mat', kind:'hoist', name:'Materials Hoist — transport platform', tag:'1.0t', cl:2.0, cw:1.4, mast:0.45, cages:1, enc:0.5,
+    load:'1,000 kg (materials only)', note:'Typical goods-only transport platform hoist. No passengers.' },
+  { id:'ac-sc-19', kind:'scissor', name:'Scissor Lift — 19 ft electric (5.8 m)', tag:'19ft', L:1.83, W:0.76, ph:5.8, ext:0.9,
+    note:'Typical slab scissor (Genie GS-1930 class).' },
+  { id:'ac-sc-26', kind:'scissor', name:'Scissor Lift — 26 ft electric (7.9 m)', tag:'26ft', L:2.44, W:0.81, ph:7.9, ext:0.9,
+    note:'Typical slab scissor (Genie GS-2632 class).' },
+  { id:'ac-sc-32', kind:'scissor', name:'Scissor Lift — 32 ft electric (9.8 m)', tag:'32ft', L:2.44, W:1.17, ph:9.8, ext:0.9,
+    note:'Typical wide slab scissor (Genie GS-3246 class).' },
+  { id:'ac-sc-40', kind:'scissor', name:'Scissor Lift — 40 ft electric (12.2 m)', tag:'40ft', L:2.44, W:1.19, ph:12.2, ext:1.5,
+    note:'Typical tall slab scissor (Genie GS-4047 class).' },
+  { id:'ac-sc-rt33', kind:'scissor', name:'Scissor Lift — 33 ft rough terrain (10 m)', tag:'RT33', L:3.86, W:1.75, ph:10.0, ext:1.5, rt:1,
+    note:'Typical diesel rough-terrain scissor (Genie GS-3369 RT class), outriggers stowed.' },
+  { id:'ac-sc-rt43', kind:'scissor', name:'Scissor Lift — 43 ft rough terrain (13 m)', tag:'RT43', L:4.88, W:2.29, ph:13.1, ext:1.5, rt:1,
+    note:'Typical large rough-terrain scissor (Genie GS-4390 RT class), outriggers stowed.' },
+  { id:'ac-mast-20', kind:'mast', name:'Vertical Mast Lift — 20 ft (6 m)', tag:'VM', L:1.37, W:0.76, ph:6.1,
+    note:'Typical push-around / self-propelled vertical mast lift (Genie GR-20 class).' },
+  { id:'ac-boom-k34', kind:'boom', name:'Boom Lift — 34 ft knuckle, electric', tag:'34ft', L:4.0, W:1.5, ph:10.4, out:6.6,
+    note:'Typical narrow electric knuckle boom (Genie Z-34/22 class).' },
+  { id:'ac-boom-k45', kind:'boom', name:'Boom Lift — 45 ft knuckle', tag:'45ft', L:6.9, W:2.3, ph:13.7, out:7.6,
+    note:'Typical 45 ft articulating boom (Genie Z-45 / JLG 450AJ class).' },
+  { id:'ac-boom-k60', kind:'boom', name:'Boom Lift — 60 ft knuckle', tag:'60ft', L:8.6, W:2.5, ph:18.6, out:11.8,
+    note:'Typical 60 ft articulating boom (Genie Z-62/40 / JLG 600AJ class).' },
+  { id:'ac-boom-t60', kind:'boom', name:'Boom Lift — 60 ft telescopic', tag:'60ft', L:9.0, W:2.5, ph:18.3, out:15.2,
+    note:'Typical 60 ft straight boom (Genie S-60 / JLG 600S class).' },
+  { id:'ac-boom-t80', kind:'boom', name:'Boom Lift — 80 ft telescopic', tag:'80ft', L:11.3, W:2.5, ph:24.4, out:22.0,
+    note:'Typical 80 ft straight boom (Genie S-80 / JLG 800S class).' },
+  { id:'ac-boom-t135', kind:'boom', name:'Boom Lift — 135 ft telescopic', tag:'135ft', L:13.4, W:2.5, ph:41.1, out:27.4,
+    note:'Typical 135 ft straight boom (Genie SX-135 XC / JLG 1350SJP class).' },
+  { id:'ac-spider-17', kind:'spider', name:'Spider Lift — 17 m tracked', tag:'17m', L:4.4, W:0.8, ph:15.0, out:8.0, os:3.9,
+    note:'Typical tracked spider lift (Platform Basket / Hinowa 17 m class), outriggers set up. Fits through a single door when stowed.' },
+];
+
+// Build a symbol definition from one TRUE_SIZE_ACCESS row.
+function _symAccess(s) {
+  const pad = 0.4;
+  let minX, maxX, half, cxm = 0;
+  if (s.kind === 'hoist') {
+    const span = s.cages === 2 ? s.cw * 2 + s.mast : s.cw + s.mast;    // across the mast (x)
+    minX = -span / 2 - s.enc; maxX = span / 2 + s.enc; half = s.cl / 2 + s.enc;
+  } else if (s.kind === 'spider') {
+    half = s.os / 2 + pad / 2; minX = -half; maxX = half;
+  } else {
+    minX = -s.L / 2; maxX = s.L / 2 + (s.kind === 'scissor' ? s.ext : 0); half = s.W / 2;
+    if (s.kind === 'boom') cxm = -s.L * 0.18;                          // turntable sits rearward
+  }
+  const spanX = maxX - minX, spanY = half * 2;
+  const u = 96 / Math.max(spanX, spanY);
+  const ox = 50 - (minX + spanX / 2) * u, oy = 50;
+  const X = m => _sr(ox + m * u), Y = m => _sr(oy + m * u), lw = m => _sr(m * u);
+  const rect = (x1, y1, x2, y2) => `M${X(x1)} ${Y(y1)} H${X(x2)} V${Y(y2)} H${X(x1)} Z`;
+  const p = [], t = [];
+  const wheels = (L, W, ww) => [[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([a, b]) => {
+    const wx = a * (L / 2 - ww * 0.9), wy = b * (W / 2 - ww * 0.3);
+    return rect(wx - ww * 0.6, wy - ww * 0.3, wx + ww * 0.6, wy + ww * 0.3);
+  }).join(' ');
+  const tag = (x, y, h) => t.push({ t: s.tag, x: X(x), y: Y(y), s: _sr(h * u) });
+  if (s.kind === 'hoist') {
+    const m = s.mast / 2;
+    p.push({ d: rect(minX, -half, maxX, half), lw: lw(0.05), dash: 1 });              // base enclosure
+    p.push({ d: rect(-m, -m, m, m), lw: lw(0.08) });                                  // mast
+    p.push({ d: `M${X(-m)} ${Y(-m)} L${X(m)} ${Y(m)} M${X(-m)} ${Y(m)} L${X(m)} ${Y(-m)}`, lw: lw(0.03) });
+    const sides = s.cages === 2 ? [-1, 1] : [1];
+    sides.forEach(sd => {
+      const x0 = sd > 0 ? m : -m - s.cw, x1 = sd > 0 ? m + s.cw : -m;
+      p.push({ d: rect(x0, -s.cl / 2, x1, s.cl / 2), lw: lw(0.08) });                 // cage
+      const gx = sd > 0 ? x1 : x0;                                                    // landing gate, face away from the mast
+      p.push({ d: `M${X(gx)} ${Y(-s.cl / 2 + 0.2)} V${Y(s.cl / 2 - 0.2)}`, lw: lw(0.16) });
+      tag((x0 + x1) / 2, 0, Math.min(0.45, s.cw * 0.28));
+    });
+  } else if (s.kind === 'scissor' || s.kind === 'mast') {
+    const L = s.L, W = s.W;
+    p.push({ d: rect(-L / 2, -W / 2, L / 2, W / 2), lw: lw(0.04) });                 // chassis
+    p.push({ d: rect(-L / 2 + 0.06, -W / 2 + 0.06, L / 2 - 0.06, W / 2 - 0.06), lw: lw(0.02) });  // platform / rails
+    p.push({ d: wheels(L, W, Math.min(0.35, L * 0.16)), f: 1 });
+    if (s.kind === 'scissor') {
+      p.push({ d: rect(L / 2, -W / 2 + 0.06, L / 2 + s.ext, W / 2 - 0.06), lw: lw(0.025), dash: 1 });  // roll-out deck
+      p.push({ d: `M${X(-L / 2 + 0.2)} ${Y(-W / 2 + 0.15)} L${X(L / 2 - 0.2)} ${Y(W / 2 - 0.15)} M${X(-L / 2 + 0.2)} ${Y(W / 2 - 0.15)} L${X(L / 2 - 0.2)} ${Y(-W / 2 + 0.15)}`, lw: lw(0.02) });
+      if (s.rt) {                                                                     // outrigger jacks
+        const jx = L / 2 - 0.3, jy = W / 2 + 0.02;
+        p.push({ d: [[-jx, -jy], [-jx, jy], [jx, -jy], [jx, jy]].map(([a, b]) => rect(a - 0.12, b - 0.12, a + 0.12, b + 0.12)).join(' '), f: 1 });
+      }
+    } else {
+      p.push({ d: rect(-L / 2 + 0.1, -0.18, -L / 2 + 0.46, 0.18), f: 1 });         // mast
+    }
+    tag(0, 0, Math.min(0.32, W * 0.3));
+  } else if (s.kind === 'boom') {
+    const L = s.L, W = s.W, tc = cxm;
+    p.push({ d: rect(-L / 2, -W / 2, L / 2, W / 2), lw: lw(0.06) });                 // chassis
+    p.push({ d: wheels(L * 0.82, W, Math.min(0.55, W * 0.25)), f: 1 });
+    p.push({ d: _symCircle(ox + tc * u, oy, W * 0.38 * u), lw: lw(0.06) });         // turntable
+    p.push({ d: rect(-L / 2 - 0.05, -W * 0.36, -L / 2 + Math.max(0.5, L * 0.1), W * 0.36), f: 1 });  // counterweight
+    p.push({ d: rect(tc, -0.2, L / 2 - 0.15, 0.2), lw: lw(0.05) });                // boom stowed forward
+    const bk = Math.min(W * 0.95, 2.4), bd = 0.8;                                   // platform basket
+    p.push({ d: rect(L / 2 - bd, -bk / 2, L / 2, bk / 2), lw: lw(0.06) });
+    tag((tc + W * 0.38 + L / 2 - bd) / 2, W * 0.3, Math.min(0.55, W * 0.2));        // between turntable and basket
+  } else if (s.kind === 'spider') {
+    const L = s.L, W = s.W, e = s.os / 2;
+    p.push({ d: rect(-L / 2, -W / 2, L / 2, W / 2), lw: lw(0.05) });                 // tracks + body
+    p.push({ d: `M${X(-L / 2)} ${Y(-W / 2 + 0.22)} H${X(L / 2)} M${X(-L / 2)} ${Y(W / 2 - 0.22)} H${X(L / 2)}`, lw: lw(0.02) });
+    p.push({ d: `M${X(-0.6)} ${Y(-0.2)} L${X(-e)} ${Y(-e)} M${X(-0.6)} ${Y(0.2)} L${X(-e)} ${Y(e)} M${X(0.6)} ${Y(-0.2)} L${X(e)} ${Y(-e)} M${X(0.6)} ${Y(0.2)} L${X(e)} ${Y(e)}`, lw: lw(0.08) });
+    p.push({ d: [[-e, -e], [-e, e], [e, -e], [e, e]].map(([a, b]) => rect(a - pad / 2, b - pad / 2, a + pad / 2, b + pad / 2)).join(' '), f: 1 });
+    p.push({ d: `M${X(-e)} ${Y(-e)} H${X(e)} V${Y(e)} H${X(-e)} Z`, lw: lw(0.02), dash: 1 });
+    p.push({ d: _symCircle(ox, oy, 0.35 * u), lw: lw(0.05) });
+    p.push({ d: rect(L / 2 - 0.5, -0.45, L / 2 + 0.1, 0.45), lw: lw(0.05) });       // basket at the tip
+    tag(-L / 4, 0, Math.min(0.3, W * 0.36));
+  }
+  const b = [_sr(ox + minX * u), _sr(oy - half * u), _sr(spanX * u), _sr(spanY * u)];
+  const def = {
+    id: s.id, name: s.name, w: s.kind === 'hoist' ? 40 : 30, b, p, t,
+    k: `access true size scale ${s.kind} ${s.name} ${s.tag} ${s.kind === 'hoist' ? 'hoist alimak lift builders passenger goods materials cage' : 'ewp elevated work platform ' + (s.kind === 'boom' ? 'boom lift cherry picker knuckle telescopic reach' : s.kind === 'spider' ? 'spider lift tracked reach' : s.kind === 'scissor' ? 'scissor lift' : 'vertical mast lift')}`.toLowerCase().replace(/\s+/g, ' '),
+    real: { w: spanX * 1000, h: spanY * 1000 },     // mm, of the b-box
+    access: s
+  };
+  // Booms and spiders swing a basket out — they take the shared reach chart.
+  if (s.out) def.ewp = Object.assign({}, s, { upm: u, cx: _sr(ox + cxm * u), cy: oy, rings: [{ r: s.out, t: 'max outreach' }] });
+  return def;
+}
+if (TRUE_SIZE_ACCESS.length) SYMBOL_LIBRARY.push({
+  id: 'cmp-access', name: 'Construction — Hoists & EWPs (true size)', items: TRUE_SIZE_ACCESS.map(_symAccess)
+});
+
 // Search aliases — the everyday word, not the drawing-office one. Applied
 // after the library is built so the definitions above stay readable.
 const SYMBOL_KEYWORDS = {
@@ -21191,7 +21401,7 @@ function drawSymbolAnn(ctx, ann) {
   });
   // v3.37/v3.39: pump reach, crane jib, reach chart and weathervane —
   // drawn round the machine at its own scale, outside the box on purpose.
-  if (def.pump || def.crane) _drawLiftOverlay(ctx, ann, def, { x, y, bx, by, sx, sy, k, col, weight });
+  if (def.pump || def.crane || def.ewp) _drawLiftOverlay(ctx, ann, def, { x, y, bx, by, sx, sy, k, col, weight });
   // v3.38: a vehicle's indicative turning circle — outer body sweep and
   // inner wheel path round a centre on the lead unit's rear-axle line, on
   // the driver's left (or right). Like the pump reach it leaves the box.
@@ -21274,7 +21484,7 @@ function addSymbolAnn(screenPt) {
 //   ann.showReach   reach chart on      ann.rings  [{r, t}] (else the def's)
 //   ann.jib / ann.cj / ann.parked / ann.tail   overrides, metres
 //   ann.showVane    tower: weathervane zone · mobile: tail-swing circle
-function _liftMeta(def) { return def && (def.crane || def.pump) || null; }
+function _liftMeta(def) { return def && (def.crane || def.pump || def.ewp) || null; }
 function _liftVal(ann, def, key) {
   const v = ann && ann[key];
   return (v != null && +v > 0) ? +v : _liftMeta(def)[key];
@@ -21294,11 +21504,11 @@ function _liftVaneR(ann, def) {
 function _drawLiftOverlay(ctx, ann, def, o) {
   const c = _liftMeta(def);
   if (!c) return;
-  const ppm = (def.crane ? c.upm : c.u) * o.k;                 // canvas px per metre
+  const ppm = (c.upm || c.u) * o.k;                 // canvas px per metre
   const CX = o.x + (c.cx - o.bx) * o.sx, CY = o.y + (c.cy - o.by) * o.sy;
   const col = o.col, W = m => Math.max(0.5, m * ppm * o.weight);
   ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineCap = 'butt';
-  const kind = def.crane ? c.kind : 'pump';
+  const kind = def.crane ? c.kind : def.pump ? 'pump' : 'ewp';
   const tower = !!_CRANE_TOWER[kind];
   // Text and the vane glyph grow with the chart (S), so labels stay legible
   // on a 1:500 site plan as well as a 1:100 detail.
@@ -21506,6 +21716,27 @@ function resetReachRings() {
   saveToHistory(); redrawAnnotations(); openPropertiesPanel();
 }
 
+// ---- True-size hoists & EWPs (v3.40) -------------------------------
+function getAccessPropsHTML(ann, def) {
+  const s = def.access, m = v => (v == null ? '—' : (+v).toFixed(2).replace(/\.?0+$/, '') + ' m');
+  const row = (k, v) => `<div style="display:flex;justify-content:space-between"><span>${k}</span><b>${v}</b></div>`;
+  const kinds = { hoist: 'Rack-and-pinion hoist', scissor: s.rt ? 'Rough-terrain scissor lift' : 'Slab scissor lift', mast: 'Vertical mast lift', boom: 'Boom lift', spider: 'Tracked spider lift' };
+  let rows = row('Type', kinds[s.kind]);
+  if (s.kind === 'hoist') rows += row('Cage', `${m(s.cw)} × ${m(s.cl)}${s.cages === 2 ? ' (×2)' : ''}`) + row('Rated load', escapeHtml(s.load || '—'));
+  else rows += row(s.kind === 'spider' ? 'Stowed (tracks)' : 'Chassis', `${m(s.L)} × ${m(s.W)}`) + row('Platform height', m(s.ph)) +
+    (s.out ? row('Max outreach', m(s.out)) : '') + (s.os ? row('Outriggers set up', `${m(s.os)} × ${m(s.os)}`) : '') +
+    (s.ext ? row('Roll-out deck', m(s.ext)) : '');
+  rows += row('Footprint (box)', `${m(def.real.w / 1000)} × ${m(def.real.h / 1000)}`);
+  return `<div class="properties-section"><div class="properties-section-title">${s.kind === 'hoist' ? 'Hoist' : 'EWP'}</div><div class="properties-section-content">
+    <div style="font-size:11px;line-height:1.55">${rows}</div>
+    <div style="font-size:11px;margin-top:6px">${_trueSizeNote(ann, def)}</div>
+    ${s.note ? `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">${escapeHtml(s.note)}</div>` : ''}
+    ${def.ewp ? _reachEditorHTML(ann, def) : ''}
+    <button onclick="resetSymbolTrueSize()" class="modal-btn" style="width:100%;margin-top:8px;font-size:11px" title="Resize to the machine's real footprint at this page's calibrated scale (keeps its centre)">Reset to true size</button>
+    <div style="font-size:10px;color:var(--text-muted);margin-top:6px">Typical dimensions for the class — confirm the actual machine${s.kind === 'hoist' ? ', base layout and tie-ins' : ', ground bearing and outreach'} with the hire company.</div>
+  </div></div>`;
+}
+
 // ---- True-size pumps (v3.37) -------------------------------------
 function getPumpPropsHTML(ann, def) {
   const s = def.pump, m = v => (v == null ? '—' : (+v).toFixed(1) + ' m');
@@ -21611,7 +21842,7 @@ function getSymbolsPanelHTML() {
     </div>
     <div style="font-size:11px;color:var(--text-secondary);padding:6px;background:var(--bg-tertiary);border-radius:4px;line-height:1.4">
       Click a symbol, then click the drawing to place it. Drag corners to resize, use the rotate handle to turn, recolour from Properties.
-      <b>Cranes</b>, <b>concrete pumps</b> and <b>trucks</b> place at true size on a calibrated page — search <i>crane</i>, <i>pump</i> or <i>truck</i>.</div>
+      <b>Cranes</b>, <b>hoists</b>, <b>EWPs</b>, <b>concrete pumps</b> and <b>trucks</b> place at true size on a calibrated page — search <i>crane</i>, <i>hoist</i>, <i>ewp</i>, <i>pump</i> or <i>truck</i>.</div>
     <div id="sym-cats">${getSymbolCatsHTML()}</div>
   </div>`;
 }

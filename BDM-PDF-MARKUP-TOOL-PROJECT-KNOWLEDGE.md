@@ -2058,3 +2058,38 @@ James: *"can you also update to include scaled cranes, including tower cranes (v
 - The fields survive a JSON round trip.
 - Search: "crane" → 19, "tower crane" → 7, "franna" → 5, "weathervane" → 6.
 - `node check-syntax.js` clean.
+
+## v3.40 (6 Oct 2026) — Hoists & EWPs at true size: 273 → 291
+
+James: *"add hoists and EWPs at true size too"*
+
+**New category "Construction — Hoists & EWPs (true size)"** (`cmp-access`, ids `ac-*`, 18 items, table `TRUE_SIZE_ACCESS`, builder `_symAccess`). All are typical for the class (Alimak / Genie / JLG class figures), and every note says to confirm with the hire company.
+- **Hoists (4):**
+  - Single cage 1.5 × 3.2, twin cage (a cage either side of the mast), long cage 1.5 × 4.2, and a materials-only transport platform.
+  - Plan shows the mast (X'd), the cage(s), a heavy line on the landing gate (the face away from the mast), and a dashed base enclosure 0.5 m clear (`enc`), which counts in the true-size box.
+  - Payload tag on each cage.
+- **Scissors (6):**
+  - 19 / 26 / 32 / 40 ft slab and 33 / 43 ft rough-terrain.
+  - Chassis + platform + scissor cross, with a dashed roll-out deck (`ext`) to +x, which counts in the box.
+  - RT models show their outrigger jacks.
+- **Vertical mast lift (1):** GR-20 class.
+- **Boom lifts (6):**
+  - 34 / 45 / 60 ft knuckle and 60 / 80 / 135 ft telescopic.
+  - Chassis, wheels, rear turntable (`cxm = −0.18 L`), counterweight, boom stowed forward, basket at the front.
+- **Spider lift (1):** 17 m tracked, drawn with outriggers set up (3.9 × 3.9 m pad centres).
+
+**Reach chart reused.** Booms and the spider carry `def.ewp` (outreach `out` → default ring `[{r: out, t: 'max outreach'}]`, centred on the turntable). `_liftMeta` now includes `def.ewp`, the overlay takes its scale from `c.upm || c.u`, and `kind` is `'ewp'` (no jib, vane or sector). So the existing ring editor and handlers work unchanged. Properties → `getAccessPropsHTML` lists dimensions, platform height, outreach, deck and outriggers. It shows the reach editor only for `def.ewp`, plus Reset to true size.
+
+**datum-markup skill:**
+- `gen-skill-symbols.js` knows the `ewp` / `access` kinds.
+- `SYMBOL_LIFT` gains `"ewp"` (show_reach + rings) and `"access"` (no overlays) — `symbol_true_size` rejects reach options on a hoist or scissor.
+- SKILL.md, annotation-types.md and the symbols.md quick picks are updated; the catalogue is regenerated at 291 symbols.
+- Repackaged; the previous build is kept as `datum-markup.BACKUP-v3.39.skill`.
+
+**Verified** in the preview:
+- All 18 draw with zero errors.
+- On a page calibrated at 1:200, the twin hoist, 26 ft scissor, 45 ft knuckle and spider lift placed at exactly `real × pixelsPerMm`.
+- Hoist panel: Hoist / Rated load / True size at 1:200, and no reach editor.
+- Boom panel: reach editor present. Setting `showReach`, relabelling the ring and adding a second ring (12.6 m) all worked.
+- Search: "scissor" → 7, "boom lift" → 7, "cherry picker" → 6, "spider" → 1. "hoist" and "ewp" match the whole new category via its name (19).
+- `node check-syntax.js` clean.
